@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Sovereign SG16 Brain — mistralbrain.com</title>
+<meta name="description" content="Sovereign SG16 Brain: 100% independent, self-contained, open to everyone. Sealed perimeter, one master door, in-process mathematics." />
+<link rel="icon" type="image/png" href="/assets/logo.png" />
+<link rel="stylesheet" href="/src/style.css" />
+</head>
+<body>
+
+<!-- ================= cinematic crimson stage matrix ================= -->
+<div class="stage-bg" aria-hidden="true"></div>
+
+<!-- ================= top bar ================= -->
+<header class="topbar">
+  <div class="brand">
+    <img class="brand-badge" src="/assets/logo.png" alt="Sovereign SG16 Brain emblem" />
+    <div>
+      <h1>SOVEREIGN <span>SG16 BRAIN</span></h1>
+      <p class="domain">mistralbrain.com</p>
+    </div>
+  </div>
+  <div class="chips">
+    <span class="chip"><i class="dot" id="dot"></i><span id="chip-status">connecting</span></span>
+    <span class="chip">transport <b id="chip-transport">—</b></span>
+    <span class="chip">core <b id="chip-core">—</b></span>
+    <span class="chip">gate <b id="chip-gate">—</b></span>
+    <span class="chip">perimeter <b>4 sides · 1 door</b></span>
+  </div>
+</header>
+
+<!-- ================= hero: core logo, top centre ================= -->
+<section class="hero">
+  <img class="hero-logo" src="/assets/logo.png" alt="Sovereign SG16 Brain — circular green and gold emblem" />
+  <h2 class="hero-title">SOVEREIGN INTELLIGENCE<br /><em>FOR A BRIGHTER TOMORROW</em></h2>
+  <div class="hero-flags">
+    <span>🇺🇸 USA</span><span>🇬🇧 UK</span><span>🇫🇷 FRANCE</span><span>🇷🇺 RUSSIA</span><span>🇨🇳 CHINA</span><span>🇩🇪 GERMANY</span>
+  </div>
+  <div class="hero-claims">
+    <span class="claim green">100% FULLY INDEPENDENT</span>
+    <span class="claim gold">SELF-CONTAINED · NO THIRD-PARTY AI APIs</span>
+    <span class="claim red">OPEN TO EVERYONE</span>
+  </div>
+  <div class="hero-actions">
+    <button class="btn primary" id="buy-api">Buy API</button>
+    <button class="btn ghost" id="open-portal">API Portal</button>
+    <button class="btn ghost" id="go-chat">Talk to the Brain</button>
+  </div>
+</section>
+
+<!-- ================= dashboard grid ================= -->
+<main class="layout" id="go-chat-target">
+  <aside class="col side">
+    <section class="panel">
+      <h2>Sealed perimeter</h2>
+      <div class="perimeter">
+        <div class="wall north">north</div><div class="wall east">east</div>
+        <div class="wall south">south</div><div class="wall west">west</div>
+        <div class="room">
+          <div class="joint">
+            <span class="joint-label">joint room · 3-GPT</span>
+            <div class="gpt" data-member="shell"><span class="gpt-name">Shell</span><span class="gpt-role">conduct</span><div class="bar"><i></i></div><span class="gpt-val">0.00</span></div>
+            <div class="gpt" data-member="kali"><span class="gpt-name">Kali</span><span class="gpt-role">harmful</span><div class="bar"><i></i></div><span class="gpt-val">0.00</span></div>
+            <div class="gpt" data-member="terminal"><span class="gpt-name">Terminal</span><span class="gpt-role">authority</span><div class="bar"><i></i></div><span class="gpt-val">0.00</span></div>
+          </div>
+          <div class="core-box"><span class="core-name">devstral small 2</span><span class="core-sub">head controller · voxtral audio</span></div>
+        </div>
+        <div class="door" id="door"><span>master door</span></div>
+      </div>
+      <dl class="kv">
+        <div><dt>joint risk</dt><dd id="joint-risk">—</dd></div>
+        <div><dt>threshold</dt><dd id="threshold">—</dd></div>
+        <div><dt>verdict</dt><dd id="verdict">—</dd></div>
+      </dl>
+    </section>
+    <section class="panel">
+      <h2>Charter · seven invariants</h2>
+      <ol class="charter" id="charter"></ol>
+    </section>
+  </aside>
+
+  <section class="col maincol">
+    <div class="chat-shell">
+      <div class="transcript" id="transcript" aria-live="polite"></div>
+      <form class="composer" id="composer">
+        <textarea id="input" rows="2" placeholder="Share your idea first." autocomplete="off"></textarea>
+        <div class="composer-actions">
+          <label class="file"><input type="file" id="audio" accept="audio/*,.wav" /><span>attach audio</span></label>
+          <span class="hint" id="audio-name"></span>
+          <span class="region" id="region-line">region: —</span>
+          <button type="button" class="btn ghost" id="reset">reset</button>
+          <button type="submit" class="btn primary">send through the door</button>
+        </div>
+      </form>
+    </div>
+
+    <section class="panel design-matrix" id="design-matrix" hidden>
+      <h2>Official public dashboard matrix</h2>
+      <p class="small">Mounted verbatim from the authentic infographic asset; the grid aligns to the asset's own aspect.</p>
+      <div class="matrix-frame" id="matrix-frame"></div>
+    </section>
+
+    <section class="panel pricing" id="pricing">
+      <h2>Standalone application · premium passes</h2>
+      <p class="small" id="pricing-note">Localized verification runs entirely on your device. Your credentials and history never leave it.</p>
+      <div class="passes">
+        <div class="pass" data-pass="day"><h3>24-Hour Entry</h3><p class="price">$3<span>/day</span></p><p>Full 24-hour access with high-speed operational metrics.</p><button class="btn ghost" data-buy="day">subscribe</button></div>
+        <div class="pass" data-pass="week"><h3>1-Week Premium</h3><p class="price">$5<span>/week</span></p><p>Unlimited execution access.</p><button class="btn ghost" data-buy="week">subscribe</button></div>
+        <div class="pass featured" data-pass="half"><h3>15-Day Premium</h3><p class="price">$8<span>/15 days</span></p><p>Unlimited execution access.</p><button class="btn ghost" data-buy="half">subscribe</button></div>
+        <div class="pass" data-pass="month"><h3>1-Month Premium</h3><p class="price">$15<span>/month</span></p><p>Absolute unlimited execution access.</p><button class="btn ghost" data-buy="month">subscribe</button></div>
+      </div>
+      <p class="small humanitarian" id="humanitarian">Humanitarian exception: inbound environments detected as <b>Palestine</b> receive a zero-rate billing bypass — the full dashboard stays open, free and unlimited.</p>
+    </section>
+  </section>
+
+  <aside class="col side">
+    <section class="panel">
+      <h2>Reasoning plan</h2>
+      <dl class="kv">
+        <div><dt>head</dt><dd id="plan-head">—</dd></div>
+        <div><dt>route</dt><dd id="plan-route">—</dd></div>
+        <div><dt>tokens / blocks</dt><dd id="plan-tokens">—</dd></div>
+        <div><dt>arithmetic</dt><dd>q16.16 fixed point</dd></div>
+        <div><dt>plan digest</dt><dd class="mono" id="plan-sha">—</dd></div>
+        <div><dt>door seal</dt><dd class="mono" id="plan-seal">—</dd></div>
+      </dl>
+      <ol class="steps" id="plan-steps"></ol>
+    </section>
+    <section class="panel">
+      <h2>Gate reasons</h2>
+      <ul class="reasons" id="reasons"><li class="muted">nothing inspected yet</li></ul>
+    </section>
+    <section class="panel">
+      <h2>Online / offline parity</h2>
+      <p class="small">The mathematical core is transport-blind: reasoning plans are byte-for-byte identical whether the host is online or air-gapped.</p>
+      <dl class="kv">
+        <div><dt>payloads</dt><dd id="parity-count">—</dd></div>
+        <div><dt>identical</dt><dd id="parity-ok">—</dd></div>
+        <div><dt>digest</dt><dd class="mono" id="parity-digest">—</dd></div>
+      </dl>
+    </section>
+  </aside>
+</main>
+
+<!-- ================= API portal modal ================= -->
+<div class="modal" id="portal" hidden>
+  <div class="modal-card">
+    <div class="modal-head"><h2>API Portal</h2><button class="btn ghost" id="portal-close">close</button></div>
+    <p class="small">Every endpoint is served by the sovereign host itself. No external gateway.</p>
+    <pre class="mono" id="portal-key">key: (not generated yet)</pre>
+    <button class="btn ghost" id="gen-key">generate local API key</button>
+    <ul class="endpoints">
+      <li><code>POST /api/ingest</code> send a payload through the master door</li>
+      <li><code>POST /api/audio</code> audio route via Voxtral</li>
+      <li><code>GET  /api/health</code> readiness + digests</li>
+      <li><code>GET  /api/charter</code> the seven invariants</li>
+      <li><code>GET  /api/parity</code> online/offline parity proof</li>
+      <li><code>GET  /api/weight?member=&feature=</code> weight provenance</li>
+    </ul>
+  </div>
+</div>
+
+<!-- ================= device authority notice ================= -->
+<div class="notice" id="notice" role="alertdialog" aria-modal="true" aria-labelledby="notice-title" hidden>
+  <div class="notice-card">
+    <div class="notice-head"><span class="notice-glyph">⚠</span><h2 id="notice-title">DEVICE AUTHORITY NOTICE</h2></div>
+    <dl class="notice-meta">
+      <div><dt>reference</dt><dd id="notice-ref"></dd></div>
+      <div><dt>session</dt><dd id="notice-session"></dd></div>
+      <div><dt>warnings issued</dt><dd id="notice-warnings"></dd></div>
+    </dl>
+    <p class="notice-reason" id="notice-reason"></p>
+    <ul class="notice-list" id="notice-statements"></ul>
+    <button class="btn primary" id="notice-ack">I understand, close the notice</button>
+    <p class="notice-print" id="notice-disclaimer"></p>
+  </div>
+</div>
+
+<!-- ================= footer with corporate footprint ================= -->
+<footer class="footer">
+  <div class="foot-brand">
+    <img src="/assets/logo.png" alt="" class="foot-logo" />
+    <div>
+      <b>SOVEREIGN SG16 BRAIN</b>
+      <span>Self-hosted Mistral engine · built for ownership, not dependency on third-party AI APIs.</span>
+      <span class="mono">mistralbrain.com · Apache 2.0</span>
+    </div>
+  </div>
+  <div class="foot-corp">
+    <b>SAIF TECH GLOBAL LLC</b>
+    <span>Technology Services | Software Development | AI Tools | Digital Products</span>
+    <span>8206 LOUISIANA BLVD NE, STE A #10595, ALBUQUERQUE, NM 87113, USA</span>
+  </div>
+  <div class="foot-legal">
+    <span>© 2026 mistralbrain.com · Open Intelligence</span>
+    <span>Global Mind · Human Values · Shared Tomorrow</span>
+  </div>
+</footer>
+
+<script type="module" src="/src/main.js"></script>
+</body>
+</html>
