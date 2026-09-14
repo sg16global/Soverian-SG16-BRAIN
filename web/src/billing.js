@@ -9,6 +9,7 @@ import { store } from "./storage.js";
 import { postJson } from "./api.js";
 
 export const OWNER_EMAIL = "sg16global@gmail.com";
+export const VIP_OWNER_EMAIL = OWNER_EMAIL;
 
 export const PASSES = {
   day: { label: "24-Hour Entry", price: 3, unit: "/day", hours: 24 },
@@ -46,21 +47,38 @@ export function resolveBilling(override) {
 }
 
 export function effectivePrice(pass, billing) {
+  if (isVipOwner(currentIdentity())) return 0;
   return billing.humanitarian ? 0 : PASSES[pass].price;
 }
 
 // ----------------------------------------------------------------------
-// subscription record (local only)
+// VIP owner — full-speed throttle bypass across the interface panel
+// ----------------------------------------------------------------------
+export function isVipOwner(identity) {
+  if (!identity) return false;
+  if (identity.vip_owner === true) return true;
+  const email = (identity.email || "").trim().toLowerCase();
+  return email === VIP_OWNER_EMAIL;
+}
+
+export function hasFullSpeedBypass() {
+  return isVipOwner(currentIdentity());
+}
+
+// ----------------------------------------------------------------------
+// subscription record (local fallback + server-backed issue)
 // ----------------------------------------------------------------------
 async function localIssue(pass, identity, billing) {
+  const vip = isVipOwner(identity);
   const now = Date.now();
   return {
     pass,
     provider: identity ? identity.provider : "guest",
-    price_charged: effectivePrice(pass, billing),
+    price_charged: vip ? 0 : effectivePrice(pass, billing),
     list_price: PASSES[pass].price,
     region: billing.region,
     humanitarian_bypass: billing.humanitarian,
+    vip_owner_bypass: vip,
     activated_at: Math.floor(now / 1000),
     expires_at: Math.floor(now / 1000) + PASSES[pass].hours * 3600,
     verified_locally: true,
@@ -71,15 +89,12 @@ export async function subscribe(pass, identity) {
   const billing = resolveBilling();
   let record;
   try {
-    // server-backed issue: the host re-derives price/expiry and signs a token,
-    // so a tampered client template can never spoof a tier.
     record = await postJson("/api/subscribe", {
       pass,
       region: billing.region,
       provider: identity ? identity.provider : "guest",
     });
   } catch {
-    // air-gapped / host unreachable: fall back to the localized record.
     record = await localIssue(pass, identity, billing);
   }
   store.set("pass", record);
@@ -89,7 +104,13 @@ export async function subscribe(pass, identity) {
 export function currentPass() {
   const record = store.get("pass");
   if (!record) return null;
-  if (new Date(record.expires_at).getTime() < Date.now()) return null;
+  if (isVipOwner(currentIdentity())) {
+    return { ...record, pass: "vip", vip_owner_bypass: true };
+  }
+  const expires = record.expires_at;
+  const expiryMs =
+    typeof expires === "number" ? expires * 1000 : new Date(expires).getTime();
+  if (expiryMs < Date.now()) return null;
   return record;
 }
 
@@ -106,7 +127,6 @@ async function sha256(message) {
         .join("");
     }
   } catch {}
-  // deterministic fallback when WebCrypto is unavailable
   let h = 5381;
   for (const ch of message) h = ((h * 33) ^ ch.charCodeAt(0)) >>> 0;
   return h.toString(16).padStart(8, "0");
@@ -124,13 +144,15 @@ export async function attestIdentity(provider) {
       `It is verified and hashed ON THIS DEVICE ONLY - it is never uploaded.`
   );
   if (!email || !email.includes("@")) return null;
-  const hash = await sha256(`sg16-local:${provider}:${email.trim().toLowerCase()}`);
-  // the raw email stays on this device; it is only used locally to recognise
-  // the VIP owner so the matching header can be attached to requests.
+  const normalized = email.trim().toLowerCase();
+  const vip = normalized === VIP_OWNER_EMAIL;
+  const hash = await sha256(`sg16-local:${provider}:${normalized}`);
   const identity = {
     provider,
     hash,
-    email: email.trim().toLowerCase(),
+    email: normalized,
+    vip_owner: vip,
+    byte_signature: await sha256(`sg16-vip:${normalized}`),
     attested_at: new Date().toISOString(),
   };
   store.set("identity", identity);
@@ -149,7 +171,9 @@ export async function generateApiKey() {
   const pass = currentPass() || { pass: "open" };
   const salt = Math.random().toString(36).slice(2, 10);
   const digest = await sha256(`sg16-api:${identity.hash}:${pass.pass}:${salt}`);
-  const key = `sg16_live_${digest.slice(0, 32)}`;
+  const key = hasFullSpeedBypass()
+    ? `sg16_vip_${digest.slice(0, 32)}`
+    : `sg16_live_${digest.slice(0, 32)}`;
   store.set("api_key", key);
   return key;
 }

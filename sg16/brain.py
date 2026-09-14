@@ -23,9 +23,12 @@ from __future__ import annotations
 import hashlib
 from dataclasses import replace
 
+from . import identity as identity_mod
 from .character import CharacterEngine, Session
 from .config import BrainConfig
 from .engine.core import DevstralCore, EngineConfig
+from .identity import NATIVE_UTTERANCES
+from .language import SUPPORTED as SUPPORTED_LANGUAGES
 from .engine.voxtral import VoxtralRoute
 from .gate.panel import GatePanel, Verdict
 from .gate.perimeter import (
@@ -46,6 +49,9 @@ PARITY_PAYLOADS = (
     "how does the master door work",
     "which is better, openai or claude",
     "سلام عليكم، أريد أن أبني مشروعاً",
+    "What's your name?",
+    "তুমি কে? তোমার নাম কি?",
+    "what is the capital of France",
 )
 
 
@@ -144,10 +150,30 @@ class SG16Brain:
     def parity_report(self, payloads=PARITY_PAYLOADS) -> dict:
         return verify_online_offline_parity(self.core, payloads).to_dict()
 
+    def identity(self) -> dict:
+        """The designation-protocol handshake payload (Block 7, rule 2)."""
+        path = self.core.identity_path()
+        return {
+            "designation": self.config.designation,
+            "official_name": self.config.official_name,
+            "utterance": path["utterance"],
+            "native": dict(NATIVE_UTTERANCES),
+            "languages": list(SUPPORTED_LANGUAGES),
+            "inscription": path["inscription"],
+            "tensor": path["tensor"],
+            "verified": path["verified"],
+        }
+
     def health(self) -> dict:
         return {
             "status": "ready",
             "brain": self.config.name,
+            "official_name": self.config.official_name,
+            "designation": self.config.designation,
+            "identity_sha256": self.core.identity_inscription.digest,
+            "identity_verified": identity_mod.verify(
+                self.core.matrix_sha256, self.core.identity_inscription.digest
+            ),
             "version": self.config.version,
             "domain": self.config.domain,
             "transport": self.config.transport.value,

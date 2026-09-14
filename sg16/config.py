@@ -66,6 +66,23 @@ class BrainConfig:
     def open_access(self) -> bool:
         return bool(self._section("brain").get("open_access", True))
 
+    # identity (Block 7)
+    @property
+    def official_name(self) -> str:
+        from . import identity
+
+        return str(
+            self._section("identity").get("official_name", identity.OFFICIAL_NAME)
+        )
+
+    @property
+    def designation(self) -> str:
+        from . import identity
+
+        return str(
+            self._section("identity").get("designation", identity.DESIGNATION)
+        )
+
     # hosting
     @property
     def host(self) -> str:

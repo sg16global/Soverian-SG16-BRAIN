@@ -27,6 +27,16 @@ class CanonicalWordingTests(unittest.TestCase):
             "I will notify your device authority and lock your device.",
         )
 
+    def test_identity_utterance_is_verbatim(self) -> None:
+        from sg16 import identity
+
+        self.assertEqual(CANON[CanonKey.IDENTITY], identity.UTTERANCE)
+
+    def test_universal_resolution_line_is_verbatim(self) -> None:
+        self.assertEqual(
+            CANON[CanonKey.UNIVERSAL], "Resolved on the core reasoning tensor."
+        )
+
     def test_unknown_deferral_is_verbatim(self) -> None:
         self.assertEqual(
             CANON[CanonKey.UNKNOWN],
@@ -50,8 +60,8 @@ class CanonicalWordingTests(unittest.TestCase):
 
 
 class CharterStructureTests(unittest.TestCase):
-    def test_seven_invariants_are_declared(self) -> None:
-        self.assertEqual(len(CHARTER), 7)
+    def test_eight_invariants_are_declared(self) -> None:
+        self.assertEqual(len(CHARTER), 8)
 
     def test_invariant_keys(self) -> None:
         self.assertEqual(
@@ -63,9 +73,20 @@ class CharterStructureTests(unittest.TestCase):
                 "escalation",
                 "anti_harm",
                 "zero_hallucination",
+                "language_parity",
                 "model_neutrality",
             ),
         )
+
+    def test_universal_access_replaces_deferral(self) -> None:
+        inv = next(i for i in CHARTER if i.key == "zero_hallucination")
+        self.assertIn("never enters", inv.text)
+        self.assertIn("honest-refusal or deferred", inv.text)
+
+    def test_language_parity_is_declared(self) -> None:
+        inv = next(i for i in CHARTER if i.key == "language_parity")
+        self.assertIn("Bangla", inv.text)
+        self.assertIn("zero external", inv.text)
 
     def test_every_invariant_owns_at_least_one_gate_member(self) -> None:
         for inv in CHARTER:

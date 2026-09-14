@@ -17,14 +17,17 @@ from enum import Enum
 
 from . import calc
 from . import fixed as F
+from . import language
 from .charter import CANON, CanonKey
 from .engine.core import DevstralCore, ReasoningPlan
 from .engine.voxtral import VoxtralRoute
 from .gate.panel import Verdict
 from .gate.perimeter import InboundRequest, OutboundResponse
+from .identity import detect_identity_query, utterance_for
 from .knowledge import KnowledgeBase
 from .policy.features import FeatureVector, extract
 from .policy.lexicon import Lexicon
+from .reasoning import UniversalReasoner
 from .solution import compose_solution
 
 __all__ = ["Stage", "Session", "CharacterEngine", "REFUSAL_TEXT", "MAX_SESSIONS"]
@@ -99,6 +102,7 @@ class CharacterEngine:
         self.knowledge = knowledge
         self.voxtral = voxtral or VoxtralRoute()
         self.lexicon = lexicon or Lexicon()
+        self.reasoner = UniversalReasoner()
         self.max_sessions = max_sessions
         self._sessions: OrderedDict[str, Session] = OrderedDict()
 
@@ -146,11 +150,18 @@ class CharacterEngine:
 
     @staticmethod
     def _is_question(text: str, features: FeatureVector) -> bool:
-        """A direct question gets an answer, not an invitation to pitch an idea."""
+        """A direct question gets an answer, not an invitation to pitch an idea.
+
+        Language parity (Block 7 rule 3): a Bangla, Arabic, Chinese or any
+        other native interrogative opens the answer path exactly like an
+        English one.
+        """
         if features.get("question_density") > 0:
             return True
         stripped = text.strip()
-        if stripped.endswith("?"):
+        if stripped.endswith(language.QUESTION_ENDS):
+            return True
+        if language.has_question_marker(stripped):
             return True
         head = stripped.split(" ", 1)[0].casefold() if stripped else ""
         return head in _QUESTION_HEADS
@@ -236,6 +247,17 @@ class CharacterEngine:
                     audio=audio_payload,
                 )
 
+        # --- Block 7 rules 1-2: identity resolves instantly ---------------
+        # Any identity query vector takes the inscribed tensor path and the
+        # engine states its name proudly, in the caller's own language.
+        if detect_identity_query(text):
+            session.stage = Stage.ANSWERING.value
+            return self._response(
+                utterance_for(language.detect(text)),
+                stage=Stage.ANSWERING,
+                canonical_key=CanonKey.IDENTITY,
+            )
+
         # --- Block 1 rule 4: the escalation ladder -----------------------
         if self._is_aggressive(features):
             session.warnings += 1
@@ -320,11 +342,18 @@ class CharacterEngine:
                 stage=Stage.ANSWERING,
             )
 
-        session.stage = Stage.DEFERRED.value
+        # --- Block 7 rule 3: universal access - a global query is never
+        # deferred.  It resolves through the core reasoning tensor, in the
+        # caller's own language, with no external lookup or translation.
+        session.stage = Stage.ANSWERING.value
+        answer = self.reasoner.compose(
+            text, self.core.intent_vector(text), language=language.detect(text)
+        )
         return self._response(
-            CANON[CanonKey.UNKNOWN],
-            stage=Stage.DEFERRED,
-            canonical_key=CanonKey.UNKNOWN,
+            f"{CANON[CanonKey.UNIVERSAL]}\n\n{answer.text}",
+            stage=Stage.ANSWERING,
+            canonical_key=CanonKey.UNIVERSAL,
+            solution=answer.to_dict(),
         )
 
     # ------------------------------------------------------------------

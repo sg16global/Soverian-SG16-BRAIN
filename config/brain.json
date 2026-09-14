@@ -72,6 +72,14 @@
     "doors": 1,
     "sealed": true
   },
+  "identity": {
+    "official_name": "SOVERIAN SG16 Brain",
+    "designation": "SG16",
+    "inscription_tag": "sg16.identity.v1",
+    "utterance": "I am Sovereign SG16 Brain, a 100% fully independent, self-contained, and sovereign core brain engine running with zero corporate dependencies.",
+    "language_parity": "native-in-process",
+    "translation_loops": 0
+  },
   "knowledge": {
     "path": "knowledge/sg16_core.json",
     "threshold": 0.42,
