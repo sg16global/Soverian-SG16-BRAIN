@@ -180,6 +180,7 @@ class BrainRequestHandler(BaseHTTPRequestHandler):
 
         handlers = {
             "/api/health": self._api_health,
+            "/api/identity": self._api_identity,
             "/api/charter": self._api_charter,
             "/api/topology": self._api_topology,
             "/api/parity": self._api_parity,
@@ -250,6 +251,15 @@ class BrainRequestHandler(BaseHTTPRequestHandler):
     # ------------------------------------------------------------------
     def _api_health(self) -> None:
         self._json(self.brain.health())
+
+    def _api_identity(self) -> None:
+        """Designation-protocol handshake (Block 7, rule 2).
+
+        The brain natively states its immutable designation "SG16" and proves
+        the inscription: the identity digest recomputes against the core
+        matrix fingerprint with 100% certainty, or ``verified`` is false.
+        """
+        self._json(self.brain.identity())
 
     def _api_charter(self) -> None:
         self._json(

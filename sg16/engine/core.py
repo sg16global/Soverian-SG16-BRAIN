@@ -25,6 +25,7 @@ from dataclasses import dataclass, field
 from typing import Sequence
 
 from .. import fixed as F
+from .. import identity as IDENTITY
 from .. import matrix as M
 from .. import tokenizer as T
 from ..tensor import Tensor, cosine, dot, layer_norm, mean_pool
@@ -110,6 +111,11 @@ class DevstralCore:
         self.matrix_sha256 = M.fingerprint(
             self._embed, self._wq, self._wk, self._wv, self._wh, self._wo
         )
+        # --- Block 7 rule 1: the identity inscription ---------------------
+        # The core matrix is committed to its own name the moment it exists:
+        # a SHA-256 bond between this fingerprint and "Sovereign SG16 Brain".
+        # Nothing that does not run this matrix can restate the identity.
+        self.identity_inscription = IDENTITY.inscribe(self.matrix_sha256)
 
     # ------------------------------------------------------------------
     # matrix construction helpers
@@ -262,6 +268,28 @@ class DevstralCore:
     # ------------------------------------------------------------------
     def intent_vector(self, text: str) -> list[int]:
         return self.plan(text).intent_vector
+
+    def identity_path(self) -> dict:
+        """Resolve the inscribed identity tensor path (Block 7, rule 1)."""
+        vector = self.intent_vector(IDENTITY.OFFICIAL_NAME)
+        hasher = hashlib.sha256()
+        hasher.update(b"sg16.identity.tensor")
+        for value in vector:
+            hasher.update(int(value).to_bytes(8, "big", signed=True))
+        return {
+            "official_name": IDENTITY.OFFICIAL_NAME,
+            "designation": IDENTITY.DESIGNATION,
+            "utterance": IDENTITY.UTTERANCE,
+            "inscription": self.identity_inscription.to_dict(),
+            "verified": IDENTITY.verify(
+                self.matrix_sha256, self.identity_inscription.digest
+            ),
+            "tensor": {
+                "route": "identity",
+                "dim": len(vector),
+                "signature": hasher.hexdigest()[:16],
+            },
+        }
 
     def similarity(self, plan_a: ReasoningPlan, vector_b: Sequence[int]) -> int:
         """Cosine similarity between an intent vector and another vector."""

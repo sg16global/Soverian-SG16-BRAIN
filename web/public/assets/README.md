@@ -10,9 +10,9 @@ probes them in order and uses the first one that exists):
 
 | Original file | Served as | Used for |
 |---|---|---|
-| `IMG_2768.PNG` | `logo.png` (or keep its own name) | top-centre emblem, top bar, footer |
-| `IMG_2764.JPEG` | `stage.jpg` (or keep its own name) | full-screen cinematic crimson stage matrix |
-| `IMG_2765.PNG` | any name | official public dashboard design reference |
+| `IMG_2768.PNG` | `logo.png` (mirror copy) | top-centre emblem, top bar, footer — size only |
+| `IMG_2764.JPEG` | `stage.jpg` (mirror copy) | `.stage-bg` crimson Dolby spotlight — `background-size: 100% auto` |
+| `IMG_2765.PNG` | — | dashboard framework reference + overlay grid for 3-GPT / chat / matrices |
 
 The current `logo.png` / `stage.jpg` are faithful recreations used only until
 the originals are dropped in. Once an original lands under either name, it

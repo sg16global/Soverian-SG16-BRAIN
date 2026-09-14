@@ -88,7 +88,7 @@ class PanelWeightTests(unittest.TestCase):
     def test_provenance_decomposes_into_charter_terms(self) -> None:
         report = self.weights.explain("kali", "harm_violence")
         self.assertEqual(report["member"], "kali")
-        self.assertEqual(len(report["terms"]), 7)
+        self.assertEqual(len(report["terms"]), 8)
         self.assertTrue(
             any(t["invariant"] == "anti_harm" for t in report["terms"]),
             "anti_harm must contribute to the violence detector",

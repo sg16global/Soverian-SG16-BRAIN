@@ -48,7 +48,8 @@ class StaticDeliveryTests(ServerFixture):
         self.assertEqual(status, 200)
         self.assertEqual(headers["Content-Type"], "image/png")
         self.assertEqual(headers.get("X-SG16-Stream"), "binary")
-        self.assertEqual(raw[:8], b"\x89PNG\r\n\x1a\n")
+        # Verbatim drop-in assets may be PNG or JPEG under the logo name.
+        self.assertTrue(raw.startswith(b"\x89PNG") or raw.startswith(b"\xff\xd8\xff"))
 
     def test_stage_asset_is_served(self) -> None:
         status, headers, raw = self.request("GET", "/assets/stage.jpg")
@@ -84,14 +85,32 @@ class ApiTests(ServerFixture):
         self.assertEqual(health["status"], "ready")
         self.assertEqual(health["topology"]["perimeter"]["doors"], 1)
 
-    def test_charter_lists_seven_invariants(self) -> None:
+    def test_charter_lists_eight_invariants(self) -> None:
         status, _, raw = self.request("GET", "/api/charter")
         self.assertEqual(status, 200)
         charter = json.loads(raw)
-        self.assertEqual(len(charter["invariants"]), 7)
+        self.assertEqual(len(charter["invariants"]), 8)
         self.assertEqual(
             charter["canonical"]["idea_invite"], "Share your idea first."
         )
+
+    def test_identity_handshake_states_designation(self) -> None:
+        status, _, raw = self.request("GET", "/api/identity")
+        self.assertEqual(status, 200)
+        payload = json.loads(raw)
+        self.assertEqual(payload["designation"], "SG16")
+        self.assertEqual(payload["official_name"], "SOVERIAN SG16 Brain")
+        self.assertTrue(payload["verified"])
+        self.assertTrue(payload["inscription"]["digest"])
+        self.assertIn("bn", payload["native"])
+
+    def test_health_exposes_the_inscription(self) -> None:
+        status, _, raw = self.request("GET", "/api/health")
+        self.assertEqual(status, 200)
+        health = json.loads(raw)
+        self.assertEqual(health["designation"], "SG16")
+        self.assertTrue(health["identity_verified"])
+        self.assertEqual(len(health["identity_sha256"]), 64)
 
     def test_parity_report_is_identical(self) -> None:
         status, _, raw = self.request("GET", "/api/parity")

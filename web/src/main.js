@@ -19,12 +19,14 @@ import {
   currentIdentity,
   generateApiKey,
   currentApiKey,
+  hasFullSpeedBypass,
 } from "./billing.js";
 
 const $ = (id) => document.getElementById(id);
 const els = {
   dot: $("dot"),
   status: $("chip-status"),
+  designation: $("chip-designation"),
   transport: $("chip-transport"),
   core: $("chip-core"),
   gate: $("chip-gate"),
@@ -67,9 +69,12 @@ const els = {
   noticeStatements: $("notice-statements"),
   noticeAck: $("notice-ack"),
   noticeDisclaimer: $("notice-disclaimer"),
+  vipChip: $("vip-chip"),
 };
 
 const session = sessionId();
+const PANEL_THROTTLE_MS = 800;
+let lastSubmitAt = 0;
 
 // ------------------------------------------------------------------
 // message rendering (markdown, safe)
@@ -169,18 +174,24 @@ function showNotice(notice) {
 // ------------------------------------------------------------------
 function refreshPricing() {
   const billing = resolveBilling();
-  els.regionLine.textContent = `region: ${billing.region || "auto"}${billing.humanitarian ? " · FREE (humanitarian)" : ""}`;
+  const vip = hasFullSpeedBypass();
+  if (els.vipChip) els.vipChip.hidden = !vip;
+  els.regionLine.textContent =
+    `region: ${billing.region || "auto"}` +
+    (vip ? " · VIP OWNER · full-speed bypass" : billing.humanitarian ? " · FREE (humanitarian)" : "");
   document.querySelectorAll(".pass").forEach((card) => {
     const id = card.dataset.pass;
     const price = effectivePrice(id, billing);
     const priceEl = card.querySelector(".price");
     priceEl.innerHTML = `$${price}<span>${PASSES[id].unit}</span>`;
-    card.classList.toggle("free", billing.humanitarian);
+    card.classList.toggle("free", billing.humanitarian || vip);
   });
   const pass = currentPass();
-  els.pricingNote.textContent = pass
-    ? `Active pass: ${PASSES[pass.pass].label} · $${pass.price_charged} · expires ${pass.expires_at} · verified locally.`
-    : "Localized verification runs entirely on your device. Your credentials and history never leave it.";
+  els.pricingNote.textContent = vip
+    ? "VIP owner recognized (sg16global@gmail.com): continuous full-speed throttle bypass active across the 3-GPT panel."
+    : pass
+      ? `Active pass: ${PASSES[pass.pass]?.label || pass.pass} · $${pass.price_charged} · expires ${pass.expires_at} · verified locally.`
+      : "Localized verification runs entirely on your device. Your credentials and history never leave it.";
 }
 
 async function handleBuy(passId) {
@@ -192,13 +203,14 @@ async function handleBuy(passId) {
       : "Apple";
     identity = await attestIdentity(provider);
   }
-  const record = subscribe(passId, identity);
+  const record = await subscribe(passId, identity);
   refreshPricing();
   addMessage(
     "audio-note",
     "local subscription",
     `${PASSES[record.pass].label} activated on-device for $${record.price_charged}` +
       (record.humanitarian_bypass ? " (humanitarian zero-rate bypass)" : "") +
+      (record.vip_owner_bypass ? " (VIP owner bypass)" : "") +
       `. History stays in your local folder; the core grid keeps 0 client logs.`
   );
 }
@@ -207,8 +219,15 @@ async function handleBuy(passId) {
 // send
 // ------------------------------------------------------------------
 async function submit(text, audioB64) {
+  if (!hasFullSpeedBypass()) {
+    const wait = PANEL_THROTTLE_MS - (Date.now() - lastSubmitAt);
+    if (wait > 0) await new Promise((resolve) => setTimeout(resolve, wait));
+  }
+  lastSubmitAt = Date.now();
+
   addMessage("user", `you · ${session}`, text || "[audio attached]", false);
   const payload = { text, session_id: session };
+  if (hasFullSpeedBypass()) payload.vip_owner = true;
   if (audioB64) payload.audio_b64 = audioB64;
 
   // entitlement headers: VIP owner and verified passes skip throttles; the
@@ -249,13 +268,20 @@ async function submit(text, audioB64) {
 // ------------------------------------------------------------------
 async function boot() {
   try {
-    const [health, charter, parity] = await Promise.all([
+    const [health, identity, charter, parity] = await Promise.all([
       getJson("/api/health"),
+      getJson("/api/identity"),
       getJson("/api/charter"),
       getJson("/api/parity"),
     ]);
     els.dot.classList.add("live");
     els.status.textContent = "ready";
+    if (els.designation) {
+      els.designation.textContent = identity.verified
+        ? identity.designation
+        : "UNVERIFIED";
+      els.designation.title = identity.official_name;
+    }
     els.transport.textContent = health.transport;
     els.core.textContent = health.core;
     els.gate.textContent = health.gate_weights_sha256.slice(0, 10);
@@ -368,13 +394,16 @@ els.noticeAck.addEventListener("click", () => (els.notice.hidden = true));
 // asset resilience: originals dropped in under their own file names are
 // picked up automatically, and always rendered verbatim
 // ------------------------------------------------------------------
-const LOGO_CANDIDATES = ["logo.png", "IMG_2768.PNG", "original-logo.png"];
-const STAGE_CANDIDATES = ["stage.jpg", "IMG_2764.JPEG", "original-stage.jpeg"];
-const DASHBOARD_CANDIDATES = ["IMG_2765.PNG", "dashboard-reference.png", "official-infographic.png"];
+const LOGO_CANDIDATES = ["IMG_2768.PNG", "logo.png", "original-logo.png"];
+const STAGE_CANDIDATES = ["IMG_2764.JPEG", "stage.jpg", "original-stage.jpeg"];
+const DASHBOARD_CANDIDATES = [
+  "IMG_2765.PNG",
+  "dashboard-reference.png",
+  "official-infographic.png",
+  "dashboard.png",
+];
 
 function mountDesignMatrix() {
-  // Mount the authentic infographic verbatim; the frame aligns to the asset's
-  // own natural aspect so the layout grid is driven by the artwork itself.
   const tryNext = (index) => {
     if (index >= DASHBOARD_CANDIDATES.length) return;
     const name = DASHBOARD_CANDIDATES[index];
@@ -383,6 +412,7 @@ function mountDesignMatrix() {
         if (!probe || !probe.ok) return tryNext(index + 1);
         const section = document.getElementById("design-matrix");
         const frame = document.getElementById("matrix-frame");
+        if (!section || !frame) return;
         const img = document.createElement("img");
         img.src = "/assets/" + name;
         img.alt = "Sovereign SG16 Brain official dashboard infographic";
@@ -398,26 +428,27 @@ function mountDesignMatrix() {
 }
 
 function wireAssetFallbacks() {
-  document.querySelectorAll('img[src^="/assets/logo"]').forEach((img) => {
+  document.querySelectorAll('img[src*="2768"], img[src*="logo"]').forEach((img) => {
     img.addEventListener("error", () => {
-      const current = img.src.split("/").pop();
-      const next = LOGO_CANDIDATES.find((c) => c !== current);
+      const current = decodeURIComponent(img.src.split("/").pop());
+      const idx = LOGO_CANDIDATES.indexOf(current);
+      const next = LOGO_CANDIDATES[idx + 1];
       if (next) img.src = "/assets/" + next;
     });
   });
   mountDesignMatrix();
-  fetch("/assets/stage.jpg", { method: "HEAD" }).catch(() => null).then((r) => {
-    if (r && r.ok) return;
-    for (const candidate of STAGE_CANDIDATES.slice(1)) {
-      fetch("/assets/" + candidate, { method: "HEAD" })
-        .then((probe) => {
-          if (probe && probe.ok) {
-            document.querySelector(".stage-bg").style.backgroundImage =
-              `url("/assets/${candidate}")`;
-          }
-        })
-        .catch(() => null);
-    }
+  const stageEl = document.querySelector(".stage-bg");
+  if (stageEl) {
+    stageEl.style.backgroundImage = 'url("/assets/IMG_2764.JPEG")';
+    stageEl.style.backgroundSize = "100% auto";
+  }
+  document.querySelectorAll(".dashboard-ref").forEach((img) => {
+    img.addEventListener("error", () => {
+      const current = decodeURIComponent(img.src.split("/").pop());
+      const idx = DASHBOARD_CANDIDATES.indexOf(current);
+      const next = DASHBOARD_CANDIDATES[idx + 1];
+      if (next) img.src = "/assets/" + next;
+    });
   });
 }
 

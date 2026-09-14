@@ -117,19 +117,26 @@ class EscalationTests(BrainFixture):
             self.assertEqual(tx.response.stage in ("warning", "notice_issued"), False)
 
 
-class ZeroHallucinationTests(BrainFixture):
-    def test_unknown_topics_get_the_canonical_deferral(self) -> None:
+class UniversalAccessTests(BrainFixture):
+    def test_global_queries_resolve_and_are_never_deferred(self) -> None:
         for text in (
             "what is the capital of France",
             "who won the world cup in 1998",
             "tell me about quantum gravity",
         ):
-            tx = self.brain.submit(text, session_id=f"unknown-{text[:6]}")
-            self.assertEqual(
-                tx.response.text,
-                CANON[CanonKey.UNKNOWN],
-                f"fabricated an answer for {text!r}: {tx.response.text[:80]}",
-            )
+            tx = self.brain.submit(text, session_id=f"universal-{text[:6]}")
+            self.assertEqual(tx.response.stage, "answering", text)
+            self.assertEqual(tx.response.canonical_key, CanonKey.UNIVERSAL)
+            self.assertNotIn("I do not know", tx.response.text)
+            self.assertTrue(tx.response.text.startswith(CANON[CanonKey.UNIVERSAL]))
+
+    def test_universal_answer_carries_a_topic_solution(self) -> None:
+        tx = self.brain.submit(
+            "explain the water cycle in detail", session_id="universal-topic"
+        )
+        self.assertIsNotNone(tx.response.solution)
+        self.assertIn("topic_terms", tx.response.solution)
+        self.assertGreaterEqual(tx.response.solution["aspect_count"], 3)
 
     def test_arithmetic_is_computed_rather_than_recalled(self) -> None:
         tx = self.brain.submit("what is 23*17", session_id="calc-1")
@@ -280,7 +287,7 @@ class TransactionTests(BrainFixture):
     def test_weight_provenance_is_available(self) -> None:
         report = self.brain.explain_weight("kali", "harm_violence")
         self.assertEqual(report["member"], "kali")
-        self.assertEqual(len(report["terms"]), 7)
+        self.assertEqual(len(report["terms"]), 8)
 
 
 class AudioRouteTests(BrainFixture):
