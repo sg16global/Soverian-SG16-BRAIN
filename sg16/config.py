@@ -142,6 +142,27 @@ class BrainConfig:
     def warnings_before_notice(self) -> int:
         return int(self._section("sessions").get("warnings_before_notice", 3))
 
+    # owner / throttle / billing
+    @property
+    def owner_email(self) -> str:
+        return str(self._section("owner").get("email", "sg16global@gmail.com"))
+
+    @property
+    def throttle_max_requests(self) -> int:
+        return int(self._section("throttle").get("max_requests", 30))
+
+    @property
+    def throttle_window_seconds(self) -> float:
+        return float(self._section("throttle").get("window_seconds", 60))
+
+    @property
+    def throttle_max_chars(self) -> int:
+        return int(self._section("throttle").get("max_chars", 200000))
+
+    @property
+    def billing_secret(self) -> str:
+        return str(self._section("billing").get("secret", "sg16-sovereign-dev-secret"))
+
     def summary(self) -> dict:
         return {
             "name": self.name,

@@ -36,9 +36,11 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 
+from .. import billing
 from ..brain import SG16Brain
 from ..charter import CANON, CHARTER, GATE_TITLES
 from ..config import BrainConfig
+from .throttle import Throttle, ThrottleExceeded
 
 __all__ = ["BrainHTTPServer", "BrainRequestHandler", "build_server", "main"]
 
@@ -72,6 +74,13 @@ class BrainHTTPServer(ThreadingHTTPServer):
         self.brain = brain
         self.config = config
         self._lock = threading.Lock()
+        self.billing_secret = config.billing_secret
+        self.passes: dict[str, dict] = {}
+        self.throttle = Throttle(
+            max_requests=config.throttle_max_requests,
+            window_seconds=config.throttle_window_seconds,
+            max_chars=config.throttle_max_chars,
+        )
         super().__init__(address, handler)
 
     def submit_locked(self, *args, **kwargs):
@@ -179,6 +188,8 @@ class BrainRequestHandler(BaseHTTPRequestHandler):
         if route in handlers:
             return handlers[route]()
 
+        if route == "/api/billing":
+            return self._api_billing()
         if route == "/api/weight":
             return self._api_weight(query)
         if route.startswith("/api/session/"):
@@ -193,6 +204,8 @@ class BrainRequestHandler(BaseHTTPRequestHandler):
         except ValueError as exc:
             return self._error(413, str(exc))
 
+        if route == "/api/subscribe":
+            return self._api_subscribe(body)
         if route == "/api/ingest":
             return self._api_ingest(body)
         if route == "/api/audio":
@@ -292,6 +305,69 @@ class BrainRequestHandler(BaseHTTPRequestHandler):
     def _api_session_get(self, session_id: str) -> None:
         self._json(self.brain.session(session_id).to_dict())
 
+    def _entitlement(self, payload: dict, session_id: str, size: int):
+        """Resolve owner / premium status and enforce the throttles.
+
+        Returns (is_owner, premium) or sends an error response and returns
+        None.  The owner and verified pass holders are exempt from operational
+        throttles; everyone else is metered.  The safety gate is unaffected.
+        """
+        owner_sig = self.headers.get("X-SG16-Owner-Sig") or self.headers.get("X-SG16-Owner")
+        is_owner = self.brain.panel.is_owner(owner_sig)
+
+        premium = False
+        pass_token = self.headers.get("X-SG16-Pass") or payload.get("pass_token")
+        if pass_token:
+            record = self.server.passes.get(str(pass_token))
+            if record is None:
+                self._error(403, "pass token was not issued by this host")
+                return None
+            try:
+                billing.verify_record(record, self.server.billing_secret)
+                premium = True
+            except billing.VerificationError as exc:
+                self._error(403, f"subscription failed verification: {exc}")
+                return None
+
+        try:
+            self.server.throttle.check(session_id, size, exempt=is_owner or premium)
+        except ThrottleExceeded as exc:
+            self._error(429, str(exc))
+            return None
+        return is_owner, premium
+
+    def _api_subscribe(self, body: bytes) -> None:
+        try:
+            payload = json.loads(body.decode("utf-8")) if body else {}
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            return self._error(400, f"body is not valid json: {exc}")
+        pass_id = str(payload.get("pass", ""))
+        region = payload.get("region")
+        try:
+            record = billing.issue_record(
+                pass_id,
+                region,
+                self.server.billing_secret,
+                provider=str(payload.get("provider", "guest")),
+            )
+        except billing.VerificationError as exc:
+            return self._error(400, str(exc))
+        self.server.passes[record["token"]] = record
+        self._json(record)
+
+    def _api_billing(self) -> None:
+        self._json(
+            {
+                "currency": "USD",
+                "humanitarian_region": billing.HUMANITARIAN_REGION,
+                "passes": {
+                    pid: {"label": spec.label, "price": spec.price, "hours": spec.hours}
+                    for pid, spec in billing.PASSES.items()
+                },
+                "owner_bypass": "token_accounting+throttles only; safety never",
+            }
+        )
+
     def _api_ingest(self, body: bytes) -> None:
         try:
             payload = json.loads(body.decode("utf-8")) if body else {}
@@ -309,13 +385,24 @@ class BrainRequestHandler(BaseHTTPRequestHandler):
             except (binascii.Error, ValueError) as exc:
                 return self._error(400, f"audio_b64 is not valid base64: {exc}")
 
+        entitlement = self._entitlement(
+            payload, session_id, len(text) + len(audio or b"")
+        )
+        if entitlement is None:
+            return
+        is_owner, premium = entitlement
+
         transaction = self.server.submit_locked(  # type: ignore[attr-defined]
             text,
             session_id=session_id,
             audio=audio,
             declared_transcript=payload.get("declared_transcript"),
         )
-        self._json(transaction.to_dict())
+        data = transaction.to_dict()
+        data["owner"] = is_owner
+        data["premium"] = premium
+        data["throttle"] = self.server.throttle.counters(session_id)
+        self._json(data)
 
     def _api_audio(self, body: bytes) -> None:
         if not body:

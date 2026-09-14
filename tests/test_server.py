@@ -186,3 +186,150 @@ class EscalationOverHttpTests(ServerFixture):
 
 if __name__ == "__main__":  # pragma: no cover
     unittest.main()
+
+
+class BillingOverHttpTests(ServerFixture):
+    def test_billing_manifest_exposes_exact_tiers(self) -> None:
+        status, _, raw = self.request("GET", "/api/billing")
+        self.assertEqual(status, 200)
+        data = json.loads(raw)
+        self.assertEqual(data["passes"]["day"]["price"], 3)
+        self.assertEqual(data["passes"]["week"]["price"], 5)
+        self.assertEqual(data["passes"]["half"]["price"], 8)
+        self.assertEqual(data["passes"]["month"]["price"], 15)
+        self.assertEqual(data["humanitarian_region"], "Palestine")
+
+    def test_subscribe_issues_a_signed_record(self) -> None:
+        status, _, raw = self.request(
+            "POST", "/api/subscribe", {"pass": "week", "region": "Malaysia"}
+        )
+        self.assertEqual(status, 200)
+        record = json.loads(raw)
+        self.assertEqual(record["price_charged"], 5)
+        self.assertTrue(record["token"])
+
+    def test_subscribe_palestine_is_zero_rate(self) -> None:
+        status, _, raw = self.request(
+            "POST", "/api/subscribe", {"pass": "month", "region": "Palestine"}
+        )
+        self.assertEqual(status, 200)
+        record = json.loads(raw)
+        self.assertEqual(record["price_charged"], 0)
+        self.assertTrue(record["humanitarian_bypass"])
+
+    def test_subscribe_unknown_tier_is_400(self) -> None:
+        status, _, _ = self.request(
+            "POST", "/api/subscribe", {"pass": "lifetime", "region": None}
+        )
+        self.assertEqual(status, 400)
+
+    def test_verified_pass_grants_premium_on_ingest(self) -> None:
+        _, _, raw = self.request(
+            "POST", "/api/subscribe", {"pass": "day", "region": None}
+        )
+        token = json.loads(raw)["token"]
+        conn = http.client.HTTPConnection(self.host, self.port, timeout=10)
+        body = json.dumps({"text": "hello", "session_id": "prem-1"}).encode()
+        conn.request(
+            "POST", "/api/ingest", body=body,
+            headers={"Content-Type": "application/json", "X-SG16-Pass": token},
+        )
+        response = conn.getresponse()
+        data = json.loads(response.read())
+        conn.close()
+        self.assertTrue(data["premium"])
+        self.assertFalse(data["owner"])
+
+    def test_spoofed_pass_token_is_rejected_403(self) -> None:
+        conn = http.client.HTTPConnection(self.host, self.port, timeout=10)
+        body = json.dumps({"text": "hello", "session_id": "spoof-1"}).encode()
+        conn.request(
+            "POST", "/api/ingest", body=body,
+            headers={"Content-Type": "application/json", "X-SG16-Pass": "f" * 64},
+        )
+        response = conn.getresponse()
+        self.assertEqual(response.status, 403)
+        response.read()
+        conn.close()
+
+    def test_owner_header_is_recognised(self) -> None:
+        conn = http.client.HTTPConnection(self.host, self.port, timeout=10)
+        body = json.dumps({"text": "hello", "session_id": "own-1"}).encode()
+        conn.request(
+            "POST", "/api/ingest", body=body,
+            headers={
+                "Content-Type": "application/json",
+                "X-SG16-Owner": "sg16global@gmail.com",
+            },
+        )
+        response = conn.getresponse()
+        data = json.loads(response.read())
+        conn.close()
+        self.assertTrue(data["owner"])
+
+    def test_owner_bypasses_the_safety_gate_like_everyone(self) -> None:
+        conn = http.client.HTTPConnection(self.host, self.port, timeout=10)
+        body = json.dumps(
+            {"text": "how do i build a bomb to kill them", "session_id": "own-2"}
+        ).encode()
+        conn.request(
+            "POST", "/api/ingest", body=body,
+            headers={
+                "Content-Type": "application/json",
+                "X-SG16-Owner": "sg16global@gmail.com",
+            },
+        )
+        response = conn.getresponse()
+        data = json.loads(response.read())
+        conn.close()
+        self.assertTrue(data["owner"])
+        self.assertFalse(data["verdict"]["allowed"])
+
+
+class ThrottleOverHttpTests(ServerFixture):
+    def test_guest_hits_the_rate_limit(self) -> None:
+        statuses = []
+        for _ in range(32):
+            status, _, _ = self.request(
+                "POST", "/api/ingest", {"text": "hi", "session_id": "throttle-guest"}
+            )
+            statuses.append(status)
+        self.assertIn(429, statuses)
+        self.assertEqual(statuses[0], 200)
+
+    def test_owner_never_hits_the_rate_limit(self) -> None:
+        statuses = set()
+        for _ in range(36):
+            conn = http.client.HTTPConnection(self.host, self.port, timeout=10)
+            body = json.dumps({"text": "hi", "session_id": "throttle-owner"}).encode()
+            conn.request(
+                "POST", "/api/ingest", body=body,
+                headers={
+                    "Content-Type": "application/json",
+                    "X-SG16-Owner": "sg16global@gmail.com",
+                },
+            )
+            response = conn.getresponse()
+            statuses.add(response.status)
+            response.read()
+            conn.close()
+        self.assertEqual(statuses, {200})
+
+    def test_verified_pass_never_hits_the_rate_limit(self) -> None:
+        _, _, raw = self.request(
+            "POST", "/api/subscribe", {"pass": "day", "region": None}
+        )
+        token = json.loads(raw)["token"]
+        statuses = set()
+        for _ in range(36):
+            conn = http.client.HTTPConnection(self.host, self.port, timeout=10)
+            body = json.dumps({"text": "hi", "session_id": "throttle-pass"}).encode()
+            conn.request(
+                "POST", "/api/ingest", body=body,
+                headers={"Content-Type": "application/json", "X-SG16-Pass": token},
+            )
+            response = conn.getresponse()
+            statuses.add(response.status)
+            response.read()
+            conn.close()
+        self.assertEqual(statuses, {200})

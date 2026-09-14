@@ -1,5 +1,5 @@
 // Sovereign SG16 Brain interface. No frameworks, no CDN, no external assets.
-import { getJson, postJson, delJson, fileToBase64 } from "./api.js";
+import { api, getJson, postJson, delJson, fileToBase64 } from "./api.js";
 import { renderMarkdown } from "./markdown.js";
 import {
   sessionId,
@@ -10,6 +10,7 @@ import {
 } from "./storage.js";
 import {
   PASSES,
+  OWNER_EMAIL,
   resolveBilling,
   effectivePrice,
   subscribe,
@@ -209,7 +210,16 @@ async function submit(text, audioB64) {
   addMessage("user", `you · ${session}`, text || "[audio attached]", false);
   const payload = { text, session_id: session };
   if (audioB64) payload.audio_b64 = audioB64;
-  const tx = await postJson("/api/ingest", payload);
+
+  // entitlement headers: VIP owner and verified passes skip throttles; the
+  // safety gate still applies to everyone.
+  const headers = { "Content-Type": "application/json" };
+  const identity = currentIdentity();
+  if (identity && identity.email === OWNER_EMAIL) headers["X-SG16-Owner"] = identity.email;
+  const pass = store.get("pass");
+  if (pass && pass.token) headers["X-SG16-Pass"] = pass.token;
+
+  const tx = await api("/api/ingest", { method: "POST", headers, body: JSON.stringify(payload) });
 
   let kind = "brain";
   if (tx.stage === "refused") kind = "refused";
@@ -360,6 +370,32 @@ els.noticeAck.addEventListener("click", () => (els.notice.hidden = true));
 // ------------------------------------------------------------------
 const LOGO_CANDIDATES = ["logo.png", "IMG_2768.PNG", "original-logo.png"];
 const STAGE_CANDIDATES = ["stage.jpg", "IMG_2764.JPEG", "original-stage.jpeg"];
+const DASHBOARD_CANDIDATES = ["IMG_2765.PNG", "dashboard-reference.png", "official-infographic.png"];
+
+function mountDesignMatrix() {
+  // Mount the authentic infographic verbatim; the frame aligns to the asset's
+  // own natural aspect so the layout grid is driven by the artwork itself.
+  const tryNext = (index) => {
+    if (index >= DASHBOARD_CANDIDATES.length) return;
+    const name = DASHBOARD_CANDIDATES[index];
+    fetch("/assets/" + name, { method: "HEAD" })
+      .then((probe) => {
+        if (!probe || !probe.ok) return tryNext(index + 1);
+        const section = document.getElementById("design-matrix");
+        const frame = document.getElementById("matrix-frame");
+        const img = document.createElement("img");
+        img.src = "/assets/" + name;
+        img.alt = "Sovereign SG16 Brain official dashboard infographic";
+        img.addEventListener("load", () => {
+          frame.style.aspectRatio = `${img.naturalWidth} / ${img.naturalHeight}`;
+        });
+        frame.appendChild(img);
+        section.hidden = false;
+      })
+      .catch(() => tryNext(index + 1));
+  };
+  tryNext(0);
+}
 
 function wireAssetFallbacks() {
   document.querySelectorAll('img[src^="/assets/logo"]').forEach((img) => {
@@ -369,6 +405,7 @@ function wireAssetFallbacks() {
       if (next) img.src = "/assets/" + next;
     });
   });
+  mountDesignMatrix();
   fetch("/assets/stage.jpg", { method: "HEAD" }).catch(() => null).then((r) => {
     if (r && r.ok) return;
     for (const candidate of STAGE_CANDIDATES.slice(1)) {

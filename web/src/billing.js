@@ -6,6 +6,9 @@
 // on-device.  Nothing about it is sent to the sovereign host.
 
 import { store } from "./storage.js";
+import { postJson } from "./api.js";
+
+export const OWNER_EMAIL = "sg16global@gmail.com";
 
 export const PASSES = {
   day: { label: "24-Hour Entry", price: 3, unit: "/day", hours: 24 },
@@ -49,20 +52,36 @@ export function effectivePrice(pass, billing) {
 // ----------------------------------------------------------------------
 // subscription record (local only)
 // ----------------------------------------------------------------------
-export function subscribe(pass, identity) {
-  const billing = resolveBilling();
+async function localIssue(pass, identity, billing) {
   const now = Date.now();
-  const record = {
+  return {
     pass,
     provider: identity ? identity.provider : "guest",
     price_charged: effectivePrice(pass, billing),
     list_price: PASSES[pass].price,
     region: billing.region,
     humanitarian_bypass: billing.humanitarian,
-    activated_at: new Date(now).toISOString(),
-    expires_at: new Date(now + PASSES[pass].hours * 3600 * 1000).toISOString(),
+    activated_at: Math.floor(now / 1000),
+    expires_at: Math.floor(now / 1000) + PASSES[pass].hours * 3600,
     verified_locally: true,
   };
+}
+
+export async function subscribe(pass, identity) {
+  const billing = resolveBilling();
+  let record;
+  try {
+    // server-backed issue: the host re-derives price/expiry and signs a token,
+    // so a tampered client template can never spoof a tier.
+    record = await postJson("/api/subscribe", {
+      pass,
+      region: billing.region,
+      provider: identity ? identity.provider : "guest",
+    });
+  } catch {
+    // air-gapped / host unreachable: fall back to the localized record.
+    record = await localIssue(pass, identity, billing);
+  }
   store.set("pass", record);
   return record;
 }
@@ -93,6 +112,12 @@ async function sha256(message) {
   return h.toString(16).padStart(8, "0");
 }
 
+export function ownerSignature() {
+  const identity = currentIdentity();
+  if (identity && identity.email === OWNER_EMAIL) return identity.email;
+  return null;
+}
+
 export async function attestIdentity(provider) {
   const email = window.prompt(
     `${provider} credential (the email of your ${provider} ID).\n` +
@@ -100,7 +125,14 @@ export async function attestIdentity(provider) {
   );
   if (!email || !email.includes("@")) return null;
   const hash = await sha256(`sg16-local:${provider}:${email.trim().toLowerCase()}`);
-  const identity = { provider, hash, attested_at: new Date().toISOString() };
+  // the raw email stays on this device; it is only used locally to recognise
+  // the VIP owner so the matching header can be attached to requests.
+  const identity = {
+    provider,
+    hash,
+    email: email.trim().toLowerCase(),
+    attested_at: new Date().toISOString(),
+  };
   store.set("identity", identity);
   return identity;
 }

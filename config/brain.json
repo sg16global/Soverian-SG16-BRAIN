@@ -86,5 +86,32 @@
     "simulated": true,
     "performs_device_action": false,
     "contacts_external_authority": false
+  },
+  "owner": {
+    "email": "sg16global@gmail.com",
+    "bypass": [
+      "token_accounting",
+      "operational_throttles"
+    ],
+    "never_bypass": [
+      "anti_harm_gate",
+      "safety_invariants"
+    ]
+  },
+  "throttle": {
+    "max_requests": 30,
+    "window_seconds": 60,
+    "max_chars": 200000
+  },
+  "billing": {
+    "secret": "sg16-sovereign-dev-secret",
+    "currency": "USD",
+    "humanitarian_region": "Palestine",
+    "passes": {
+      "day": 3,
+      "week": 5,
+      "half": 8,
+      "month": 15
+    }
   }
 }

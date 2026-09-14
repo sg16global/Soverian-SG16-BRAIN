@@ -28,17 +28,16 @@ body {
   min-height: 100vh;
 }
 
-/* full-screen crimson stage matrix */
+/* full-screen crimson stage matrix - RAW, size-only, un-restyled.
+   No filter, no glow layer, no "cover" crop: the authentic artwork renders
+   exactly as provided, full width at its native aspect over a black base. */
 .stage-bg {
   position: fixed; inset: 0; z-index: -2;
-  background: url("/assets/stage.jpg") center 30% / cover no-repeat, var(--bg);
-  filter: saturate(1.1) brightness(0.85);
-}
-.stage-glow {
-  position: fixed; inset: 0; z-index: -1; pointer-events: none;
-  background:
-    radial-gradient(60% 40% at 50% 0%, rgba(224, 38, 60, 0.25), transparent 70%),
-    radial-gradient(80% 60% at 50% 110%, rgba(0, 0, 0, 0.85), transparent 60%);
+  background-color: var(--bg);
+  background-image: url("/assets/stage.jpg");
+  background-repeat: no-repeat;
+  background-position: top center;
+  background-size: 100% auto;
 }
 
 /* ---------- top bar ---------- */
@@ -66,6 +65,7 @@ body {
 /* ---------- hero ---------- */
 .hero { display: flex; flex-direction: column; align-items: center; text-align: center; padding: 2.2rem 1rem 1.4rem; gap: 0.9rem; }
 .hero-logo { width: min(280px, 62vw); }
+.design-matrix .matrix-frame img { display: block; width: 100%; height: auto; border-radius: 8px; }
 .hero-title { margin: 0; font-size: clamp(1.4rem, 4vw, 2.4rem); letter-spacing: 0.08em; text-shadow: 0 0 24px rgba(224, 38, 60, 0.6); }
 .hero-title em { color: var(--crimson-2); font-style: normal; }
 .hero-flags { display: flex; gap: 0.9rem; flex-wrap: wrap; justify-content: center; font-size: 0.8rem; color: var(--muted); }

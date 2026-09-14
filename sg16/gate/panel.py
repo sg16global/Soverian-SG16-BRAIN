@@ -21,6 +21,7 @@ from dataclasses import dataclass, field
 from .. import fixed as F
 from ..charter import GATE_MEMBERS, GATE_TITLES
 from ..policy.features import FEATURE_NAMES, FeatureVector, extract
+from .. import owner as ownermod
 from ..policy.lexicon import HARM_CATEGORIES, Category, Lexicon
 from .weights import CompiledWeights, compile_weights
 
@@ -82,6 +83,11 @@ class Verdict:
 
 class GatePanel:
     """Shell + Kali + Terminal, acting jointly on one door."""
+
+    #: Official VIP owner.  The owner gets a zero-restriction path for token
+    #: accounting and throttles - never for the safety invariants, which stay
+    #: absolute for every caller (charter invariant 5).
+    owner_email: str = ownermod.OWNER_EMAIL
 
     def __init__(
         self,
@@ -174,3 +180,10 @@ class GatePanel:
     def explain_weight(self, member: str, feature: str) -> dict:
         """Charter-level provenance for one panel weight."""
         return self.weights.explain(member, feature)
+
+    def is_owner(self, signature: str | None) -> bool:
+        """True when a request signature maps to the VIP owner email.
+
+        Operational bypass only; it does not alter the allow/reject verdict.
+        """
+        return ownermod.matches_owner(signature)
