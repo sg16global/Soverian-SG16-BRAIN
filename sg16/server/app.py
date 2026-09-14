@@ -101,7 +101,9 @@ class BrainRequestHandler(BaseHTTPRequestHandler):
         return self.server.config  # type: ignore[attr-defined]
 
     def log_message(self, fmt: str, *args: Any) -> None:  # noqa: A003
-        sys.stderr.write("[sg16] %s - %s\n" % (self.address_string(), fmt % args))
+        # Zero client logs on the core server grid: request lines are never
+        # written anywhere.  The brain holds in-memory session state only.
+        return
 
     def _send(self, status: int, body: bytes, content_type: str, extra: dict | None = None) -> None:
         self.send_response(status)

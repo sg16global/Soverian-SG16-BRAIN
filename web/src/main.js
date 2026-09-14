@@ -354,4 +354,35 @@ els.genKey.addEventListener("click", async () => {
 
 els.noticeAck.addEventListener("click", () => (els.notice.hidden = true));
 
+// ------------------------------------------------------------------
+// asset resilience: originals dropped in under their own file names are
+// picked up automatically, and always rendered verbatim
+// ------------------------------------------------------------------
+const LOGO_CANDIDATES = ["logo.png", "IMG_2768.PNG", "original-logo.png"];
+const STAGE_CANDIDATES = ["stage.jpg", "IMG_2764.JPEG", "original-stage.jpeg"];
+
+function wireAssetFallbacks() {
+  document.querySelectorAll('img[src^="/assets/logo"]').forEach((img) => {
+    img.addEventListener("error", () => {
+      const current = img.src.split("/").pop();
+      const next = LOGO_CANDIDATES.find((c) => c !== current);
+      if (next) img.src = "/assets/" + next;
+    });
+  });
+  fetch("/assets/stage.jpg", { method: "HEAD" }).catch(() => null).then((r) => {
+    if (r && r.ok) return;
+    for (const candidate of STAGE_CANDIDATES.slice(1)) {
+      fetch("/assets/" + candidate, { method: "HEAD" })
+        .then((probe) => {
+          if (probe && probe.ok) {
+            document.querySelector(".stage-bg").style.backgroundImage =
+              `url("/assets/${candidate}")`;
+          }
+        })
+        .catch(() => null);
+    }
+  });
+}
+
+wireAssetFallbacks();
 boot();
