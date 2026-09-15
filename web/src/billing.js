@@ -1,9 +1,14 @@
-// Standalone application subscription model with localized verification.
+// Standalone application subscription model with localized verification and a
+// live Dodo Payments Merchant-of-Record checkout.
 //
 // The verification routine runs entirely on the user's device: the region is
 // inferred from the device's own timezone/locale (or a manual override the user
 // controls), the pass is recorded locally, and the effective price is derived
-// on-device.  Nothing about it is sent to the sovereign host.
+// on-device.  Nothing about it is sent to the sovereign host.  Every signed
+// pass record, the whole dialogue ledger and the pricing status live in the
+// on-device "sg16/" storage directory - 100% data residency, zero client logs
+// anywhere else.  Palestine is intercepted before the payment gateway and
+// receives a valid $0 operational token natively.
 
 import { store } from "./storage.js";
 import { postJson } from "./api.js";
@@ -66,7 +71,16 @@ export function hasFullSpeedBypass() {
 }
 
 // ----------------------------------------------------------------------
-// subscription record (local fallback + server-backed issue)
+// subscription record (Dodo Payments MoR checkout + sovereign fallback)
+//
+// Pipeline: Palestine is intercepted first and never reaches the gateway -
+// the host issues a valid $0 operational token natively.  Everyone else goes
+// through /api/dodo/checkout: with gateway credentials the host creates a
+// Dodo Merchant-of-Record session and the client is redirected; the signed,
+// duration-locked record is committed to the local sg16/ storage directory
+// the moment /api/dodo/confirm hands it over (after Dodo's webhook has
+// verified the payment server-side).  Without gateway credentials the host
+// signs the same record locally - same storage, same expiry lock.
 // ----------------------------------------------------------------------
 async function localIssue(pass, identity, billing) {
   const vip = isVipOwner(identity);
@@ -85,20 +99,121 @@ async function localIssue(pass, identity, billing) {
   };
 }
 
-export async function subscribe(pass, identity) {
-  const billing = resolveBilling();
+function returnUrlFor(pass) {
+  const url = new URL(window.location.href);
+  url.searchParams.set("dodo_pass", pass);
+  url.searchParams.set("dodo_status", "return");
+  url.hash = "";
+  return url.toString();
+}
+
+export function persistPricingStatus(billing) {
+  // Pricing status lives exclusively in the on-device sg16/ directory.
+  store.set("pricing_status", {
+    region: billing.region || "auto",
+    humanitarian: !!billing.humanitarian,
+    vip: hasFullSpeedBypass(),
+    updated_at: new Date().toISOString(),
+  });
+}
+
+async function humanitarianBypass(pass, identity) {
+  // Palestine bypass: the payment gateway is skipped entirely; the host (or,
+  // offline, this device) issues a valid $0 token straight away.
   let record;
   try {
     record = await postJson("/api/subscribe", {
       pass,
-      region: billing.region,
+      region: "Palestine",
       provider: identity ? identity.provider : "guest",
     });
   } catch {
-    record = await localIssue(pass, identity, billing);
+    record = await localIssue(pass, identity, {
+      region: "Palestine",
+      humanitarian: true,
+    });
+    record.gateway = "humanitarian-bypass";
   }
+  record.humanitarian_bypass = true;
+  record.price_charged = 0;
   store.set("pass", record);
   return record;
+}
+
+export async function startCheckout(pass, identity) {
+  const billing = resolveBilling();
+  if (billing.humanitarian) {
+    return {
+      mode: "humanitarian_bypass",
+      record: await humanitarianBypass(pass, identity),
+    };
+  }
+  try {
+    const session = await postJson("/api/dodo/checkout", {
+      pass,
+      region: billing.region,
+      provider: identity ? identity.provider : "guest",
+      return_url: returnUrlFor(pass),
+      session_id: store.get("session") || undefined,
+    });
+    if (session.mode === "dodo" && session.checkout_url) {
+      store.set("dodo_pending", {
+        session_id: session.session_id,
+        pass,
+        region: billing.region,
+        started_at: new Date().toISOString(),
+      });
+      return { mode: "dodo", checkout_url: session.checkout_url, pass };
+    }
+    // sovereign local issuance: host signed the record without a gateway
+    store.set("pass", session.record);
+    return { mode: "local", record: session.record };
+  } catch {
+    // host unreachable: keep the dashboard open with the local record
+    const record = await localIssue(pass, identity, billing);
+    store.set("pass", record);
+    return { mode: "local", record };
+  }
+}
+
+export async function confirmDodoReturn() {
+  // Called on boot: when the user returns from a Dodo checkout, pick up the
+  // signed record and commit it to the local folder.  If the webhook has not
+  // landed yet the pending session stays for the next visit.
+  const pending = store.get("dodo_pending");
+  if (!pending) return null;
+  try {
+    const result = await postJson("/api/dodo/confirm", {
+      session_id: pending.session_id,
+    });
+    if (result.confirmed && result.record) {
+      store.set("pass", result.record);
+      store.del("dodo_pending");
+      const url = new URL(window.location.href);
+      url.searchParams.delete("dodo_status");
+      url.searchParams.delete("dodo_pass");
+      window.history.replaceState({}, "", url.toString());
+      return result.record;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+export async function ensureHumanitarianPass() {
+  // Boot-time Palestine interceptor: if this device resolves to the
+  // humanitarian region and holds no active pass, obtain the $0 token now.
+  const billing = resolveBilling();
+  if (!billing.humanitarian || currentPass()) return null;
+  const record = await humanitarianBypass("day", currentIdentity());
+  persistPricingStatus(billing);
+  return record;
+}
+
+export async function subscribe(pass, identity) {
+  const result = await startCheckout(pass, identity);
+  return result.record ?? result;
 }
 
 export function currentPass() {

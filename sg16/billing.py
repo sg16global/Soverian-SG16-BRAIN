@@ -1,4 +1,4 @@
-"""SG16 BRAIN - server-backed subscription model.
+"""SG16 BRAIN - server-backed subscription model with Dodo Payments MoR.
 
 This is the authoritative mirror of the client billing structure
 (``web/src/billing.js``).  The host re-derives every price and every expiry, so
@@ -7,21 +7,33 @@ only valid when its token recomputes against the host secret **and** its
 ``price_charged`` equals the price the host derives for the claimed tier and
 region.
 
-Tiers (identical on both sides):
+Tiers (identical on both sides, and mapped one-to-one onto Dodo Payments
+Merchant-of-Record checkout products):
 
     day   24-Hour Entry    $3   24 h
     week  1-Week Premium   $5   7 d
     half  15-Day Premium   $8   15 d
     month 1-Month Premium  $15  30 d
 
-Humanitarian rule: region ``Palestine`` is a zero-rate billing bypass - the
-price is 0 and the dashboard stays open.  This is a *grant*, evaluated by the
-host from the declared region; the host performs no external geolocation.
+Gateway model: ``/api/dodo/checkout`` creates a Dodo checkout session for the
+tier's product; Dodo confirms the payment by calling ``/api/dodo/webhook``,
+which verifies the Standard Webhooks signature and then signs a duration-locked
+token with :func:`record_from_webhook`.  The client commits that token to its
+on-device ``sg16/`` storage directory.  Without gateway credentials the host
+falls back to sovereign local issuance - same signed records, no gateway.
+
+Humanitarian rule: region ``Palestine`` (or any edge geo mapping that lands on
+it) is a zero-rate billing bypass evaluated *before* the gateway is ever
+contacted - the price is 0, the gateway never runs, and the dashboard stays
+open.  This module performs no external geolocation.
 """
 
 from __future__ import annotations
 
+import base64
+import binascii
 import hashlib
+import hmac
 import time
 from dataclasses import dataclass
 from typing import Mapping
@@ -30,13 +42,30 @@ __all__ = [
     "Pass",
     "PASSES",
     "HUMANITARIAN_REGION",
+    "PALESTINE_CODES",
+    "WEBHOOK_SUCCESS_EVENTS",
     "effective_price",
     "issue_record",
     "verify_record",
+    "verify_webhook_signature",
+    "event_payment_object",
+    "record_from_webhook",
+    "checkout_request_body",
+    "is_humanitarian",
+    "resolve_region",
     "VerificationError",
 ]
 
 HUMANITARIAN_REGION = "Palestine"
+
+#: ISO 3166-1 alpha-2 codes that hard-map onto the humanitarian region at the
+#: routing layer.  "PS" is Palestine; "PSE" appears on some edge/CDN geo
+#: headers.  Any of these bypasses the payment gateway entirely (item 5).
+PALESTINE_CODES = frozenset({"PS", "PSE"})
+
+#: Dodo Payments webhook events that complete a purchase.  The signed record is
+#: issued on these and on nothing else.
+WEBHOOK_SUCCESS_EVENTS = ("payment.succeeded", "checkout.session.completed")
 
 
 @dataclass(frozen=True)
@@ -137,3 +166,195 @@ def verify_record(record: Mapping, secret: str, now: float | None = None) -> dic
         raise VerificationError("token does not recompute - record was not issued by this host")
 
     return dict(record)
+
+
+# --------------------------------------------------------------------------
+# Geographic interceptor (Palestine humanitarian bypass)
+# --------------------------------------------------------------------------
+def is_humanitarian(region: str | None) -> bool:
+    """True when *region* is the humanitarian zero-rate region."""
+    return region == HUMANITARIAN_REGION
+
+
+def resolve_region(
+    payload_region: object = None,
+    header_region: str | None = None,
+    geo_country: str | None = None,
+) -> str | None:
+    """Route-layer region resolution with the Palestine interceptor baked in.
+
+    Resolution order:
+
+    1. the region declared in the request payload,
+    2. the ``X-SG16-Region`` header,
+    3. edge geo headers (``CF-IPCountry`` / ``X-Vercel-IP-Country``) - these
+       can only ever *trigger the humanitarian bypass*: a country code that
+       maps to Palestine yields ``"Palestine"``, any other code yields ``None``
+       because a CDN code is not a region name.
+
+    Any Palestine mapping at any layer sends the request around the payment
+    gateway: the host issues a valid $0 operational token natively.
+    """
+    for candidate in (payload_region, header_region):
+        if isinstance(candidate, str) and candidate.strip():
+            return candidate.strip()
+    if isinstance(geo_country, str) and geo_country.strip().upper() in PALESTINE_CODES:
+        return HUMANITARIAN_REGION
+    return None
+
+
+# --------------------------------------------------------------------------
+# Dodo Payments MoR webhook pipeline (pure: signing and verification only;
+# the network call itself lives in sg16/server/dodo.py, the one package
+# member allowed to touch the network)
+# --------------------------------------------------------------------------
+def _webhook_key(secret: str) -> bytes:
+    """Decode a Standard Webhooks signing secret ("whsec_..." -> raw bytes)."""
+    raw = secret.strip()
+    if raw.startswith("whsec_"):
+        raw = raw[len("whsec_"):]
+    try:
+        return base64.b64decode(raw, validate=True)
+    except (binascii.Error, ValueError):
+        # tolerate operators who stored the raw secret without base64
+        return raw.encode("utf-8")
+
+
+def verify_webhook_signature(
+    secret: str,
+    webhook_id: str | None,
+    webhook_timestamp: str | None,
+    webhook_signature: str | None,
+    raw_body: bytes,
+    now: float | None = None,
+    tolerance_seconds: int = 300,
+) -> bool:
+    """Verify a Dodo Payments webhook exactly as Dodo signs them.
+
+    Dodo uses the Standard Webhooks scheme: ``webhook-id``,
+    ``webhook-timestamp`` and ``webhook-signature`` headers; the signed
+    content is ``"{webhook-id}.{webhook-timestamp}.{raw body}"``; the key is
+    the base64-decoded secret with its ``whsec_`` prefix stripped; signatures
+    are ``v1,`` + base64(HMAC-SHA256), space-separated when re-signed.
+
+    Raises :class:`VerificationError` on missing headers, a timestamp outside
+    the replay-tolerance window, or a signature that does not recompute.
+    Compares in constant time.
+    """
+    now = time.time() if now is None else now
+    if not secret:
+        raise VerificationError("no webhook signing secret is configured on this host")
+    if not webhook_id or not webhook_timestamp or not webhook_signature:
+        raise VerificationError("webhook signature headers are missing or incomplete")
+    try:
+        sent_at = int(str(webhook_timestamp).strip())
+    except ValueError as exc:
+        raise VerificationError("webhook-timestamp is not a unix timestamp") from exc
+    if abs(now - sent_at) > tolerance_seconds:
+        raise VerificationError("webhook-timestamp is outside the replay tolerance window")
+
+    message = f"{webhook_id}.{webhook_timestamp}.".encode("utf-8") + raw_body
+    expected = base64.b64encode(
+        hmac.new(_webhook_key(secret), message, hashlib.sha256).digest()
+    ).decode("ascii")
+    for part in str(webhook_signature).split(" "):
+        version, _, candidate = part.strip().partition(",")
+        if version == "v1" and candidate and hmac.compare_digest(candidate, expected):
+            return True
+    raise VerificationError("webhook signature does not verify against the configured secret")
+
+
+def event_payment_object(event: Mapping) -> dict:
+    """Extract the payment object from a webhook event body.
+
+    Dodo payloads place the object at ``event["data"]``; some documented
+    variants nest it at ``event["data"]["object"]``.  Both are accepted.
+    """
+    data = event.get("data")
+    if isinstance(data, Mapping):
+        inner = data.get("object")
+        if isinstance(inner, Mapping):
+            return dict(inner)
+        return dict(data)
+    return {}
+
+
+def record_from_webhook(
+    event: Mapping,
+    secret: str,
+    now: float | None = None,
+    provider: str = "dodo",
+) -> dict:
+    """Turn a *verified* success event into a signed, duration-locked record.
+
+    The pass tier and region travel in the checkout metadata (``sg16_pass``,
+    ``sg16_region``).  The charged amount is cross-checked against the host's
+    own price derivation (smallest currency unit, e.g. 500 == $5.00), so a
+    tampered or mismatched webhook cannot mint a pass for another tier.
+    Humanitarian tiers are structurally impossible through the gateway and
+    are rejected outright - the bypass never charges.
+    """
+    event_type = str(event.get("type", ""))
+    if event_type not in WEBHOOK_SUCCESS_EVENTS:
+        raise VerificationError(f"unsupported webhook event: {event_type!r}")
+
+    payment = event_payment_object(event)
+    metadata = payment.get("metadata") or {}
+    if not isinstance(metadata, Mapping):
+        metadata = {}
+
+    pass_id = str(metadata.get("sg16_pass") or "")
+    region = metadata.get("sg16_region") or None
+    if pass_id not in PASSES:
+        raise VerificationError(
+            f"webhook metadata does not name a known pass tier: {pass_id!r}"
+        )
+    if is_humanitarian(region):
+        raise VerificationError(
+            "humanitarian passes are never charged through the gateway; "
+            "issue them through the local bypass instead"
+        )
+
+    amount = payment.get("amount", payment.get("total_amount"))
+    if amount is not None:
+        try:
+            paid = int(amount)
+        except (TypeError, ValueError) as exc:
+            raise VerificationError("payment amount is not an integer") from exc
+        if paid != PASSES[pass_id].price * 100:
+            raise VerificationError(
+                f"paid amount {paid} does not match the host price for {pass_id!r}"
+            )
+
+    return issue_record(pass_id, region, secret, provider=provider, now=now)
+
+
+def checkout_request_body(
+    product_id: str | None,
+    pass_id: str,
+    region: str | None,
+    return_url: str | None = None,
+    metadata: Mapping | None = None,
+) -> dict:
+    """Build the Dodo Payments create-checkout-session request body.
+
+    One pass = one product, quantity 1, with the SG16 metadata that the
+    webhook verification later consumes.
+    """
+    if pass_id not in PASSES:
+        raise VerificationError(f"unknown pass tier: {pass_id!r}")
+    if not product_id:
+        raise VerificationError(
+            f"no Dodo product id is configured on this host for tier {pass_id!r}"
+        )
+    body = {
+        "product_cart": [{"product_id": str(product_id), "quantity": 1}],
+        "metadata": {
+            "sg16_pass": pass_id,
+            "sg16_region": region or "",
+            **dict(metadata or {}),
+        },
+    }
+    if return_url:
+        body["return_url"] = str(return_url)
+    return body

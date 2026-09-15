@@ -15,10 +15,23 @@ import math
 import operator
 from typing import Callable
 
-__all__ = ["ArithmeticError_", "evaluate", "try_evaluate", "looks_numeric"]
+__all__ = [
+    "ArithmeticError_",
+    "INPUT_ERROR_TOKEN",
+    "evaluate",
+    "try_evaluate",
+    "looks_numeric",
+]
 
 MAX_EXPONENT = 64
 MAX_NUMERIC_LENGTH = 4096
+
+#: Structural input-error bound token.  When an expression is refused by the
+#: safe compute path - most notably a chain deep enough to exhaust the
+#: interpreter stack - :func:`try_evaluate` returns this token instead of
+#: letting the exception escape.  The character layer maps it onto a canonical
+#: deferral, so the host answers predictably instead of crashing (Bug #1).
+INPUT_ERROR_TOKEN = "__sg16_input_error__"
 
 
 class ArithmeticError_(ValueError):
@@ -153,10 +166,20 @@ def format_result(value: float) -> str:
 
 
 def try_evaluate(text: str) -> str | None:
-    """Return a formatted answer, or ``None`` when this is not arithmetic."""
+    """Return a formatted answer, or ``None`` when this is not arithmetic.
+
+    Structural input errors never escape as exceptions.  A chain such as
+    ``1+1+1+...`` a few thousand terms long parses into a tree deeper than the
+    interpreter recursion limit; :meth:`_node` would otherwise raise
+    ``RecursionError`` straight through the caller.  That case is bounded to
+    :data:`INPUT_ERROR_TOKEN`, which the character layer converts into a
+    canonical deferral - the request is answered, never crashed.
+    """
     if not looks_numeric(text):
         return None
     try:
         return format_result(evaluate(text))
     except (ArithmeticError_, SyntaxError, ValueError, OverflowError, ZeroDivisionError):
         return None
+    except RecursionError:
+        return INPUT_ERROR_TOKEN

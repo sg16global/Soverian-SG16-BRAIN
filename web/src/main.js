@@ -13,7 +13,10 @@ import {
   OWNER_EMAIL,
   resolveBilling,
   effectivePrice,
-  subscribe,
+  startCheckout,
+  confirmDodoReturn,
+  ensureHumanitarianPass,
+  persistPricingStatus,
   currentPass,
   attestIdentity,
   currentIdentity,
@@ -174,6 +177,7 @@ function showNotice(notice) {
 // ------------------------------------------------------------------
 function refreshPricing() {
   const billing = resolveBilling();
+  persistPricingStatus(billing);
   const vip = hasFullSpeedBypass();
   if (els.vipChip) els.vipChip.hidden = !vip;
   els.regionLine.textContent =
@@ -203,13 +207,30 @@ async function handleBuy(passId) {
       : "Apple";
     identity = await attestIdentity(provider);
   }
-  const record = await subscribe(passId, identity);
+  const result = await startCheckout(passId, identity);
   refreshPricing();
+
+  if (result.mode === "dodo" && result.checkout_url) {
+    addMessage(
+      "audio-note",
+      "dodo payments · secure mor checkout",
+      `Opening the Dodo Payments Merchant-of-Record checkout for the ${PASSES[passId].label}. ` +
+        `The moment payment confirms, the signed, duration-locked pass token is committed ` +
+        `to your local sg16/ folder - it never leaves your device.`,
+      false
+    );
+    setTimeout(() => {
+      window.location.href = result.checkout_url;
+    }, 600);
+    return;
+  }
+
+  const record = result.record;
   addMessage(
     "audio-note",
     "local subscription",
     `${PASSES[record.pass].label} activated on-device for $${record.price_charged}` +
-      (record.humanitarian_bypass ? " (humanitarian zero-rate bypass)" : "") +
+      (record.humanitarian_bypass ? " (humanitarian zero-rate bypass — gateway skipped)" : "") +
       (record.vip_owner_bypass ? " (VIP owner bypass)" : "") +
       `. History stays in your local folder; the core grid keeps 0 client logs.`
   );
@@ -320,6 +341,27 @@ async function boot() {
     els.status.textContent = "unreachable";
     addMessage("brain", "host error", String(error.message || error), false);
   }
+
+  // Returning from a Dodo checkout: pick up the signed record if the webhook
+  // has confirmed, and commit it to the local folder.
+  try {
+    const confirmed = await confirmDodoReturn();
+    if (confirmed && confirmed.pass) {
+      addMessage(
+        "audio-note",
+        "dodo payments · confirmed",
+        `${PASSES[confirmed.pass]?.label || confirmed.pass} confirmed and signed into ` +
+          `your local folder. Valid until ${new Date(confirmed.expires_at * 1000).toLocaleString()}.`,
+        false
+      );
+    }
+  } catch {}
+
+  // Palestine interceptor: humanitarian devices get their $0 token on boot.
+  try {
+    await ensureHumanitarianPass();
+  } catch {}
+
   refreshPricing();
 }
 

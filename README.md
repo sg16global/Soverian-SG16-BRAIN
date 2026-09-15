@@ -72,13 +72,13 @@ sg16/            the brain (stdlib only, no network in the core)
 web/             the UI layer (Vite source tree, served raw by the host)
 knowledge/       verifiable facts only (recall / compute / defer)
 config/          brain.json (single config, no env magic)
-tests/           228 tests, stdlib unittest
+tests/           327 tests, stdlib unittest
 ```
 
 ## Run it
 
 ```bash
-python3 -m unittest discover -s tests -t .      # full suite (228 tests)
+python3 -m unittest discover -s tests -t .      # full suite (327 tests)
 python3 -m sg16.server 0.0.0.0 8080             # or: python3 scripts/serve.py
 # open http://localhost:8080
 ```
@@ -99,6 +99,10 @@ host serves `web/` as native ES modules — though `web/` is also a valid Vite p
 | `GET /api/parity` | online/offline parity proof |
 | `GET /api/weight?member=&feature=` | charter provenance of one weight |
 | `GET/DELETE /api/session/<id>` | read / forget a session |
+| `POST /api/subscribe` | host-signed local subscription record (sovereign issuance) |
+| `POST /api/dodo/checkout` | Dodo Payments MoR checkout session for one pass |
+| `POST /api/dodo/webhook` | signed Dodo payment confirmation (Standard Webhooks) |
+| `POST /api/dodo/confirm` | client pickup of the confirmed, duration-locked record |
 
 ## Standalone application layer (web/)
 
@@ -106,12 +110,19 @@ host serves `web/` as native ES modules — though `web/` is also a valid Vite p
   crimson stage matrix; neon dashboard grid throughout.
 * **Buy API / API Portal** — prominent controls; the portal lists the endpoints and
   issues a *local* API key.
-* **Premium passes** — 24h **$3** · 1-week **$5** · 15-day **$8** · 1-month **$15**.
-  Verification is *localized*: identity (Google/Apple) is hashed **on the device**,
-  the pass and chat history live only in the local folder; the core grid keeps
-  **0 client logs**.
-* **Humanitarian exception** — inbound environments detected as **Palestine** get a
-  zero-rate billing bypass: the dashboard stays open, free and unlimited.
+* **Premium passes** — 24h **$3** · 1-week **$5** · 15-day **$8** · 1-month **$15**,
+  sold through the live **Dodo Payments Merchant-of-Record** checkout
+  (`/api/dodo/checkout` → Dodo-hosted payment → signed webhook confirmation →
+  `/api/dodo/confirm`). On confirmation the host signs a **duration-locked token**
+  and the client commits it to the on-device `sg16/` storage directory. Without
+  gateway credentials the host signs the same records itself (sovereign local
+  issuance); the pricing table, dialogue ledger and pass records live **only** in
+  the user's local folder — the core grid keeps **0 client logs**.
+* **Humanitarian exception** — the geographic interceptor on the routing path maps
+  the declared region, the `X-SG16-Region` header, or edge geo headers
+  (`CF-IPCountry` / `X-Vercel-IP-Country` = `PS`/`PSE`) onto **Palestine** and
+  bypasses the payment gateway entirely: a valid **$0** operational token is
+  issued natively and the dashboard stays open, free and unlimited.
 * **Byte-stream delivery** — every asset and module is served by the sovereign host
   itself (`X-SG16-Stream: binary`), no CDN, no external origin.
 * **Footer** carries the corporate footprint: *SAIF TECH GLOBAL LLC — Technology
@@ -128,6 +139,13 @@ identical mathematics.
 
 * The **device-authority notice is simulated** and says so in its payload and
   fine print; the brain has no capability to lock hardware.
+* **Payments are live through Dodo Payments (MoR)** only when the operator
+  fills `billing.dodo` in `config/brain.json` (API key, webhook secret and one
+  product id per pass). With empty credentials the host says so — `mode:
+  sovereign-local` on `/api/billing` — and signs records locally; nothing
+  pretends to be a gateway. Webhook confirmations are verified with the
+  Standard Webhooks HMAC scheme before a token is ever signed, and humanitarian
+  passes are structurally incapable of being charged.
 * **Speech-to-text is deferred, not faked.** Voxtral measures real acoustics
   (RMS, peak, ZCR, 8-bin Goertzel spectrum) and reports them; the transcript is
   deferred unless the caller declares one, which is labelled `declared-by-caller`.

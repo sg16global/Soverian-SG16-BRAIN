@@ -76,3 +76,46 @@ curl -s -X POST https://mistralbrain.com/api/ingest \
 `config/brain.json` → `gate.threshold` (joint-risk cutoff) and `gate.veto_level`
 (per-category saturation). Lower threshold = stricter door. The charter wording is
 not configurable; it lives in `sg16/charter.py` and is asserted verbatim by tests.
+
+## Enabling the Dodo Payments gateway (live MoR)
+
+The subscription passes sell through Dodo Payments Merchant-of-Record once the
+operator fills the `billing.dodo` section of `config/brain.json`
+(or the `DODO_API_KEY` / `DODO_WEBHOOK_SECRET` environment variables, which
+override the file):
+
+```json
+"billing": {
+  "dodo": {
+    "test_mode": false,
+    "api_key": "<Dodo dashboard API key>",
+    "webhook_secret": "<whsec_... from the Dodo webhook configuration>",
+    "product_ids": {
+      "day":   "<product for the $3 24-hour pass>",
+      "week":  "<product for the $5 1-week pass>",
+      "half":  "<product for the $8 15-day pass>",
+      "month": "<product for the $15 1-month pass>"
+    }
+  }
+}
+```
+
+Point a Dodo webhook at `https://mistralbrain.com/api/dodo/webhook` subscribed to
+`payment.succeeded` and `checkout.session.completed`. The host verifies the
+Standard Webhooks signature (`webhook-id` / `webhook-timestamp` /
+`webhook-signature`, HMAC-SHA256 over `{id}.{timestamp}.{body}`, 5-minute replay
+window) before signing anything. The checkout flow is then:
+
+1. client → `POST /api/dodo/checkout` → host creates the Dodo session;
+2. payer completes the Dodo-hosted checkout and returns to the app;
+3. Dodo → `POST /api/dodo/webhook` (signature-verified) → the host signs a
+   duration-locked pass token;
+4. client → `POST /api/dodo/confirm` → commits the token to the on-device
+   `sg16/` storage directory.
+
+With empty credentials the host runs the sovereign local issuance path
+(`/api/billing` reports `mode: sovereign-local`) — same signed records, no
+gateway, fully air-gap-safe. Palestine is intercepted before the gateway in
+every mode and always receives a valid $0 token natively. The gateway code is
+the only network surface beyond the HTTP host itself, and it lives strictly
+inside `sg16/server/` (enforced by `tests/test_isolation.py`).

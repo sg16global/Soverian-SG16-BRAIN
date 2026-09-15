@@ -120,6 +120,20 @@
       "week": 5,
       "half": 8,
       "month": 15
+    },
+    "dodo": {
+      "test_mode": true,
+      "api_base_test": "https://test-api.dodopayments.com",
+      "api_base_live": "https://live-api.dodopayments.com",
+      "api_key": "",
+      "webhook_secret": "",
+      "product_ids": {
+        "day": "",
+        "week": "",
+        "half": "",
+        "month": ""
+      },
+      "note": "Operator credentials for the Dodo Payments MoR gateway. Fill api_key + webhook_secret + one product id per pass (from the Dodo dashboard) to switch /api/dodo/checkout onto the live gateway; DODO_API_KEY / DODO_WEBHOOK_SECRET environment variables override these. With empty credentials the host runs the sovereign local issuance path - same signed, duration-locked records, no gateway. Palestine is intercepted before the gateway in every mode and receives a valid $0 token natively."
     }
   }
 }
