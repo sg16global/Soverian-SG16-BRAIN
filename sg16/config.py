@@ -220,8 +220,8 @@ class BrainConfig:
     def dodo_api_bases(self) -> dict[str, str]:
         d = self._dodo()
         return {
-            "test": str(d.get("api_base_test", "https://test-api.dodopayments.com")),
-            "live": str(d.get("api_base_live", "https://live-api.dodopayments.com")),
+            "test": str(d.get("api_base_test", "https://test.dodopayments.com")),
+            "live": str(d.get("api_base_live", "https://live.dodopayments.com")),
         }
 
     def summary(self) -> dict:

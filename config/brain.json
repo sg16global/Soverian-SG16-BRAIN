@@ -123,8 +123,8 @@
     },
     "dodo": {
       "test_mode": true,
-      "api_base_test": "https://test-api.dodopayments.com",
-      "api_base_live": "https://live-api.dodopayments.com",
+      "api_base_test": "https://test.dodopayments.com",
+      "api_base_live": "https://live.dodopayments.com",
       "api_key": "",
       "webhook_secret": "",
       "product_ids": {

@@ -31,8 +31,10 @@ __all__ = ["DodoError", "DodoClient", "DEFAULT_TIMEOUT"]
 
 DEFAULT_TIMEOUT = 10
 
-_TEST_BASE = "https://test-api.dodopayments.com"
-_LIVE_BASE = "https://live-api.dodopayments.com"
+# Official Dodo Payments environment URLs (docs.dodopayments.com,
+# "API Reference - Introduction"): Test Mode and Live Mode.
+_TEST_BASE = "https://test.dodopayments.com"
+_LIVE_BASE = "https://live.dodopayments.com"
 
 
 class DodoError(RuntimeError):
