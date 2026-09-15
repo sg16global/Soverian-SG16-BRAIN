@@ -327,6 +327,17 @@ class CharacterEngine:
 
         # --- Block 1 rule 6: never fabricate -----------------------------
         computed = calc.try_evaluate(text)
+        if computed == calc.INPUT_ERROR_TOKEN:
+            # Safe-compute bound (Bug #1): the expression itself exceeds what
+            # the arithmetic path will walk, so the honest state is a deferral
+            # - never a crash, and never an echo of the oversized payload.
+            session.stage = Stage.DEFERRED.value
+            return self._response(
+                "That expression is beyond the safe compute bound of this "
+                f"brain, so I am not computing it. {CANON[CanonKey.UNKNOWN]}",
+                stage=Stage.DEFERRED,
+                canonical_key=CanonKey.UNKNOWN,
+            )
         if computed is not None:
             session.stage = Stage.ANSWERING.value
             return self._response(

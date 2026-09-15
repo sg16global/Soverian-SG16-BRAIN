@@ -9,6 +9,7 @@ in :mod:`sg16.charter`.
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -179,6 +180,49 @@ class BrainConfig:
     @property
     def billing_secret(self) -> str:
         return str(self._section("billing").get("secret", "sg16-sovereign-dev-secret"))
+
+    # ------------------------------------------------------------------
+    # Dodo Payments MoR gateway (billing.dodo section, env-overridable)
+    # ------------------------------------------------------------------
+    def _dodo(self) -> dict:
+        section = self._section("billing").get("dodo", {})
+        return section if isinstance(section, dict) else {}
+
+    @property
+    def dodo_api_key(self) -> str:
+        """Bearer key for the Dodo checkout API.  Empty => sovereign local mode."""
+        return str(
+            os.environ.get("DODO_API_KEY")
+            or self._dodo().get("api_key", "")
+        )
+
+    @property
+    def dodo_webhook_secret(self) -> str:
+        """Standard Webhooks secret (whsec_...) used to verify Dodo webhooks."""
+        return str(
+            os.environ.get("DODO_WEBHOOK_SECRET")
+            or self._dodo().get("webhook_secret", "")
+        )
+
+    @property
+    def dodo_test_mode(self) -> bool:
+        return bool(self._dodo().get("test_mode", True))
+
+    @property
+    def dodo_product_ids(self) -> dict[str, str]:
+        """pass tier -> Dodo product id (one product per pass)."""
+        raw = self._dodo().get("product_ids", {})
+        if not isinstance(raw, dict):
+            return {}
+        return {str(key): str(value) for key, value in raw.items()}
+
+    @property
+    def dodo_api_bases(self) -> dict[str, str]:
+        d = self._dodo()
+        return {
+            "test": str(d.get("api_base_test", "https://test.dodopayments.com")),
+            "live": str(d.get("api_base_live", "https://live.dodopayments.com")),
+        }
 
     def summary(self) -> dict:
         return {
