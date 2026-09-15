@@ -249,6 +249,15 @@ class HardenedServerTests(ServerFixture):
 
     config = BrainConfig.default()
 
+    def test_listen_backlog_is_production_sized(self) -> None:
+        """Regression: the socketserver default backlog of 5 reset connections
+        under a browser's parallel first-paint fetches (HTML + modules + assets
+        open at once), surfacing client-side as sudden connection "crashes".
+        The host must carry a real accept backlog."""
+        from sg16.server.app import BrainHTTPServer
+
+        self.assertGreaterEqual(BrainHTTPServer.request_queue_size, 128)
+
     # -- Bug #1 over HTTP ---------------------------------------------------
     def test_deep_chain_ingest_is_answered_not_crashed(self) -> None:
         status, _, raw = self.request(

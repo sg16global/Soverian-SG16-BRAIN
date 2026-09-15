@@ -95,6 +95,11 @@ class BrainHTTPServer(ThreadingHTTPServer):
 
     daemon_threads = True
     allow_reuse_address = True
+    #: The socketserver default backlog of 5 resets connections under a
+    #: browser's normal first-paint burst (HTML + modules + assets open in
+    #: parallel), which surfaces client-side as a dropped "crash".  128 gives
+    #: the accept thread headroom under real traffic.
+    request_queue_size = 128
 
     def __init__(self, address, handler, brain: SG16Brain, config: BrainConfig) -> None:
         self.brain = brain
