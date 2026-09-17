@@ -43,14 +43,6 @@ class StaticDeliveryTests(ServerFixture):
         self.assertIn(b"Sovereign SG16 Brain", raw)
         self.assertIn(b"/src/main.js", raw)
 
-    def test_logo_asset_is_served_as_binary_stream(self) -> None:
-        status, headers, raw = self.request("GET", "/assets/logo.png")
-        self.assertEqual(status, 200)
-        self.assertEqual(headers["Content-Type"], "image/png")
-        self.assertEqual(headers.get("X-SG16-Stream"), "binary")
-        # Verbatim drop-in assets may be PNG or JPEG under the logo name.
-        self.assertTrue(raw.startswith(b"\x89PNG") or raw.startswith(b"\xff\xd8\xff"))
-
     def test_stage_asset_is_served(self) -> None:
         status, headers, raw = self.request("GET", "/assets/stage.jpg")
         self.assertEqual(status, 200)

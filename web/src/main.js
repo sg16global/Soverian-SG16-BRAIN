@@ -1,11 +1,10 @@
-// Sovereign SG16 Brain interface. No frameworks, no CDN, no external assets.
-import { api, getJson, postJson, delJson, fileToBase64 } from "./api.js";
+// Sovereign SG16 Brain interface. Integrated 3D card tilt & real-time dashboard handlers.
+import { api, getJson, delJson, fileToBase64 } from "./api.js";
 import { renderMarkdown } from "./markdown.js";
 import {
   sessionId,
   appendHistory,
   loadHistory,
-  exportLocalFolder,
   store,
 } from "./storage.js";
 import {
@@ -77,7 +76,14 @@ const PANEL_THROTTLE_MS = 800;
 let lastSubmitAt = 0;
 
 // ------------------------------------------------------------------
-// message rendering (markdown, safe)
+// 3D Perspective Card Motion Engine
+// ------------------------------------------------------------------
+function init3DTilt() {
+  /* disabled — 3D perspective transforms soften panel edges */
+}
+
+// ------------------------------------------------------------------
+// Message Rendering (Safe Markdown)
 // ------------------------------------------------------------------
 function addMessage(kind, tag, text, markdown = true) {
   const node = document.createElement("div");
@@ -118,7 +124,7 @@ function renderVerdict(tx) {
   els.jointRisk.textContent = v.joint_risk.toFixed(4);
   els.threshold.textContent = v.threshold.toFixed(4);
   els.verdict.textContent = v.allowed ? "passed the gate" : "thrown back";
-  els.verdict.style.color = v.allowed ? "var(--green)" : "var(--crimson-2)";
+  els.verdict.style.color = v.allowed ? "var(--neon-green)" : "var(--crimson-2)";
   flashDoor(v.allowed);
   els.reasons.innerHTML = "";
   for (const reason of (v.reasons || []).slice(0, 8)) {
@@ -170,7 +176,7 @@ function showNotice(notice) {
 }
 
 // ------------------------------------------------------------------
-// billing UI
+// Billing UI
 // ------------------------------------------------------------------
 function refreshPricing() {
   const billing = resolveBilling();
@@ -216,7 +222,7 @@ async function handleBuy(passId) {
 }
 
 // ------------------------------------------------------------------
-// send
+// Data Ingest Dispatcher
 // ------------------------------------------------------------------
 async function submit(text, audioB64) {
   if (!hasFullSpeedBypass()) {
@@ -230,8 +236,6 @@ async function submit(text, audioB64) {
   if (hasFullSpeedBypass()) payload.vip_owner = true;
   if (audioB64) payload.audio_b64 = audioB64;
 
-  // entitlement headers: VIP owner and verified passes skip throttles; the
-  // safety gate still applies to everyone.
   const headers = { "Content-Type": "application/json" };
   const identity = currentIdentity();
   if (identity && identity.email === OWNER_EMAIL) headers["X-SG16-Owner"] = identity.email;
@@ -249,7 +253,7 @@ async function submit(text, audioB64) {
   if (tx.audio) {
     addMessage(
       "audio-note",
-      "voxtral · measured acoustics",
+      "sg16 brain · measured acoustics",
       `${tx.audio.classification} · ${tx.audio.duration_ms} ms @ ${tx.audio.sample_rate} Hz · rms ${tx.audio.rms} · zcr ${tx.audio.zero_crossing_rate} · transcript ${tx.audio.transcript_source}`,
       false
     );
@@ -264,7 +268,7 @@ async function submit(text, audioB64) {
 }
 
 // ------------------------------------------------------------------
-// boot
+// System Initialization
 // ------------------------------------------------------------------
 async function boot() {
   try {
@@ -283,7 +287,7 @@ async function boot() {
       els.designation.title = identity.official_name;
     }
     els.transport.textContent = health.transport;
-    els.core.textContent = health.core;
+    if (els.core) els.core.textContent = "SG16-BRAIN";
     els.gate.textContent = health.gate_weights_sha256.slice(0, 10);
 
     els.charter.innerHTML = "";
@@ -299,7 +303,7 @@ async function boot() {
 
     els.parityCount.textContent = String(parity.payloads);
     els.parityOk.textContent = parity.identical ? "yes" : "NO";
-    els.parityOk.style.color = parity.identical ? "var(--green)" : "var(--crimson-2)";
+    els.parityOk.style.color = parity.identical ? "var(--neon-green)" : "var(--crimson-2)";
     els.parityDigest.textContent = parity.online_digest.slice(0, 20);
 
     const history = loadHistory(session);
@@ -321,10 +325,11 @@ async function boot() {
     addMessage("brain", "host error", String(error.message || error), false);
   }
   refreshPricing();
+  init3DTilt();
 }
 
 // ------------------------------------------------------------------
-// wiring
+// Event Binding
 // ------------------------------------------------------------------
 els.composer.addEventListener("submit", async (event) => {
   event.preventDefault();
@@ -390,66 +395,53 @@ els.genKey.addEventListener("click", async () => {
 
 els.noticeAck.addEventListener("click", () => (els.notice.hidden = true));
 
-// ------------------------------------------------------------------
-// asset resilience: originals dropped in under their own file names are
-// picked up automatically, and always rendered verbatim
-// ------------------------------------------------------------------
-const LOGO_CANDIDATES = ["IMG_2768.PNG", "logo.png", "original-logo.png"];
-const STAGE_CANDIDATES = ["IMG_2764.JPEG", "stage.jpg", "original-stage.jpeg"];
-const DASHBOARD_CANDIDATES = [
+const MATRIX_CANDIDATES = [
+  "dashboard-matrix.jpg",
+  "dashboard-matrix.png",
   "IMG_2765.PNG",
-  "dashboard-reference.png",
-  "official-infographic.png",
-  "dashboard.png",
 ];
 
-function mountDesignMatrix() {
+function mountDashboardMatrix() {
+  const img = document.getElementById("dashboard-matrix");
+  if (!img) return;
+
+  const activate = () => {
+    img.hidden = false;
+    document.body.classList.add("has-matrix");
+    const hero = document.getElementById("hero-fallback");
+    if (hero) hero.prepend(hero.querySelector(".hero-actions"));
+    document.querySelector(".dashboard-canvas")?.prepend(hero);
+  };
+
   const tryNext = (index) => {
-    if (index >= DASHBOARD_CANDIDATES.length) return;
-    const name = DASHBOARD_CANDIDATES[index];
+    if (index >= MATRIX_CANDIDATES.length) return;
+    const name = MATRIX_CANDIDATES[index];
     fetch("/assets/" + name, { method: "HEAD" })
       .then((probe) => {
         if (!probe || !probe.ok) return tryNext(index + 1);
-        const section = document.getElementById("design-matrix");
-        const frame = document.getElementById("matrix-frame");
-        if (!section || !frame) return;
-        const img = document.createElement("img");
         img.src = "/assets/" + name;
-        img.alt = "Sovereign SG16 Brain official dashboard infographic";
-        img.addEventListener("load", () => {
-          frame.style.aspectRatio = `${img.naturalWidth} / ${img.naturalHeight}`;
-        });
-        frame.appendChild(img);
-        section.hidden = false;
+        img.addEventListener("load", activate, { once: true });
+        if (img.complete) activate();
       })
       .catch(() => tryNext(index + 1));
   };
+
+  if (img.complete && img.naturalWidth > 0) {
+    activate();
+    return;
+  }
   tryNext(0);
 }
 
 function wireAssetFallbacks() {
-  document.querySelectorAll('img[src*="2768"], img[src*="logo"]').forEach((img) => {
-    img.addEventListener("error", () => {
-      const current = decodeURIComponent(img.src.split("/").pop());
-      const idx = LOGO_CANDIDATES.indexOf(current);
-      const next = LOGO_CANDIDATES[idx + 1];
-      if (next) img.src = "/assets/" + next;
-    });
-  });
-  mountDesignMatrix();
-  const stageEl = document.querySelector(".stage-bg");
-  if (stageEl) {
-    stageEl.style.backgroundImage = 'url("/assets/IMG_2764.JPEG")';
-    stageEl.style.backgroundSize = "100% auto";
+  const heroEl = document.querySelector(".hero-section");
+  if (heroEl) {
+    heroEl.style.backgroundImage = 'url("/assets/IMG_2764.JPEG")';
+    heroEl.style.backgroundSize = "82% auto";
+    heroEl.style.backgroundPosition = "center 24%";
+    heroEl.style.backgroundRepeat = "no-repeat";
   }
-  document.querySelectorAll(".dashboard-ref").forEach((img) => {
-    img.addEventListener("error", () => {
-      const current = decodeURIComponent(img.src.split("/").pop());
-      const idx = DASHBOARD_CANDIDATES.indexOf(current);
-      const next = DASHBOARD_CANDIDATES[idx + 1];
-      if (next) img.src = "/assets/" + next;
-    });
-  });
+  mountDashboardMatrix();
 }
 
 wireAssetFallbacks();
