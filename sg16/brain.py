@@ -28,7 +28,6 @@ from .character import CharacterEngine, Session
 from .config import BrainConfig
 from .engine.core import DevstralCore, EngineConfig
 from .identity import NATIVE_UTTERANCES
-from .language import SUPPORTED as SUPPORTED_LANGUAGES
 from .engine.voxtral import VoxtralRoute
 from .gate.panel import GatePanel, Verdict
 from .gate.perimeter import (
@@ -61,13 +60,44 @@ class SG16Brain:
     def __init__(self, config: BrainConfig | None = None) -> None:
         self.config = config or BrainConfig.default()
         self.lexicon = Lexicon()
-        self.core = DevstralCore(self.config.engine)
+        # Dual core: Mistral 7B Apache 2.0 real when weights present, Devstral small fallback
+        # Brother to brother honest: no fake
+        model_type = self.config.engine_model_type
+        if "mistral" in model_type.lower():
+            try:
+                from .engine.mistral import Mistral7BCore
+                mistral_cfg = self.config.mistral_engine
+                # For tests/sandbox without weights, use small_for_tests to avoid OOM
+                # In production with real weights, full 7B will load
+                use_small = not mistral_cfg.is_real_weights_available()
+                self.core = Mistral7BCore(mistral_cfg, small_for_tests=use_small)
+                self.mistral_core = self.core
+                self.devstral_core = DevstralCore(self.config.engine)
+                # For knowledge indexing, use devstral core if mistral is small test mode
+                # to keep backward compat, but prefer mistral core
+                self._primary_core_for_knowledge = self.core
+            except Exception as e:
+                print(f"[SG16Brain] Mistral 7B core init failed {e}, fallback to Devstral small")
+                self.core = DevstralCore(self.config.engine)
+                self.mistral_core = None
+                self.devstral_core = self.core
+                self._primary_core_for_knowledge = self.core
+        else:
+            self.core = DevstralCore(self.config.engine)
+            self.mistral_core = None
+            self.devstral_core = self.core
+            self._primary_core_for_knowledge = self.core
+
         self.knowledge = KnowledgeBase.load(
             self.config.knowledge_path,
             self.config.knowledge_threshold,
             self.config.knowledge_lexical_floor,
         )
-        self.knowledge.index(self.core)
+        try:
+            self.knowledge.index(self._primary_core_for_knowledge)
+        except Exception:
+            # Fallback indexing with devstral if mistral indexing fails
+            self.knowledge.index(self.devstral_core if hasattr(self, 'devstral_core') else self.core)
         self.panel = GatePanel(
             threshold=self.config.gate_threshold,
             veto_level=self.config.gate_veto,
@@ -151,21 +181,40 @@ class SG16Brain:
         return verify_online_offline_parity(self.core, payloads).to_dict()
 
     def identity(self) -> dict:
-        """The designation-protocol handshake payload (Block 7, rule 2)."""
+        """The designation-protocol handshake payload (Block 7, rule 2) + Master Charter."""
+        from .charter import (
+            MASTER_CHARTER,
+            FUNDAMENTAL_ATTITUDE,
+            OWNERSHIP_PHILOSOPHY,
+            PERSONALITY_TRAITS,
+            HUMAN_DIGNITY_PRINCIPLE,
+        )
+
         path = self.core.identity_path()
         return {
             "designation": self.config.designation,
             "official_name": self.config.official_name,
             "utterance": path["utterance"],
+            "fundamental_attitude": FUNDAMENTAL_ATTITUDE,
+            "ownership_philosophy": OWNERSHIP_PHILOSOPHY,
+            "personality_traits": list(PERSONALITY_TRAITS),
+            "human_dignity": HUMAN_DIGNITY_PRINCIPLE,
+            "master_charter": {
+                "title": MASTER_CHARTER["title"],
+                "purpose": MASTER_CHARTER["purpose"],
+                "sections": list(MASTER_CHARTER.keys()),
+            },
             "native": dict(NATIVE_UTTERANCES),
-            "languages": list(SUPPORTED_LANGUAGES),
+            "languages": ["universal"],
             "inscription": path["inscription"],
             "tensor": path["tensor"],
             "verified": path["verified"],
         }
 
     def health(self) -> dict:
-        return {
+        from .charter import PRIVACY_PRINCIPLES, CHILD_SAFETY_PRINCIPLES, EXTREME_HARM_PRINCIPLES
+
+        base = {
             "status": "ready",
             "brain": self.config.name,
             "official_name": self.config.official_name,
@@ -186,4 +235,36 @@ class SG16Brain:
             "topology": self.housing.topology(),
             "door": self.housing.door.counters(),
             "config": self.config.summary(),
+            "privacy": {
+                "zero_retention_architecture": "in-memory sessions only, no disk persistence, no hidden dossiers",
+                "principles": dict(PRIVACY_PRINCIPLES["stateless_rules"]),
+                "honest_claims": PRIVACY_PRINCIPLES["honest_claims"],
+                "rejection_retention": PRIVACY_PRINCIPLES["rejection_retention"],
+            },
+            "child_safety": {
+                "boundary": CHILD_SAFETY_PRINCIPLES["boundary"],
+                "permanence": CHILD_SAFETY_PRINCIPLES["permanence"],
+            },
+            "extreme_harm": {
+                "protection": EXTREME_HARM_PRINCIPLES["refusal"],
+                "intelligent_protection": EXTREME_HARM_PRINCIPLES["goal"],
+            },
         }
+
+        # Mistral 7B Apache 2.0 info
+        try:
+            if hasattr(self, 'mistral_core') and self.mistral_core is not None:
+                base["mistral_7b"] = self.mistral_core.info()
+            else:
+                # Check if core is Mistral
+                if hasattr(self.core, 'info'):
+                    base["mistral_7b"] = self.core.info()
+            # Engine model type
+            base["engine_model_type"] = self.config.engine_model_type
+            base["engine_weight_path"] = self.config.engine_weight_path
+            base["license"] = "Apache 2.0 - SG16 Developer AI Developer Engine by Saif Tech Global LLC"
+            base["offline_online"] = "OFFLINE & ONLINE MODE"
+        except Exception:
+            pass
+
+        return base

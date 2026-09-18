@@ -110,18 +110,53 @@ class BrainConfig:
         except ValueError:
             return Transport.OFFLINE
 
-    # engine
+    # engine - supports both devstral small and mistral 7b Apache 2.0
     @property
     def engine(self) -> EngineConfig:
         e = self._section("engine")
+        # If mistral-7b config present, still return EngineConfig for backward compat
+        # Real Mistral config is accessed via mistral_engine property
+        fallback = e.get("fallback", {}) if isinstance(e.get("fallback"), dict) else {}
         return EngineConfig(
-            head=str(e.get("head", "devstral-small-2")),
-            dim=int(e.get("dim", 32)),
-            ffn_hidden=int(e.get("ffn_hidden", 64)),
-            chunk_bytes=int(e.get("chunk_bytes", 24)),
-            max_chunks=int(e.get("max_chunks", 48)),
-            seed=str(e.get("seed", "sg16.core.matrix")),
+            head=str(e.get("head", fallback.get("head", "devstral-small-2"))),
+            dim=int(e.get("dim", fallback.get("dim", 64))),
+            ffn_hidden=int(e.get("ffn_hidden", fallback.get("ffn_hidden", 128))),
+            chunk_bytes=int(e.get("chunk_bytes", fallback.get("chunk_bytes", 32))),
+            max_chunks=int(e.get("max_chunks", fallback.get("max_chunks", 64))),
+            layers=int(e.get("layers", fallback.get("layers", 2))),
+            seed=str(e.get("seed", fallback.get("seed", "sg16.core.matrix.v2"))),
+            density=str(e.get("density", fallback.get("density", "pure-mathematical-embedded"))),
         )
+
+    @property
+    def mistral_engine(self):
+        """True Mistral 7B Apache 2.0 config - 100% real trained when weights present"""
+        from .engine.mistral import MistralConfig
+        e = self._section("engine")
+        return MistralConfig(
+            model_type=str(e.get("model_type", "mistral-7b-apache2")),
+            hidden_size=int(e.get("hidden_size", 4096)),
+            intermediate_size=int(e.get("intermediate_size", 14336)),
+            num_hidden_layers=int(e.get("num_hidden_layers", 32)),
+            num_attention_heads=int(e.get("num_attention_heads", 32)),
+            num_key_value_heads=int(e.get("num_key_value_heads", 8)),
+            vocab_size=int(e.get("vocab_size", 32000)),
+            max_position_embeddings=int(e.get("max_position_embeddings", 32768)),
+            rope_theta=float(e.get("rope_theta", 10000.0)),
+            sliding_window=int(e.get("sliding_window", 4096)),
+            head=str(e.get("head", "mistral-7b-apache2")),
+            seed=str(e.get("seed", "sg16.mistral.7b.v1")),
+            density=str(e.get("density", "trained-mistral-7b-apache2-pure-math")),
+            weight_path=str(e.get("weight_path", "./weights/mistral-7b")) if e.get("weight_path") else None,
+        )
+
+    @property
+    def engine_model_type(self) -> str:
+        return str(self._section("engine").get("model_type", "devstral-small-2"))
+
+    @property
+    def engine_weight_path(self) -> str:
+        return str(self._section("engine").get("weight_path", "./weights/mistral-7b"))
 
     # gate
     @property

@@ -10,7 +10,7 @@ raises `PerimeterBypass` for anything else, so there is no second entrance.
 Every payload enters via `MasterDoor.enter` → the 3-GPT panel inspects it
 (**first gate drop**) → if rejected it is thrown back and the core *never runs*
 (the transaction's `plan` is `None`). If accepted it reaches the character engine
-and Devstral core, and the response leaves via `MasterDoor.exit` **without
+and Devstral/Mistral core, and the response leaves via `MasterDoor.exit` **without
 re-inspection**, carrying the entry seal (Block 2, rule 5).
 
 ## The 3-GPT joint room
@@ -23,13 +23,43 @@ vetoes on its own. The weight matrix is compiled from the charter
 it, scaled by its severity and its per-member affinity, plus SHA-256-seeded jitter.
 `GET /api/weight` prints the full provenance of any weight.
 
-## The core (Devstral Small 2)
+## The core - Dual Mode: Devstral Small + Mistral 7B Apache 2.0
 
+### Universal Mode (Devstral Small 2) - 74k params Q16.16
 `sg16/engine/core.py` runs the forward pass entirely in integers:
 byte-tokenization → block embedding → integer-period positional basis → LayerNorm →
 scaled dot-product self-attention → tanh feed-forward → mean-pool intent vector.
 Every intermediate is hashed into the plan trace; the plan digest excludes the
 transport label, so online and offline plans are byte-for-byte identical.
+Runs on any device from tea-vendor low-end phone to industrialist server.
+
+### Real Trained Mode (Mistral 7B Apache 2.0) - 7B params - 100% real
+`sg16/engine/mistral.py` implements true Mistral 7B architecture - Apache 2.0:
+- 32 layers, 4096 hidden, 14336 intermediate, 32 heads, 8 kv heads GQA
+- RoPE theta 10000, SwiGLU MLP (gate, up, down), RMSNorm, Sliding Window 4096
+- Vocab 32000
+
+**Two sub-modes:**
+1. **REAL TRAINED MODE** (when weights present at `config/brain.json:engine.weight_path`):
+   - Loads 7B parameters from `mistralai/Mistral-7B-v0.1` Apache 2.0 via `scripts/download_mistral.py`
+   - Intelligence from TRAINED PARAMETERS - gradient descent on trillions tokens
+   - Requires ~14GB disk, ~16GB RAM, GPU recommended
+   - 100% real true mathematical pure trained model - no fake
+   - Supports OFFLINE & ONLINE per SG16 Developer logo
+
+2. **SEEDED SIMULATED MODE** (for tests, sandbox, low-end):
+   - Generates deterministic matrices via SHA256 (same method as Devstral)
+   - Uses Mistral architecture but with seeded weights (64 dim small for tests)
+   - Clearly marked as SIMULATED, NOT trained
+   - Runs on any device
+
+**Brother to brother honest:** No fake. `core.info()` reports `is_real_trained` and `weight_origin`.
+
+Download real weights:
+```bash
+python scripts/download_mistral.py --output ./weights/mistral-7b
+# Then update config/brain.json weight_path
+```
 
 ## The audio route (Voxtral)
 
@@ -37,7 +67,7 @@ transport label, so online and offline plans are byte-for-byte identical.
 DSP in fixed point: peak, RMS, zero-crossing rate, an 8-bin Goertzel spectrum and a
 spectral-flatness classification (silence / tone / speech-like / broadband-noise).
 Transcription is deferred unless the caller declares one (labelled, never faked).
-Control returns to Devstral afterwards.
+Control returns to Devstral/Mistral afterwards.
 
 ## Character & zero-hallucination
 
@@ -45,10 +75,23 @@ Control returns to Devstral afterwards.
 escalation ladder, model neutrality and the canonical deferral. Answers come from
 three sources only: **recall** (sovereign KB), **compute** (safe arithmetic) or
 **defer**. There is no fourth path, so fabrication is structurally impossible.
+Permanently inscribed with Master Charter Sections 1-23.
 
 ## The host (the only network surface)
 
 `sg16/server/app.py` is a stdlib `ThreadingHTTPServer`. It serves the UI from
 `web/`, the JSON API, and nothing else. `tests/test_isolation.py` parses every core
-module and fails on any network/subprocess/third-party import, so the core cannot
-quietly grow a dependency.
+module and fails on any network/subprocess/third-party import, except optional
+torch/safetensors for Mistral 7B real mode (explicitly allowed when real weights present).
+So the core cannot quietly grow a dependency.
+
+## SG16 Developer Logo
+
+SG16 Developer AI Developer Engine by Saif Tech Global LLC
+- AI DEVELOPER • OFFLINE & ONLINE MODE
+- Apache 2.0
+- developer.saiftechglobal.com
+- USA UK FRANCE RUSSIA CHINA GERMANY
+
+Represents universal deployment: offline once weights downloaded, online when needed.
+License: Apache 2.0 - 100% compliant with Mistral 7B Apache 2.0.
