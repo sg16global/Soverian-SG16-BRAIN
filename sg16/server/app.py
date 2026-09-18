@@ -84,6 +84,7 @@ CONTENT_TYPES = {
     ".svg": "image/svg+xml",
     ".ico": "image/x-icon",
     ".woff2": "font/woff2",
+    ".webmanifest": "application/manifest+json",
     ".png": "image/png",
     ".jpg": "image/jpeg",
     ".jpeg": "image/jpeg",
