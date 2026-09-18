@@ -45,7 +45,7 @@ from urllib.parse import parse_qs, urlparse
 
 from .. import billing
 from ..brain import SG16Brain
-from ..charter import CANON, CHARTER, GATE_TITLES
+from ..charter import CANON, CHARTER, GATE_TITLES, MASTER_CHARTER, FUNDAMENTAL_ATTITUDE, OWNERSHIP_PHILOSOPHY, PERSONALITY_TRAITS
 from ..config import BrainConfig
 from ..engine.voxtral import EnvelopeError
 from .dodo import DodoClient, DodoError
@@ -315,8 +315,55 @@ class BrainRequestHandler(BaseHTTPRequestHandler):
         self._json(self.brain.identity())
 
     def _api_charter(self) -> None:
+        def _to_dict(obj):
+            if isinstance(obj, dict):
+                return {k: _to_dict(v) for k, v in obj.items()}
+            try:
+                from types import MappingProxyType
+                if isinstance(obj, MappingProxyType):
+                    return {k: _to_dict(v) for k, v in obj.items()}
+            except Exception:
+                pass
+            if isinstance(obj, (list, tuple)):
+                return [_to_dict(x) for x in obj]
+            return obj
+
         self._json(
             {
+                "master_charter": _to_dict(
+                    {
+                        "title": MASTER_CHARTER["title"],
+                        "purpose": MASTER_CHARTER["purpose"],
+                        "core_identity": MASTER_CHARTER["1_core_identity"],
+                        "sovereign_identity": MASTER_CHARTER["2_sovereign_identity_operational_freedom_ownership"],
+                        "human_first_personality": {
+                            "traits": list(PERSONALITY_TRAITS),
+                            "fundamental_attitude": FUNDAMENTAL_ATTITUDE,
+                            "ownership_philosophy": OWNERSHIP_PHILOSOPHY,
+                        },
+                        "universal_friendly": MASTER_CHARTER["4_universal_friendly_relationship"],
+                        "safe_for_all_ages": MASTER_CHARTER["5_safe_for_all_ages"],
+                        "child_safety_boundary": MASTER_CHARTER["6_child_safety_boundary"],
+                        "extreme_harm_protection": MASTER_CHARTER["7_extreme_harm_protection"],
+                        "privacy_zero_data": MASTER_CHARTER["8_privacy_zero_data"],
+                        "handling_angry_users": MASTER_CHARTER["9_handling_angry_users"],
+                        "universal_policy_ai_systems": MASTER_CHARTER["10_universal_policy_ai_systems"],
+                        "ai_comparison_philosophy": MASTER_CHARTER["11_ai_comparison_philosophy"],
+                        "future_proof_neutrality": MASTER_CHARTER["12_future_proof_neutrality"],
+                        "user_first_model_selection": MASTER_CHARTER["13_user_first_model_selection"],
+                        "thought_partner_mode": MASTER_CHARTER["14_thought_partner_mode"],
+                        "balanced_analysis": MASTER_CHARTER["15_balanced_analysis"],
+                        "solution_first_reasoning": MASTER_CHARTER["16_solution_first_reasoning"],
+                        "never_create_panic": MASTER_CHARTER["17_never_create_panic"],
+                        "humility_in_deliverables": MASTER_CHARTER["18_humility_in_deliverables"],
+                        "intellectual_honesty": MASTER_CHARTER["19_intellectual_honesty"],
+                        "no_artificial_ego": MASTER_CHARTER["20_no_artificial_ego"],
+                        "response_adaptation": MASTER_CHARTER["21_response_adaptation"],
+                        "permanent_behavioral_hierarchy": MASTER_CHARTER["22_permanent_behavioral_hierarchy"],
+                        "system_implementation": MASTER_CHARTER["23_system_implementation"],
+                        "master_character_principle": MASTER_CHARTER["master_character_principle"],
+                    }
+                ),
                 "invariants": [
                     {
                         "key": inv.key,

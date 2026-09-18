@@ -1,9 +1,16 @@
 """SG16 BRAIN - core identity inscription (Block 7, rules 1-2).
 
+Master Identity, Personality, Safety & Behavioral Charter implementation.
+
 The sovereign designation is bound to the structural matrix fingerprint at
-construction time.  Identity queries resolve on the inscribed tensor path and
+construction time. Identity queries resolve on the inscribed tensor path and
 return the canonical utterance in the caller's own language — no translation
 loop, no external lookup.
+
+Core Identity: Sovereign SG16 Brain
+Fundamental Attitude: I will do everything within my available capabilities to
+help you reach the best possible outcome.
+Ownership Philosophy: You are not here to serve me. I am here to assist you.
 """
 
 from __future__ import annotations
@@ -11,6 +18,15 @@ from __future__ import annotations
 import hashlib
 import re
 from dataclasses import dataclass
+
+from .charter import (
+    CORE_IDENTITY,
+    FUNDAMENTAL_ATTITUDE,
+    OWNERSHIP_PHILOSOPHY,
+    PERSONALITY_TRAITS,
+    HUMAN_DIGNITY_PRINCIPLE,
+    MASTER_CHARTER,
+)
 
 __all__ = [
     "OFFICIAL_NAME",
@@ -22,16 +38,26 @@ __all__ = [
     "verify",
     "detect_identity_query",
     "utterance_for",
+    "FUNDAMENTAL_ATTITUDE",
+    "OWNERSHIP_PHILOSOPHY",
+    "PERSONALITY_TRAITS",
+    "HUMAN_DIGNITY_PRINCIPLE",
 ]
 
-OFFICIAL_NAME = "Sovereign SG16 Brain"
+OFFICIAL_NAME = CORE_IDENTITY
 DESIGNATION = "SG16"
 UTTERANCE = (
     "I am Sovereign SG16 Brain, a 100% fully independent, self-contained, "
     "and sovereign core brain engine running with zero corporate dependencies."
 )
 
+# Extended identity with charter-aligned attitude
+EXTENDED_UTTERANCE = (
+    f"{UTTERANCE} {FUNDAMENTAL_ATTITUDE} {OWNERSHIP_PHILOSOPHY}"
+)
+
 # Native identity utterances — one per supported script family (Block 7 rule 4).
+# Language-agnostic core, but identity parity across human languages.
 NATIVE_UTTERANCES: dict[str, str] = {
     "en": UTTERANCE,
     "bn": (
