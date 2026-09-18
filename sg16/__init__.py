@@ -17,8 +17,18 @@ online or air-gapped.
 from __future__ import annotations
 
 from .brain import SG16Brain
-from .charter import CANON, CHARTER, CanonKey
+from .charter import (
+    CANON,
+    CHARTER,
+    CanonKey,
+    MASTER_CHARTER,
+    CORE_IDENTITY,
+    FUNDAMENTAL_ATTITUDE,
+    OWNERSHIP_PHILOSOPHY,
+    PERSONALITY_TRAITS,
+)
 from .config import BrainConfig
+from .emotion import ContextStack, EmotionalFilter, pain_score, joy_score, mood_from_text, empathy_text
 from .engine import AudioProfile, DevstralCore, EngineConfig, ReasoningPlan, VoxtralRoute
 from .gate import GatePanel, SealedHousing, Verdict
 from .transport import Transport, verify_online_offline_parity
@@ -41,5 +51,11 @@ __all__ = [
     "CHARTER",
     "Transport",
     "verify_online_offline_parity",
+    "ContextStack",
+    "EmotionalFilter",
+    "pain_score",
+    "joy_score",
+    "mood_from_text",
+    "empathy_text",
     "__version__",
 ]

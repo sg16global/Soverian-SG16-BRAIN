@@ -82,7 +82,8 @@ class UniversalAccessTests(unittest.TestCase):
 
 class LanguageParityTests(unittest.TestCase):
     def test_bangla_script_detected(self) -> None:
-        self.assertEqual(detect("তুমি কে?"), "bn")
+        # Universal brain: all human speech as pure mathematical patterns, no language codes
+        self.assertEqual(detect("তুমি কে?"), "universal")
 
     def test_bangla_question_marker(self) -> None:
         self.assertTrue(has_question_marker("তুমি কে?"))

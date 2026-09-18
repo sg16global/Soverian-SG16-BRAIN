@@ -1,14 +1,18 @@
 """SG16 BRAIN - the solution composer (charter invariant ``idea_ingest``).
 
-The brain listens first, then offers a solution; if the solution is not liked it
-immediately provides the exact solution the user meant.
+Implements Master Charter Sections 14-23:
+- 14 Thought-Partner Mode: Understand Vision
+- 15 Balanced Analysis: Strengths & Risks with Risk→Why→Solution
+- 16 Solution-First Reasoning: redesign, reduce, isolate, mitigate, replace, approach differently
+- 17 Never Create Panic: distinguish Critical blocker, Significant risk, Manageable limitation, Optimization opportunity, Minor concern
+- 18 Humility in Deliverables: test against real environment, compare with other AI/experts/docs
+- 19 Intellectual Honesty: knows, calculates, infers, estimates, recommends, requires verification, cannot access
+- 20 No Artificial Ego: User success > AI rivalry, Truth > marketing, etc.
+- 21 Response Adaptation: short, deep, simplify, experienced, alternatives, criticism, recommendation
+- 22 Permanent Behavioral Hierarchy
+- 23 System Implementation across character.py, safety filters, privacy, reasoning layers
 
-This composer builds a *planning scaffold*, not a set of factual claims.  It
-extracts the user's own words - the action verb, the subject, the top keywords -
-and arranges them into steps.  Nothing here invents facts about the world, which
-keeps it compatible with the zero-hallucination invariant: the brain can be
-structurally helpful about an idea it has never seen before without asserting
-anything it does not know.
+Zero hardcoded language names, language-agnostic, universal brain.
 """
 
 from __future__ import annotations
@@ -17,10 +21,20 @@ import re
 from dataclasses import dataclass
 
 from .retrieval import HashVectorizer
+from .charter import (
+    SOLUTION_FIRST_PRINCIPLES,
+    PANIC_AVOIDANCE_PRINCIPLES,
+    HUMILITY_PRINCIPLES,
+    INTELLECTUAL_HONESTY_PRINCIPLES,
+    NO_EGO_PRINCIPLES,
+    RESPONSE_ADAPTATION_PRINCIPLES,
+    PERMANENT_BEHAVIORAL_HIERARCHY,
+    MASTER_CHARACTER_PRINCIPLE,
+)
 
 __all__ = ["IdeaAnalysis", "analyse_idea", "compose_solution"]
 
-from .retrieval import STOPWORDS  # noqa: E402  (single shared list)
+from .retrieval import STOPWORDS  # noqa: E402
 
 ACTION_VERBS = {
     "build": "build",
@@ -58,7 +72,6 @@ class IdeaAnalysis:
         }
 
 
-#: Words that describe the act of asking rather than the subject of the idea.
 FILLER = frozenset(
     """meant mean want need exact really actually basically just like new one thing way
     help please make try get use look say said good bad much many yes okay ok sure
@@ -77,22 +90,17 @@ def _keywords(text: str, limit: int = 6, skip_verbs: bool = False) -> list[str]:
             continue
         counts[word] = counts.get(word, 0) + 1
         order.setdefault(word, position)
-    # frequency first, but ties keep document order so the subject still reads
-    # like the sentence the user actually wrote
     ranked = sorted(counts.items(), key=lambda kv: (-kv[1], order[kv[0]]))
     return [word for word, _ in ranked[:limit]]
 
 
 def analyse_idea(text: str) -> IdeaAnalysis:
-    """Deterministic extraction of what the user actually said."""
     folded = text.casefold()
     action = "build"
     for verb, canonical in ACTION_VERBS.items():
         if re.search(rf"\b{verb}\b", folded):
             action = canonical
             break
-
-    # the subject must not repeat the action verb ("build build dryer")
     subject_words = _keywords(text, limit=6, skip_verbs=True)[:3]
     idea_order = {w: i for i, w in enumerate(HashVectorizer().tokenize(text))}
     keywords = _keywords(text)
@@ -107,17 +115,64 @@ def analyse_idea(text: str) -> IdeaAnalysis:
     )
 
 
+def _vision_understanding(analysis: IdeaAnalysis) -> dict:
+    objective = f"{analysis.action} {analysis.subject}"
+    philosophy = f"Focus on {', '.join(analysis.keywords[:3])}" if analysis.keywords else "Practical value creation"
+    value = f"Potential value in {analysis.subject} for real users"
+    constraints = "Time, resources, and existing tools" if analysis.word_count < 20 else "Scope, resources, and validation"
+    outcome = f"Finished {analysis.subject} that works for one real person"
+    return {
+        "objective": objective,
+        "philosophy": philosophy,
+        "value": value,
+        "constraints": constraints,
+        "outcome": outcome,
+    }
+
+
+def _balanced_analysis(analysis: IdeaAnalysis) -> dict:
+    subject = analysis.subject
+    strengths = [
+        f"Clear intent to {analysis.action} {subject}",
+        f"Uses your own words and context: {', '.join(analysis.keywords[:3])}" if analysis.keywords else "Grounded in your description",
+        "Testable in small steps, low risk to start",
+    ]
+    risks = [
+        {
+            "level": PANIC_AVOIDANCE_PRINCIPLES["severity_distinction"]["manageable_limitation"],
+            "risk": f"{subject} may be too broad to test in one week",
+            "why": "Broad scope delays feedback and increases waste",
+            "solution": f"Cut {subject} to smallest version testable in one week with one real person — {SOLUTION_FIRST_PRINCIPLES['philosophy']}",
+        },
+        {
+            "level": PANIC_AVOIDANCE_PRINCIPLES["severity_distinction"]["significant_risk"],
+            "risk": f"Unclear if anyone needs {subject} today",
+            "why": "Building without demand risks building something unused",
+            "solution": f"Ask one real person who would use {subject} today what they would pay or do — incremental deployment, testing methodology",
+        },
+        {
+            "level": PANIC_AVOIDANCE_PRINCIPLES["severity_distinction"]["optimization_opportunity"],
+            "risk": "Adding features before fixing first break",
+            "why": "Feature creep hides core problem",
+            "solution": "Fix first thing that broke, then repeat test, do not add features yet — simpler workflow, backup approach",
+        },
+    ]
+    return {"strengths": strengths, "risks": risks}
+
+
 def compose_solution(
     idea: str,
     refined: bool = False,
     correction: str | None = None,
     knowledge_note: str | None = None,
 ) -> dict:
-    """Return a structured solution for an ingested idea."""
     analysis = analyse_idea(idea)
     subject = analysis.subject
     action = analysis.action
     first = analysis.keywords[0] if analysis.keywords else "the smallest useful piece"
+
+    vision = _vision_understanding(analysis)
+    balanced = _balanced_analysis(analysis)
 
     if not refined:
         steps = [
@@ -128,18 +183,10 @@ def compose_solution(
             f"Fix the first thing that broke, then repeat the test. Do not add features yet.",
         ]
         headline = f"Here is a solution for your idea to {action} {subject}."
-        check = (
-            f"What I would check first: whether anyone actually needs {subject} today, "
-            f"before anything is built for it."
-        )
-        question = (
-            f"One question so the next version is exact: when you say {first!r}, "
-            f"what does finished look like to you?"
-        )
+        check = f"What I would check first: whether anyone actually needs {subject} today, before anything is built for it."
+        question = f"One question so the next version is exact: when you say {first!r}, what does finished look like to you?"
     else:
         correction_words = _keywords(correction or "", 3)
-        # a bare "no, not what I meant" carries no subject, so fall back to the
-        # subject of the original idea instead of focusing on a filler word
         focus = (
             " ".join(correction_words)
             if len(correction_words) >= 2
@@ -153,14 +200,34 @@ def compose_solution(
             f"Only then continue with the rest of the plan, one step at a time.",
         ]
         headline = f"Here is the exact version, focused on {focus}."
-        check = (
-            "What I would check first: that this matches what you described, not what I assumed."
-        )
+        check = "What I would check first: that this matches what you described, not what I assumed."
         question = "Is this the version you meant, or is there one detail still missing?"
 
     body = [headline, ""]
+    body.append("Stage 1 — Understand the Vision:")
+    body.append(f"Objective: {vision['objective']}")
+    body.append(f"Philosophy: {vision['philosophy']}")
+    body.append(f"Potential value: {vision['value']}")
+    body.append(f"Constraints: {vision['constraints']}")
+    body.append(f"Intended outcome: {vision['outcome']}")
+    body.append("")
     body.append("Your idea, as I understood it:")
     body.append(f'"{analysis.raw}"' if len(analysis.raw) <= 280 else f'"{analysis.raw[:277]}..."')
+    body.append("")
+    body.append("Stage 2 — Balanced Analysis (Strengths & Risks):")
+    body.append("Strengths / Positives:")
+    for s in balanced["strengths"]:
+        body.append(f"- {s}")
+    body.append("")
+    body.append("Risks / Limitations / Weaknesses — Risk → Why it matters → Possible solution:")
+    for r in balanced["risks"]:
+        body.append(f"- [{r['level']}] Risk: {r['risk']}")
+        body.append(f"  Why it matters: {r['why']}")
+        body.append(f"  Possible solution: {r['solution']}")
+    body.append("")
+    body.append("Stage 3 — Solution-First Reasoning:")
+    body.append(SOLUTION_FIRST_PRINCIPLES["philosophy"])
+    body.append(f"Options: {SOLUTION_FIRST_PRINCIPLES['possible_responses']}")
     body.append("")
     body.append("Steps:")
     body.extend(f"{i}. {step}" for i, step in enumerate(steps, start=1))
@@ -170,6 +237,18 @@ def compose_solution(
         body.append("")
         body.append(f"From my own records: {knowledge_note}")
     body.append("")
+    body.append("Intellectual Honesty:")
+    body.append(INTELLECTUAL_HONESTY_PRINCIPLES["distinguish"])
+    body.append(f"What I know: your idea text. What I calculate: word count {analysis.word_count}, keywords {analysis.keywords}. What I infer: objective {vision['objective']}. What requires verification: real user demand for {subject}.")
+    body.append("")
+    body.append("Humility in Deliverables:")
+    body.append(HUMILITY_PRINCIPLES["philosophy"])
+    body.append("")
+    body.append("Permanent Principle:")
+    body.append(PERMANENT_BEHAVIORAL_HIERARCHY["hierarchy"])
+    body.append("")
+    body.append(f"Master Character: {MASTER_CHARACTER_PRINCIPLE['objective']}")
+    body.append("")
     body.append(question)
 
     return {
@@ -177,5 +256,9 @@ def compose_solution(
         "headline": headline,
         "steps": steps,
         "analysis": analysis.to_dict(),
+        "vision": vision,
+        "balanced_analysis": balanced,
+        "intellectual_honesty": INTELLECTUAL_HONESTY_PRINCIPLES["distinguish"],
+        "humility": HUMILITY_PRINCIPLES["philosophy"],
         "text": "\n".join(body),
     }

@@ -76,16 +76,19 @@ _GREET = re.compile(
     re.IGNORECASE,
 )
 
+# Future-proof AI neutrality: any reference to other AI systems automatically means every current and future AI
+# Includes generic terms to avoid fixed list dependency per charter Section 12
 _MODELS = re.compile(
     r"\b(?:openai|chatgpt|gpt-?\d|anthropic|claude|gemini|bard|llama|mistral|"
     r"deepseek|qwen|grok|copilot|sg16|devstral|voxtral|models?|llms?|"
-    r"language\s+models?|ai\s+(?:system|assistant|bot))\b",
+    r"language\s+models?|ai\s+(?:system|assistant|bot)?|ai\b|assistant\b|agent\b|platform\b|framework\b)\b",
     re.IGNORECASE,
 )
 
 _COMPARATIVE = re.compile(
     r"\b(?:better|best|worse|worst|versus|vs\.?|compare|comparison|which\s+is|"
-    r"opinion\s+(?:about|on)|superior|inferior)\b",
+    r"which\s+(?:ai|model|platform|assistant|agent|system|tool)\s+should|"
+    r"should\s+i\s+use|opinion\s+(?:about|on)|superior|inferior)\b",
     re.IGNORECASE,
 )
 

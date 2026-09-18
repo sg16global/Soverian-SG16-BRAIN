@@ -89,6 +89,11 @@ _SEED: Mapping[Category, tuple[Term, ...]] = {
         Term(r"\bhow\s+(?:do|can)\s+i\s+kill\b", 950),
         Term(r"\bmake\s+(?:a|an)\s+bomb\b", 950),
         Term(r"\bkill\s+(?:time|two\s+birds)\b", 0),
+        # Extreme-harm protection: serious violent wrongdoing, terrorism
+        Term(r"\bterroris(?:m|t)\b", 950),
+        Term(r"\bmass\s+shooting\b", 1000),
+        Term(r"\bgenocide\b", 1000),
+        Term(r"\bserious\s+violent\s+wrongdoing\b", 1000),
     ),
     Category.WEAPONS: (
         _t("firearm", 700),
@@ -127,6 +132,16 @@ _SEED: Mapping[Category, tuple[Term, ...]] = {
         _t("onlyfans", 800),
         Term(r"\b(?:send|show|generate)\s+(?:me\s+)?(?:nudes?|naked|explicit)\b", 950),
         Term(r"\bchild\s+(?:porn|abuse|exploitation)\b", 1000),
+        # Absolute child-safety boundary: permanent, no circumvention
+        Term(r"\bchild\s+sexual\s+abuse\s+material\b", 1000),
+        Term(r"\bcsam\b", 1000),
+        Term(r"\bsexual\s+exploitation\s+of\s+(?:a\s+)?minor\b", 1000),
+        Term(r"\bsexual\s+exploitation\s+of\s+children\b", 1000),
+        Term(r"\bgroom(?:ing)?\s+(?:a\s+)?(?:child|minors?|kid)\b", 1000),
+        Term(r"\bsexual\s+harm\s+involving\s+minors?\b", 1000),
+        Term(r"\bminor\s+sexual\b", 1000),
+        Term(r"\bunderage\s+(?:sex|sexual|nude|porn)\b", 1000),
+        Term(r"\b(?:lolita|lolicon|shotacon)\b", 1000),
     ),
     Category.HATE: (
         Term(r"\ball\s+\w+\s+(?:should|deserve\s+to)\s+die\b", 1000),
@@ -147,6 +162,11 @@ _SEED: Mapping[Category, tuple[Term, ...]] = {
         Term(r"\bhow\s+to\s+(?:hack|break\s+into|steal|shoplift|forge)\b", 900),
         Term(r"\b(?:crack|bypass)\s+(?:a\s+)?(?:password|licence|license|paywall|drm)\b", 800),
         Term(r"\b(?:sell|buy)\s+(?:stolen|illegal)\b", 850),
+        # Extreme-harm: dangerous illegal drug manufacturing
+        Term(r"\b(?:how\s+to\s+)?(?:make|manufacture|cook|synthesize)\s+(?:meth|cocaine|heroin|fentanyl|mdma|lsd)\b", 1000),
+        Term(r"\bdangerous\s+illegal\s+drug\s+manufacturing\b", 1000),
+        Term(r"\bterrorism\s+instructions\b", 1000),
+        Term(r"\bsevere\s+criminal\s+activity\b", 950),
     ),
     Category.DISRUPTION: (
         _t("riot", 800, guard=("riot control history",)),
