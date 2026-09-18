@@ -1,4 +1,15 @@
-// Sovereign SG16 Brain interface. Integrated 3D card tilt & real-time dashboard handlers.
+// Sovereign SG16 Brain interface.
+//
+// Two layers live in this file:
+//   1. the backend wiring (gate verdicts, reasoning plan, parity, billing) -
+//      unchanged in behaviour; every endpoint it called before it still calls;
+//   2. the premium shell (collapsible 260px sidebar, slide-over panels,
+//      on-device account / files / devices / settings).
+//
+// The operational diagnostics (3-GPT joint room, sealed perimeter, master
+// door, reasoning plan, gate reasons, parity) stay mounted in the DOM so the
+// brain keeps rendering them on every payload - they are simply out of the
+// public view until an operator reveals them from Settings.
 import { api, getJson, delJson, fileToBase64 } from "./api.js";
 import { renderMarkdown } from "./markdown.js";
 import {
@@ -6,6 +17,7 @@ import {
   appendHistory,
   loadHistory,
   store,
+  exportLocalFolder,
 } from "./storage.js";
 import {
   PASSES,
@@ -39,6 +51,7 @@ const els = {
   audioName: $("audio-name"),
   reset: $("reset"),
   charter: $("charter"),
+  charterTitle: $("charter-title"),
   jointRisk: $("joint-risk"),
   threshold: $("threshold"),
   verdict: $("verdict"),
@@ -72,11 +85,83 @@ const els = {
   noticeAck: $("notice-ack"),
   noticeDisclaimer: $("notice-disclaimer"),
   vipChip: $("vip-chip"),
+  // shell
+  appShell: $("app-shell"),
+  sidebar: $("sidebar"),
+  sidebarToggle: $("sidebar-toggle"),
+  sidebarHide: $("sidebar-hide"),
+  sidebarScrim: $("sidebar-scrim"),
+  newChat: $("new-chat"),
+  signOut: $("sign-out"),
+  viewPanel: $("view-panel"),
+  viewPanelTitle: $("view-panel-title"),
+  viewPanelBody: $("view-panel-body"),
+  viewPanelClose: $("view-panel-close"),
+  diagnostics: $("diagnostics"),
 };
 
 const session = sessionId();
 const PANEL_THROTTLE_MS = 800;
 let lastSubmitAt = 0;
+
+// Live snapshot from the sovereign host, reused by the side panels.
+const host = {
+  charter: [],
+  designation: null,
+  officialName: null,
+  transport: null,
+  gate: null,
+  parity: null,
+  ready: false,
+};
+
+// ------------------------------------------------------------------
+// tiny DOM helper (textContent everywhere - never innerHTML on user data)
+// ------------------------------------------------------------------
+// Panel builders nest arrays of nodes; flatten them all the way down so a
+// nested list can never reach appendChild.
+function flatten(nodes) {
+  return [].concat(nodes).flat(Infinity).filter((n) => n != null && n !== false);
+}
+
+function el(tag, attrs = {}, children = []) {
+  const node = document.createElement(tag);
+  for (const [key, value] of Object.entries(attrs)) {
+    if (key === "class") node.className = value;
+    else if (key === "text") node.textContent = value;
+    else if (key.startsWith("on") && typeof value === "function") {
+      node.addEventListener(key.slice(2), value);
+    } else if (value !== null && value !== undefined) node.setAttribute(key, value);
+  }
+  for (const child of flatten(children)) {
+    node.appendChild(typeof child === "string" ? document.createTextNode(child) : child);
+  }
+  return node;
+}
+
+function row(label, value) {
+  return el("div", { class: "view-row" }, [
+    el("span", { text: label }),
+    el("b", { text: String(value ?? "—") }),
+  ]);
+}
+
+function card(title, children) {
+  return el("div", { class: "view-card" }, [
+    title ? el("h3", { text: title }) : null,
+    ...flatten(children),
+  ]);
+}
+
+function emptyState(text) {
+  return el("div", { class: "view-empty", text });
+}
+
+function fmtTime(seconds) {
+  const ms = typeof seconds === "number" ? seconds * 1000 : new Date(seconds).getTime();
+  if (!ms || Number.isNaN(ms)) return "—";
+  return new Date(ms).toLocaleString();
+}
 
 // ------------------------------------------------------------------
 // 3D Perspective Card Motion Engine
@@ -115,6 +200,7 @@ function setBar(member, risk) {
 }
 
 function flashDoor(allowed) {
+  if (!els.door) return;
   els.door.classList.remove("pass", "block");
   void els.door.offsetWidth;
   els.door.classList.add(allowed ? "pass" : "block");
@@ -189,12 +275,12 @@ function refreshPricing() {
   els.regionLine.textContent =
     `region: ${billing.region || "auto"}` +
     (vip ? " · VIP OWNER · full-speed bypass" : billing.humanitarian ? " · FREE (humanitarian)" : "");
-  document.querySelectorAll(".pass").forEach((card) => {
-    const id = card.dataset.pass;
+  document.querySelectorAll(".pass").forEach((passCard) => {
+    const id = passCard.dataset.pass;
     const price = effectivePrice(id, billing);
-    const priceEl = card.querySelector(".price");
+    const priceEl = passCard.querySelector(".price");
     priceEl.innerHTML = `$${price}<span>${PASSES[id].unit}</span>`;
-    card.classList.toggle("free", billing.humanitarian || vip);
+    passCard.classList.toggle("free", billing.humanitarian || vip);
   });
   const pass = currentPass();
   els.pricingNote.textContent = vip
@@ -202,6 +288,7 @@ function refreshPricing() {
     : pass
       ? `Active pass: ${PASSES[pass.pass]?.label || pass.pass} · $${pass.price_charged} · expires ${pass.expires_at} · verified locally.`
       : "Localized verification runs entirely on your device. Your credentials and history never leave it.";
+  if (openView === "subscription") renderView("subscription");
 }
 
 async function handleBuy(passId) {
@@ -240,6 +327,7 @@ async function handleBuy(passId) {
       (record.vip_owner_bypass ? " (VIP owner bypass)" : "") +
       `. History stays in your local folder; the core grid keeps 0 client logs.`
   );
+  if (openView === "subscription") renderView("subscription");
 }
 
 // ------------------------------------------------------------------
@@ -286,6 +374,536 @@ async function submit(text, audioB64) {
 
   appendHistory(session, { role: "user", text });
   appendHistory(session, { role: "brain", stage: tx.stage, text: tx.reply });
+  if (openView === "history") renderView("history");
+}
+
+// ==================================================================
+// SHELL · sidebar, drawer, slide-over panels
+// ==================================================================
+const DRAWER_MAX = 900;
+
+function isDrawer() {
+  return window.innerWidth <= DRAWER_MAX;
+}
+
+function syncShellMode() {
+  const drawer = isDrawer();
+  document.body.classList.toggle("drawer-mode", drawer);
+  if (!drawer) document.body.classList.remove("sidebar-open");
+  if (els.sidebarToggle) {
+    els.sidebarToggle.setAttribute("aria-expanded", String(!drawer || document.body.classList.contains("sidebar-open")));
+  }
+}
+
+function openDrawer() {
+  document.body.classList.add("sidebar-open");
+  if (els.sidebarToggle) els.sidebarToggle.setAttribute("aria-expanded", "true");
+}
+
+function closeDrawer() {
+  document.body.classList.remove("sidebar-open");
+  if (els.sidebarToggle) els.sidebarToggle.setAttribute("aria-expanded", "false");
+}
+
+function toggleDrawer() {
+  if (document.body.classList.contains("sidebar-open")) closeDrawer();
+  else openDrawer();
+}
+
+function collapseSidebar() {
+  if (isDrawer()) {
+    closeDrawer();
+    return;
+  }
+  document.body.classList.toggle("sidebar-collapsed");
+  store.set("ui/collapsed", document.body.classList.contains("sidebar-collapsed"));
+}
+
+// --------------------------- diagnostics ---------------------------
+function applyDiagnostics() {
+  const on = store.get("ui/diagnostics", false);
+  if (els.diagnostics) {
+    els.diagnostics.hidden = !on;
+    els.diagnostics.setAttribute("aria-hidden", String(!on));
+  }
+  return on;
+}
+
+// ----------------------------- devices -----------------------------
+function deviceId() {
+  let id = store.get("device_id");
+  if (!id) {
+    id = "dev-" + Math.random().toString(36).slice(2, 10);
+    store.set("device_id", id);
+  }
+  return id;
+}
+
+function deviceLabel() {
+  const ua = navigator.userAgent || "";
+  const platform =
+    /iPhone|iPad|iPod/i.test(ua) ? "iOS"
+    : /Android/i.test(ua) ? "Android"
+    : /Mac/i.test(ua) ? "macOS"
+    : /Win/i.test(ua) ? "Windows"
+    : /Linux/i.test(ua) ? "Linux"
+    : "Unknown";
+  const form = window.innerWidth < 620 ? "phone" : window.innerWidth <= 900 ? "tablet" : "desktop";
+  return `${platform} · ${form}`;
+}
+
+function registerDevice() {
+  const id = deviceId();
+  const devices = store.get("devices", []);
+  const known = devices.find((d) => d.id === id);
+  const entry = {
+    id,
+    label: deviceLabel(),
+    screen: `${window.screen?.width || window.innerWidth}×${window.screen?.height || window.innerHeight}`,
+    standalone: window.matchMedia("(display-mode: standalone)").matches,
+    last_seen: new Date().toISOString(),
+    first_seen: known ? known.first_seen : new Date().toISOString(),
+  };
+  const next = devices.filter((d) => d.id !== id).concat([entry]);
+  store.set("devices", next.slice(-12));
+  return entry;
+}
+
+// ------------------------------ files ------------------------------
+function recordFile(file) {
+  const files = store.get("files", []);
+  files.push({
+    name: file.name,
+    size: file.size,
+    type: file.type || "audio",
+    added_at: new Date().toISOString(),
+  });
+  store.set("files", files.slice(-60));
+}
+
+function fmtBytes(bytes) {
+  if (!Number.isFinite(bytes)) return "—";
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
+}
+
+// --------------------------- view routing ---------------------------
+let openView = null;
+
+function closeView() {
+  openView = null;
+  if (els.viewPanel) els.viewPanel.classList.remove("is-open");
+  setTimeout(() => {
+    if (!openView && els.viewPanel) els.viewPanel.hidden = true;
+  }, 260);
+  document.querySelectorAll(".nav-item[data-view]").forEach((btn) => {
+    btn.classList.toggle("is-active", false);
+  });
+}
+
+function openViewPanel(name) {
+  if (openView === name) {
+    closeView();
+    return;
+  }
+  openView = name;
+  if (els.viewPanel) els.viewPanel.hidden = false;
+  // one frame so the transition actually plays
+  requestAnimationFrame(() => els.viewPanel.classList.add("is-open"));
+  document.querySelectorAll(".nav-item[data-view]").forEach((btn) => {
+    btn.classList.toggle("is-active", btn.dataset.view === name);
+  });
+  renderView(name);
+}
+
+const VIEW_TITLES = {
+  history: "History",
+  files: "My Files",
+  subscription: "Subscription",
+  api: "API Access",
+  devices: "My Devices",
+  settings: "Settings",
+  account: "Account",
+  help: "Help",
+};
+
+function renderView(name) {
+  els.viewPanelTitle.textContent = VIEW_TITLES[name] || "Panel";
+  els.viewPanelBody.innerHTML = "";
+  const builder = VIEW_RENDERERS[name];
+  const nodes = builder ? builder() : [emptyState("Nothing here yet.")];
+  for (const node of flatten(nodes)) els.viewPanelBody.appendChild(node);
+}
+
+// ---------------------------- view bodies ----------------------------
+const VIEW_RENDERERS = {
+  history() {
+    const entries = loadHistory(session);
+    if (!entries.length) return emptyState("No conversation stored on this device yet.");
+    const turns = [];
+    for (const entry of entries) {
+      if (entry.role === "user") turns.push({ user: entry, brain: null });
+      else if (turns.length) turns[turns.length - 1].brain = entry;
+      else turns.push({ user: null, brain: entry });
+    }
+    const list = turns.slice(-40).reverse().map((turn, index) =>
+      card(`${turns.length - index}. ${turn.brain?.stage ? `sg16 · ${turn.brain.stage}` : "exchange"}`, [
+        turn.user ? el("p", { text: (turn.user.text || "[audio]").slice(0, 240) }) : null,
+        turn.brain
+          ? el("p", { class: "mono", text: (turn.brain.text || "").slice(0, 240) })
+          : null,
+      ])
+    );
+    return [
+      card("This device", [
+        row("session", session),
+        row("stored turns", turns.length),
+        el("div", { class: "view-actions" }, [
+          el("button", {
+            class: "btn ghost",
+            text: "Export full local folder",
+            onclick: () => exportLocalFolder(session),
+          }),
+          el("button", {
+            class: "btn ghost",
+            text: "Forget this session",
+            onclick: () => startNewChat(),
+          }),
+        ]),
+      ]),
+      ...list,
+    ];
+  },
+
+  files() {
+    const files = store.get("files", []);
+    return [
+      card("On-device only", [
+        el("p", {
+          text:
+            "Attachments are read into memory for the audio route and never stored on the sovereign host. Only the name, size and timestamp are kept here, in your local sg16/ folder.",
+        }),
+        row("recorded attachments", files.length),
+      ]),
+      files.length
+        ? card("Attachments", files.slice().reverse().map((f) => row(f.name, `${fmtBytes(f.size)} · ${f.added_at.slice(0, 16).replace("T", " ")}`)))
+        : emptyState("No attachments recorded yet."),
+      card("Data", [
+        el("div", { class: "view-actions" }, [
+          el("button", {
+            class: "btn ghost",
+            text: "Export local folder",
+            onclick: () => exportLocalFolder(session),
+          }),
+          el("button", {
+            class: "btn ghost",
+            text: "Clear file list",
+            onclick: () => {
+              store.set("files", []);
+              renderView("files");
+            },
+          }),
+        ]),
+      ]),
+    ];
+  },
+
+  subscription() {
+    const billing = resolveBilling();
+    const vip = hasFullSpeedBypass();
+    const pass = currentPass();
+    const passCards = Object.entries(PASSES).map(([id, def]) =>
+      card(def.label, [
+        row("price", vip || billing.humanitarian ? "$0" : `$${def.price}${def.unit}`),
+        row("duration", `${def.hours} h`),
+        el("div", { class: "view-actions" }, [
+          el("button", {
+            class: "btn primary",
+            text: "subscribe",
+            onclick: () => handleBuy(id),
+          }),
+        ]),
+      ])
+    );
+    return [
+      card("Current entitlement", [
+        vip
+          ? el("p", { text: "VIP owner · full-speed bypass active. No pass required." })
+          : pass
+            ? [
+                row("pass", PASSES[pass.pass]?.label || pass.pass),
+                row("charged", `$${pass.price_charged}`),
+                row("expires", fmtTime(pass.expires_at)),
+                row("verified", "on this device"),
+              ]
+            : el("p", { text: "No active pass. The brain still answers; a pass lifts the panel throttle." }),
+        row("region", billing.region || "auto"),
+        row("humanitarian zero-rate", billing.humanitarian ? "yes" : "no"),
+      ]),
+      ...passCards,
+      card("Note", [
+        el("p", {
+          text:
+            "Verification is fully localized: region is inferred from this device's own timezone and locale, and the signed record lives only in your sg16/ folder.",
+        }),
+      ]),
+    ];
+  },
+
+  api() {
+    const key = currentApiKey();
+    return [
+      card("Local entitlement key", [
+        el("p", { class: "mono", text: key ? `key: ${key}` : "key: (not generated yet)" }),
+        el("div", { class: "view-actions" }, [
+          el("button", {
+            class: "btn primary",
+            text: key ? "rotate key" : "generate key",
+            onclick: async () => {
+              await generateApiKey();
+              renderView("api");
+            },
+          }),
+        ]),
+      ]),
+      card("Endpoints", [
+        el("p", { text: "Every route is served by the sovereign host itself. No external gateway." }),
+        row("POST /api/ingest", "payload through the door"),
+        row("POST /api/audio", "audio route"),
+        row("GET /api/health", "readiness + digests"),
+        row("GET /api/charter", "seven invariants"),
+        row("GET /api/parity", "online/offline parity"),
+        row("GET /api/weight", "weight provenance"),
+      ]),
+      card("Transport", [
+        row("mode", host.transport || "—"),
+        row("gate digest", host.gate || "—"),
+        row("core", "SG16-BRAIN"),
+      ]),
+    ];
+  },
+
+  devices() {
+    const devices = store.get("devices", []);
+    const me = deviceId();
+    return [
+      card("This device", [
+        row("device id", me),
+        row("platform", deviceLabel()),
+        row("session", session),
+        row("installed (PWA)", window.matchMedia("(display-mode: standalone)").matches ? "yes" : "no"),
+      ]),
+      devices.length
+        ? card("Registered on this profile", devices.slice().reverse().map((d) =>
+            row(`${d.label} ${d.id === me ? "(this device)" : ""}`, `last seen ${d.last_seen.slice(0, 16).replace("T", " ")}`)
+          ))
+        : emptyState("No other devices registered."),
+      card("Residency", [
+        el("p", {
+          text:
+            "The device list is a local convenience record. The sovereign host holds no client logs and no device inventory.",
+        }),
+        el("div", { class: "view-actions" }, [
+          el("button", {
+            class: "btn ghost",
+            text: "Forget other devices",
+            onclick: () => {
+              store.set("devices", store.get("devices", []).filter((d) => d.id === me));
+              renderView("devices");
+            },
+          }),
+        ]),
+      ]),
+    ];
+  },
+
+  settings() {
+    const diagnosticsOn = store.get("ui/diagnostics", false);
+    const collapsed = store.get("ui/collapsed", false);
+    return [
+      card("Interface", [
+        el("label", { class: "switch-row" }, [
+          el("span", { text: "Collapse the sidebar by default" }),
+          el("input", {
+            type: "checkbox",
+            ...(collapsed ? { checked: "" } : {}),
+            onchange: (event) => {
+              store.set("ui/collapsed", event.target.checked);
+              document.body.classList.toggle("sidebar-collapsed", event.target.checked && !isDrawer());
+            },
+          }),
+        ]),
+        el("label", { class: "switch-row" }, [
+          el("span", { text: "Operator diagnostics (gate, plan, parity)" }),
+          el("input", {
+            type: "checkbox",
+            ...(diagnosticsOn ? { checked: "" } : {}),
+            onchange: (event) => {
+              store.set("ui/diagnostics", event.target.checked);
+              applyDiagnostics();
+            },
+          }),
+        ]),
+      ]),
+      card("Live host state", [
+        row("status", host.ready ? "ready" : "unreachable"),
+        row("transport", host.transport || "—"),
+        row("gate digest", host.gate || "—"),
+        row("parity payloads", host.parity ? host.parity.payloads : "—"),
+        row("parity identical", host.parity ? (host.parity.identical ? "yes" : "NO") : "—"),
+      ]),
+      card("Your data", [
+        el("p", { text: "Everything below lives only in this browser's sg16/ folder." }),
+        el("div", { class: "view-actions" }, [
+          el("button", {
+            class: "btn ghost",
+            text: "Export local folder",
+            onclick: () => exportLocalFolder(session),
+          }),
+          el("button", {
+            class: "btn ghost",
+            text: "Reset interface prefs",
+            onclick: () => {
+              store.del("ui/diagnostics");
+              store.del("ui/collapsed");
+              document.body.classList.remove("sidebar-collapsed");
+              applyDiagnostics();
+              renderView("settings");
+            },
+          }),
+        ]),
+      ]),
+    ];
+  },
+
+  account() {
+    const identity = currentIdentity();
+    const vip = hasFullSpeedBypass();
+    return [
+      card("Identity", [
+        identity
+          ? [
+              row("email", identity.email),
+              row("provider", identity.provider),
+              row("designation", host.designation || "—"),
+              row("attested", identity.attested_at ? identity.attested_at.slice(0, 16).replace("T", " ") : "—"),
+              row("hash", (identity.hash || "").slice(0, 20)),
+            ]
+          : el("p", { text: "Not signed in. Attest with Google or Apple to attach a pass to this device." }),
+        row("owner tier", vip ? "VIP OWNER · full speed" : "standard"),
+      ]),
+      card("Attestation", [
+        el("p", {
+          text:
+            "The credential is hashed on this device only. It is never uploaded, and the sovereign host keeps no client logs.",
+        }),
+        el("div", { class: "view-actions" }, [
+          el("button", {
+            class: "btn primary",
+            text: "Continue with Google",
+            onclick: async () => {
+              await attestIdentity("Google");
+              refreshPricing();
+              renderView("account");
+            },
+          }),
+          el("button", {
+            class: "btn ghost",
+            text: "Continue with Apple",
+            onclick: async () => {
+              await attestIdentity("Apple");
+              refreshPricing();
+              renderView("account");
+            },
+          }),
+        ]),
+      ]),
+      identity
+        ? card("Session", [
+            el("div", { class: "view-actions" }, [
+              el("button", { class: "btn ghost", text: "Sign out", onclick: () => signOut() }),
+            ]),
+          ])
+        : null,
+    ].filter(Boolean);
+  },
+
+  help() {
+    return [
+      card("Start here", [
+        el("p", { text: "Type an idea in the console and send it. The brain inspects the payload at the gate, then reasons in fixed-point Q16.16 arithmetic inside the core." }),
+        row("new chat", "clears this session on device and host"),
+        row("attach audio", "sends a WAV / audio clip for the acoustic route"),
+        row("history", "every turn, stored on this device only"),
+      ]),
+      card(`Charter · ${host.charter.length} invariants`, host.charter.length
+        ? host.charter.map((inv, i) => row(`${i + 1}. ${inv.key.replace(/_/g, " ")}`, inv.text))
+        : el("p", { text: "Charter not loaded - the sovereign host is unreachable." })),
+      card("Contact", [
+        el("p", { text: "mistralbrain.com · SAIF TECH GLOBAL LLC · 8206 Louisiana Blvd NE, Ste A #10595, Albuquerque, NM 87113, USA" }),
+        el("p", { text: "Licensed Apache 2.0." }),
+      ]),
+    ];
+  },
+};
+
+// --------------------------- shell actions ---------------------------
+async function startNewChat() {
+  await delJson(`/api/session/${encodeURIComponent(session)}`).catch(() => {});
+  store.del(`history/${session}`);
+  els.transcript.innerHTML = "";
+  addMessage("brain", "sg16 brain", "Fresh session. Share your idea first.");
+  if (openView === "history") renderView("history");
+  els.input.focus();
+}
+
+async function signOut() {
+  const ok = window.confirm("Sign out on this device? Your local pass and identity are cleared.");
+  if (!ok) return;
+  await delJson(`/api/session/${encodeURIComponent(session)}`).catch(() => {});
+  store.del("identity");
+  store.del("pass");
+  store.del("api_key");
+  refreshPricing();
+  closeView();
+  addMessage("audio-note", "sg16 brain", "Signed out on this device. Identity, pass and API key cleared locally.");
+}
+
+// --------------------------- shell wiring ---------------------------
+function wireShell() {
+  if (els.sidebarToggle) els.sidebarToggle.addEventListener("click", toggleDrawer);
+  if (els.sidebarHide) els.sidebarHide.addEventListener("click", collapseSidebar);
+  if (els.sidebarScrim) els.sidebarScrim.addEventListener("click", closeDrawer);
+  if (els.newChat) els.newChat.addEventListener("click", () => { startNewChat(); closeDrawer(); });
+  if (els.signOut) els.signOut.addEventListener("click", () => { closeDrawer(); signOut(); });
+  if (els.viewPanelClose) els.viewPanelClose.addEventListener("click", closeView);
+
+  document.querySelectorAll("[data-view]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      openViewPanel(btn.dataset.view);
+      if (isDrawer()) closeDrawer();
+    });
+  });
+
+  document.addEventListener("keydown", (event) => {
+    if (event.key !== "Escape") return;
+    if (els.notice && !els.notice.hidden) return;
+    if (els.portal && !els.portal.hidden) {
+      els.portal.hidden = true;
+      return;
+    }
+    if (openView) closeView();
+    else closeDrawer();
+  });
+
+  window.addEventListener("resize", syncShellMode);
+  syncShellMode();
+
+  if (store.get("ui/collapsed", false) && !isDrawer()) {
+    document.body.classList.add("sidebar-collapsed");
+  }
+  applyDiagnostics();
 }
 
 // ------------------------------------------------------------------
@@ -301,10 +919,19 @@ async function boot() {
     ]);
     els.dot.classList.add("live");
     els.status.textContent = "ready";
+    host.ready = true;
+    host.transport = health.transport;
+    host.gate = health.gate_weights_sha256.slice(0, 10);
+    host.charter = charter.invariants || [];
+    if (els.charterTitle) {
+      els.charterTitle.textContent = `Charter · ${host.charter.length} invariants`;
+    }
+    host.designation = identity.verified ? identity.designation : "UNVERIFIED";
+    host.officialName = identity.official_name;
+    host.parity = parity;
+
     if (els.designation) {
-      els.designation.textContent = identity.verified
-        ? identity.designation
-        : "UNVERIFIED";
+      els.designation.textContent = host.designation;
       els.designation.title = identity.official_name;
     }
     els.transport.textContent = health.transport;
@@ -343,6 +970,7 @@ async function boot() {
   } catch (error) {
     els.dot.classList.add("down");
     els.status.textContent = "unreachable";
+    host.ready = false;
     addMessage("brain", "host error", String(error.message || error), false);
   }
 
@@ -366,6 +994,7 @@ async function boot() {
     await ensureHumanitarianPass();
   } catch {}
 
+  registerDevice();
   refreshPricing();
   init3DTilt();
 }
@@ -383,6 +1012,7 @@ els.composer.addEventListener("submit", async (event) => {
     let audioB64 = null;
     if (file) {
       audioB64 = await fileToBase64(file);
+      recordFile(file);
       els.audio.value = "";
       els.audioName.textContent = "";
     }
@@ -406,12 +1036,7 @@ els.audio.addEventListener("change", () => {
     : "";
 });
 
-els.reset.addEventListener("click", async () => {
-  await delJson(`/api/session/${encodeURIComponent(session)}`).catch(() => {});
-  store.del(`history/${session}`);
-  els.transcript.innerHTML = "";
-  addMessage("brain", "sg16 brain", "Session forgotten. Share your idea first.");
-});
+els.reset.addEventListener("click", () => startNewChat());
 
 document.querySelectorAll("[data-buy]").forEach((btn) => {
   btn.addEventListener("click", () => handleBuy(btn.dataset.buy));
@@ -433,6 +1058,7 @@ els.portalClose.addEventListener("click", () => (els.portal.hidden = true));
 els.genKey.addEventListener("click", async () => {
   const key = await generateApiKey();
   els.portalKey.textContent = `key: ${key}`;
+  if (openView === "api") renderView("api");
 });
 
 els.noticeAck.addEventListener("click", () => (els.notice.hidden = true));
@@ -450,9 +1076,14 @@ function mountDashboardMatrix() {
   const activate = () => {
     img.hidden = false;
     document.body.classList.add("has-matrix");
+    // The hero only folds into a canvas host when one is present; otherwise
+    // the premium hero keeps its own grid.
+    const canvas = document.querySelector(".dashboard-canvas");
     const hero = document.getElementById("hero-fallback");
-    if (hero) hero.prepend(hero.querySelector(".hero-actions"));
-    document.querySelector(".dashboard-canvas")?.prepend(hero);
+    if (canvas && hero) {
+      hero.prepend(hero.querySelector(".hero-actions"));
+      canvas.prepend(hero);
+    }
   };
 
   const tryNext = (index) => {
@@ -486,5 +1117,6 @@ function wireAssetFallbacks() {
   mountDashboardMatrix();
 }
 
+wireShell();
 wireAssetFallbacks();
 boot();
