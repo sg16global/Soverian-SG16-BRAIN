@@ -14,7 +14,7 @@ set -euo pipefail
 
 DOMAIN="${1:-}"                 # optional: e.g. mistralbrain.com
 REPO="https://github.com/sg16global/Soverian-SG16-BRAIN.git"
-BRANCH="${SG16_BRANCH:-arena/Pointoni-red-themed-full-system}"   # override with SG16_BRANCH
+BRANCH="${SG16_BRANCH:-main}"   # override with SG16_BRANCH
 APP=/opt/sg16
 CORE_PORT=8080
 WEB_PORT=3000
