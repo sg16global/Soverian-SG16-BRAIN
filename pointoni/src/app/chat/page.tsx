@@ -1,40 +1,34 @@
 "use client";
 
-import { useEffect, useState, Suspense } from "react";
+import { Suspense, useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import Link from "next/link";
-import { History as HistoryIcon, Newspaper } from "lucide-react";
+import { History as HistoryIcon, Globe2 } from "lucide-react";
 import { SiteChrome } from "@/components/chrome/SiteChrome";
 import { ChatPanel } from "@/components/home/ChatPanel";
-import { NewsFeed } from "@/components/home/NewsFeed";
+import { FinancialTicker } from "@/components/home/FinancialTicker";
 import { ModelGrid } from "@/components/home/ModelGrid";
-import type { AiModel, NewsItem } from "@/lib/types";
 import { PageHeader } from "@/components/PageHeader";
+
+// Exclusive sovereign workspace: the chat pane is locked 100% to SG16 Brain
+// via /api/brain — no model selector, no external options. The global AI
+// directory cycles below; the news slot now streams the global markets tape.
 
 function Workspace() {
   const params = useSearchParams();
   const sessionId = params.get("s");
-  const [models, setModels] = useState<AiModel[]>([]);
-  const [news, setNews] = useState<NewsItem[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [ready, setReady] = useState(false);
 
   useEffect(() => {
-    Promise.all([
-      fetch("/api/models").then((r) => r.json()),
-      fetch("/api/news").then((r) => r.json()),
-    ])
-      .then(([m, n]) => {
-        setModels(m.models ?? []);
-        setNews(n.items ?? []);
-      })
-      .finally(() => setLoading(false));
+    const t = setTimeout(() => setReady(true), 220);
+    return () => clearTimeout(t);
   }, []);
 
   return (
     <>
       <PageHeader
         title="SOVEREIGN WORKSPACE"
-        subtitle="Live multi-model intelligence. Select a system in the grid, then converse — every exchange is persisted to your sovereign session log."
+        subtitle="Exclusive SG16 core channel — every exchange is answered by the anchored sovereign brain and persisted to your sovereign session log."
       >
         <Link href="/history" className="btn-ghost inline-flex items-center gap-2 px-4 py-2 text-[11px]">
           <HistoryIcon className="h-4 w-4" /> HISTORY
@@ -42,21 +36,21 @@ function Workspace() {
       </PageHeader>
 
       <div className="mx-auto max-w-[1200px] px-3 py-6 sm:px-5">
-        {loading || models.length === 0 ? (
+        {!ready ? (
           <div className="panel grid h-[420px] place-items-center text-sm tracking-widest text-slate-500">
             <span className="pulse-soft">ESTABLISHING SOVEREIGN CHANNEL…</span>
           </div>
         ) : (
           <div className="flex flex-col gap-5">
-            <ModelGrid models={models} />
+            <ModelGrid />
             <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_340px]">
-              <ChatPanel models={models} full initialSessionId={sessionId ?? undefined} />
+              <ChatPanel full initialSessionId={sessionId ?? undefined} />
               <div className="h-[520px] lg:h-auto">
-                <NewsFeed initialItems={news} />
+                <FinancialTicker />
               </div>
             </div>
             <p className="flex items-center justify-center gap-2 text-center font-mono2 text-[9px] tracking-[0.25em] text-slate-500">
-              <Newspaper className="h-3 w-3" /> SELF-HOSTED MISTRAL ENGINE · APACHE 2.0 · OWNERSHIP, NOT DEPENDENCY
+              <Globe2 className="h-3 w-3" /> SELF-HOSTED MISTRAL ENGINE · APACHE 2.0 · OWNERSHIP, NOT DEPENDENCY
             </p>
           </div>
         )}

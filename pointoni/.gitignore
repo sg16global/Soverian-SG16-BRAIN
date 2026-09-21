@@ -6,3 +6,7 @@ out/
 !.env.example
 *.log
 .DS_Store
+tsconfig.tsbuildinfo
+
+# onnx runtime assets for the FRIEND in-browser engine — synced by scripts/sync-onnx.js
+public/onnx/

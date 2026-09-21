@@ -51,7 +51,7 @@ const CORE_RULES: Rule[] = [
     ],
   },
   {
-    test: /\bcode|function|python|javascript|typescript|bug|debug|script|regex|sql\b/i,
+    test: /\b(code|function|python|javascript|typescript|bug|debug|script|regex|sql)\b/i,
     paragraphs: [
       "Absolutely \u2014 development work is what the Developer Pilot is built for. Here is a safe JSON-parsing helper in Python:",
       "import json\nfrom typing import Any\n\ndef parse_json(raw: str | bytes, default: Any = None) -> Any:\n    \"\"\"Parse JSON without raising; returns `default` on failure.\"\"\"\n    try:\n        return json.loads(raw)\n    except (json.JSONDecodeError, TypeError, ValueError):\n        return default",
@@ -75,8 +75,8 @@ const CORE_RULES: Rule[] = [
   {
     test: /price|pricing|plan|subscription|cost|pay|billing|enterprise\b/i,
     paragraphs: [
-      "There are three tiers: the free Sovereign Free Pilot, Sovereign Pro at $29/month, and Sovereign Enterprise with private on-premise Mistral X deployment and custom pricing.",
-      "You can review and select a plan on the Subscription page; Pro unlocks the full multi-model grid, higher rate limits and API tokens.",
+      "Premium passes follow the sovereign deck: 24-Hour Entry ($3/day) with high-speed operational metrics, 1-Week Premium ($5/week), 15-Day Premium ($8/15 days, the featured pass) and 1-Month Premium ($15/month) \u2014 each with unlimited execution access.",
+      "Verification is fully localized and the signed, duration-locked record lives only in your on-device sg16/ folder; a pass lifts the panel throttle. Humanitarian exception: inbound environments detected as Palestine receive a zero-rate billing bypass \u2014 the full dashboard stays open, free and unlimited. Checkout runs through the Dodo Payments Merchant-of-Record gateway, or sovereign local issuance when no gateway credentials are configured.",
     ],
   },
   {

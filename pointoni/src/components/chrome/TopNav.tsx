@@ -20,7 +20,7 @@ export function TopNav({ onMenu }: { onMenu: () => void }) {
           </span>
           <span className="leading-none">
             <span className="block font-mono2 text-[8px] tracking-[0.28em] text-cyan-300/80 sm:text-[9px]">
-              AUSTRALBRAIN.COM
+              MISTRALBRAIN.COM
             </span>
             <span className="block font-display text-[13px] font-black tracking-wider text-white sm:text-[15px]">
               SOVEREIGN <span className="text-red-500" style={{ textShadow: "0 0 12px rgba(255,31,46,.8)" }}>SG16</span> BRAIN
@@ -69,10 +69,11 @@ export function TopNav({ onMenu }: { onMenu: () => void }) {
             GLOBAL ONLINE
           </span>
           <Link
-            href="/chat"
+            href="/login"
             className="btn-gold hidden px-3.5 py-1.5 text-[11px] sm:inline-block"
+            title="Your sovereign domain — email-only sign-in, pass vault, device capsule"
           >
-            Get Started
+            My Domain
           </Link>
           <button
             onClick={onMenu}

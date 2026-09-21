@@ -1,9 +1,9 @@
 "use client";
 
+import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   BrainCircuit,
-  ChevronDown,
   Mic,
   MicOff,
   Plus,
@@ -14,9 +14,20 @@ import {
 } from "lucide-react";
 import { Panel, PanelTitle } from "@/components/ui/Panel";
 import { ModelGlyph } from "@/components/ModelGlyph";
-import { SELECT_EVENT } from "./ModelGrid";
 import { SUGGESTION_PROMPTS } from "@/lib/content";
-import type { AiModel, ChatMessageDto } from "@/lib/types";
+import type { ChatMessageDto } from "@/lib/types";
+
+// CHAT IS EXCLUSIVELY SOVEREIGN: no model selector, no external or dummy
+// options.  Every message routes to /api/brain and is answered by the SG16
+// core through the master door.
+const SOVEREIGN = {
+  id: "sg16-brain",
+  name: "SG16 Brain",
+  vendor: "Sovereign Systems",
+  role: "Sovereign reasoning core",
+  glyph: "brain",
+  accent: "#22e08c",
+};
 
 type MessageView = ChatMessageDto & { pending?: boolean };
 
@@ -28,7 +39,7 @@ function renderContent(text: string) {
       return (
         <pre
           key={i}
-          className="my-2 overflow-x-auto rounded-lg border border-cyan-500/25 bg-black/70 p-3 font-mono2 text-[11px] leading-relaxed text-cyan-100"
+          className="my-2 overflow-x-auto rounded-lg border border-cyan-500/25 bg-black/70 p-3 font-mono2 text-[12px] leading-relaxed text-cyan-100"
         >
           <code>{part.replace(/\n$/, "")}</code>
         </pre>
@@ -47,16 +58,12 @@ function timeLabel(iso: string) {
 }
 
 export function ChatPanel({
-  models,
   full = false,
   initialSessionId,
 }: {
-  models: AiModel[];
   full?: boolean;
   initialSessionId?: string;
 }) {
-  const [modelId, setModelId] = useState("sg16-brain");
-  const [pickerOpen, setPickerOpen] = useState(false);
   const [sessionId, setSessionId] = useState<string | null>(initialSessionId ?? null);
   const [messages, setMessages] = useState<MessageView[]>([]);
   const [input, setInput] = useState("");
@@ -66,19 +73,11 @@ export function ChatPanel({
   const [listening, setListening] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const recognitionRef = useRef<{ stop: () => void } | null>(null);
-  const model = models.find((m) => m.id === modelId) ?? models[0];
-
-  useEffect(() => {
-    const handler = (e: Event) => {
-      const id = (e as CustomEvent<string>).detail;
-      if (models.some((m) => m.id === id)) setModelId(id);
-    };
-    window.addEventListener(SELECT_EVENT, handler);
-    return () => window.removeEventListener(SELECT_EVENT, handler);
-  }, [models]);
+  // sovereign identity from THIS device (email-only token, user-held)
+  const [identity, setIdentity] = useState<{ token: string; email: string; plan: string | null } | null>(null);
 
   const loadSession = useCallback(async (id: string) => {
-    const res = await fetch(`/api/chat?session=${id}`);
+    const res = await fetch(`/api/brain?session=${id}`);
     if (!res.ok) return;
     const data = (await res.json()) as { messages: ChatMessageDto[] };
     setMessages(data.messages);
@@ -86,11 +85,26 @@ export function ChatPanel({
   }, []);
 
   useEffect(() => {
+    const t = setTimeout(() => {
+      try {
+        const raw = localStorage.getItem("sg16/identity");
+        if (raw) {
+          const s = JSON.parse(raw) as { token?: string; email?: string; plan?: string | null };
+          if (s.token && s.email) setIdentity({ token: s.token, email: s.email, plan: s.plan ?? null });
+        }
+      } catch { /* device storage unavailable */ }
+    }, 0);
+    return () => clearTimeout(t);
+  }, []);
+
+  useEffect(() => {
     if (initialSessionId) loadSession(initialSessionId);
   }, [initialSessionId, loadSession]);
 
+  // Instant jump to bottom on new messages — no smooth-scroll page sneaking.
   useEffect(() => {
-    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
+    const el = scrollRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
   }, [messages, sending]);
 
   function newChat() {
@@ -115,7 +129,7 @@ export function ChatPanel({
         sessionId: sessionId ?? "new",
         role: "user",
         content: message,
-        modelId,
+        modelId: SOVEREIGN.id,
         relay: false,
         latencyMs: 0,
         createdAt: new Date().toISOString(),
@@ -123,10 +137,13 @@ export function ChatPanel({
       },
     ]);
     try {
-      const res = await fetch("/api/chat", {
+      const res = await fetch("/api/brain", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ sessionId, modelId, message }),
+        headers: {
+          "Content-Type": "application/json",
+          ...(identity ? { authorization: `Bearer ${identity.token}` } : {}),
+        },
+        body: JSON.stringify({ sessionId, modelId: SOVEREIGN.id, message }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "The SG16 core is unreachable. Try again.");
@@ -177,8 +194,14 @@ export function ChatPanel({
   }
 
   return (
-    <Panel id="chat" className={`flex flex-col ${full ? "h-[calc(100vh-220px)] min-h-[460px]" : ""}`}>
-      <div className="relative flex items-center justify-center border-b border-red-500/25 px-4 py-3">
+    <Panel
+      id="chat"
+      className={`flex flex-col overflow-hidden ${
+        full ? "h-[calc(100svh-240px)] min-h-[560px]" : "h-[540px]"
+      }`}
+    >
+      {/* ── header ── */}
+      <div className="relative flex flex-none items-center justify-center border-b border-red-500/25 px-4 py-3">
         <PanelTitle>CHAT PANEL</PanelTitle>
         <button
           onClick={newChat}
@@ -189,141 +212,142 @@ export function ChatPanel({
         </button>
       </div>
 
-      {/* model selector */}
-      <div className="relative px-3 pt-3">
-        <button
-          onClick={() => setPickerOpen((v) => !v)}
-          className="flex w-full items-center gap-2.5 rounded-lg border px-3 py-2 text-left transition"
+      {/* ── sovereign identity strip — static, exclusive core ── */}
+      <div className="flex-none px-3 pt-3">
+        <div
+          className="flex w-full items-center gap-2.5 rounded-lg border px-3 py-1.5"
           style={{
-            borderColor: `${model.accent}66`,
-            background: `linear-gradient(90deg, ${model.accent}14, rgba(8,12,19,.9))`,
+            borderColor: `${SOVEREIGN.accent}66`,
+            background: `linear-gradient(90deg, ${SOVEREIGN.accent}14, rgba(8,12,19,.9))`,
           }}
         >
-          <span className="grid h-7 w-7 place-items-center rounded-md border" style={{ color: model.accent, borderColor: `${model.accent}55`, background: `${model.accent}18` }}>
-            <ModelGlyph name={model.glyph} className="h-4 w-4" />
+          <span
+            className="grid h-7 w-7 flex-none place-items-center rounded-md border"
+            style={{ color: SOVEREIGN.accent, borderColor: `${SOVEREIGN.accent}55`, background: `${SOVEREIGN.accent}18` }}
+          >
+            <ModelGlyph name={SOVEREIGN.glyph} className="h-4 w-4" />
           </span>
           <span className="min-w-0 flex-1">
             <span className="block truncate font-display text-[11px] font-black tracking-wide text-white">
-              {model.name}
+              {SOVEREIGN.name}
             </span>
             <span className="block truncate font-mono2 text-[9px] text-slate-400">
-              {model.vendor} · {model.role}
+              {SOVEREIGN.vendor} · {SOVEREIGN.role}
             </span>
           </span>
-          <span className="hidden font-mono2 text-[9px] text-slate-400 sm:block">
-            {model.latencyMs}ms · {model.contextWindow}
+          <span className="flex-none inline-flex items-center gap-1.5 font-mono2 text-[9px] tracking-wider text-emerald-300">
+            <span className="status-dot" style={{ background: SOVEREIGN.accent, color: SOVEREIGN.accent }} />
+            ONLINE
           </span>
-          <ChevronDown className={`h-4 w-4 text-slate-400 transition-transform ${pickerOpen ? "rotate-180" : ""}`} />
-        </button>
-        {pickerOpen && (
-          <div className="absolute inset-x-3 top-[calc(100%-4px)] z-30 max-h-72 overflow-y-auto rounded-lg border border-red-500/35 bg-[#0a0e16]/98 p-1.5 shadow-[0_10px_40px_rgba(0,0,0,.8),0_0_24px_rgba(255,31,46,.2)] backdrop-blur">
-            {models.map((m) => (
-              <button
-                key={m.id}
-                onClick={() => {
-                  setModelId(m.id);
-                  window.dispatchEvent(new CustomEvent(SELECT_EVENT, { detail: m.id }));
-                  setPickerOpen(false);
-                }}
-                className={`flex w-full items-center gap-2.5 rounded-md px-2.5 py-2 text-left transition hover:bg-white/5 ${m.id === modelId ? "bg-white/5" : ""}`}
-              >
-                <span className="grid h-7 w-7 place-items-center rounded-md border" style={{ color: m.accent, borderColor: `${m.accent}55`, background: `${m.accent}16` }}>
-                  <ModelGlyph name={m.glyph} className="h-4 w-4" />
-                </span>
-                <span className="min-w-0 flex-1">
-                  <span className="block truncate font-display text-[11px] font-bold text-white">{m.name}</span>
-                  <span className="block truncate font-mono2 text-[9px] text-slate-400">{m.vendor}</span>
-                </span>
-                <span className="status-dot" style={{ background: m.accent, color: m.accent }} />
-              </button>
-            ))}
-          </div>
-        )}
+          <span className="hidden flex-none font-mono2 text-[9px] text-slate-400 sm:block">42ms · 128K</span>
+          {identity?.plan ? (
+            <Link
+              href="/login"
+              className="flex-none rounded border border-amber-400/50 bg-amber-400/15 px-1.5 py-0.5 font-mono2 text-[8px] font-black tracking-[0.14em] text-amber-300"
+              title="Work mode active — bound subscription"
+            >
+              WORK MODE
+            </Link>
+          ) : (
+            <Link
+              href="/login"
+              className="flex-none rounded border border-cyan-400/40 bg-cyan-500/10 px-1.5 py-0.5 font-mono2 text-[8px] font-black tracking-[0.14em] text-cyan-300 transition hover:bg-cyan-500/20"
+              title="Sign in with your email to vault passes and lift fair-use limits"
+            >
+              {identity ? "SIGN-IN ✓" : "FREE · SIGN IN"}
+            </Link>
+          )}
+        </div>
       </div>
 
-      {/* messages */}
-      <div
-        ref={scrollRef}
-        className={`relative scanline mt-3 overflow-y-auto px-3 ${full ? "flex-1" : "h-[320px] sm:h-[360px]"}`}
-      >
-        {messages.length === 0 ? (
-          <div className="flex h-full flex-col items-center justify-center gap-3 px-6 text-center">
-            <span className="grid h-20 w-20 place-items-center rounded-full border-2 border-cyan-400/60 bg-cyan-500/10 shadow-[0_0_34px_rgba(57,215,255,.35)]">
-              <BrainCircuit className="h-10 w-10 text-cyan-300" strokeWidth={1.6} />
-            </span>
-            <div className="font-display text-xl font-black tracking-[0.2em] text-cyan-300" style={{ textShadow: "0 0 14px rgba(57,215,255,.6)" }}>
-              SG16
+      {/* ── message viewport — in-flow, flex-1, clean scroll ── */}
+      <div className="relative mx-3 mt-3 min-h-0 flex-1 overflow-hidden rounded-xl border border-white/5 bg-black/30">
+        <div
+          ref={scrollRef}
+          className="chat-scroll h-full overflow-y-auto px-3 py-3"
+          style={{ overscrollBehavior: "contain" }}
+        >
+          {messages.length === 0 ? (
+            <div className="flex h-full flex-col items-center justify-center gap-2.5 px-6 text-center">
+              <span className="grid h-16 w-16 place-items-center rounded-full border-2 border-cyan-400/60 bg-cyan-500/10 shadow-[0_0_30px_rgba(57,215,255,.32)]">
+                <BrainCircuit className="h-8 w-8 text-cyan-300" strokeWidth={1.6} />
+              </span>
+              <div className="font-display text-lg font-black tracking-[0.22em] text-cyan-300" style={{ textShadow: "0 0 12px rgba(57,215,255,.55)" }}>
+                SG16
+              </div>
+              <div className="font-display text-base font-bold tracking-wide text-white sm:text-lg">
+                Welcome to SG16 Developer Pilot
+              </div>
+              <p className="max-w-md text-[13px] font-medium leading-relaxed text-slate-200">
+                Your AI-powered development partner — ask anything, build anything, solve anything.
+              </p>
             </div>
-            <div className="font-display text-lg font-bold tracking-wide text-cyan-200 sm:text-xl">
-              Welcome to SG16 Developer Pilot
-            </div>
-            <p className="text-sm font-medium text-slate-300">
-              Your AI-powered development partner.
-              <br />
-              Ask anything, build anything, solve anything.
-            </p>
-          </div>
-        ) : (
-          <div className="space-y-3 py-2">
-            {messages.map((m) => (
-              <div key={m.id} className={`flex ${m.role === "user" ? "justify-end" : "justify-start"}`}>
-                <div className={`max-w-[92%] ${m.role === "user" ? "msg-user" : "msg-bubble"} rounded-xl px-3.5 py-2.5`}>
-                  <div className="mb-1 flex items-center gap-2 font-mono2 text-[9px] tracking-wider text-slate-400">
-                    {m.role === "assistant" ? (
-                      <>
-                        <ModelGlyph name={models.find((x) => x.id === m.modelId)?.glyph ?? "brain"} className="h-3 w-3" />
-                        <span style={{ color: models.find((x) => x.id === m.modelId)?.accent ?? "#39d7ff" }}>
-                          {models.find((x) => x.id === m.modelId)?.name ?? "SG16"}
-                        </span>
-                        <span>{timeLabel(m.createdAt)}</span>
-                        <span>{m.latencyMs}ms</span>
-                        {m.relay && (
-                          <span className="inline-flex items-center gap-1 rounded bg-amber-400/15 px-1.5 py-0.5 text-amber-300">
-                            <Server className="h-2.5 w-2.5" /> RELAY
-                          </span>
-                        )}
-                      </>
-                    ) : (
-                      <>
-                        <span className="text-red-300">PILOT</span>
-                        <span>{timeLabel(m.createdAt)}</span>
-                      </>
-                    )}
+          ) : (
+            <div className="flex flex-col gap-3">
+              {messages.map((m) => (
+                <div key={m.id} className={`flex ${m.role === "user" ? "justify-end" : "justify-start"}`}>
+                  <div className={`flex max-w-[92%] flex-col gap-1 ${m.role === "user" ? "items-end" : "items-start"}`}>
+                    <div className="flex items-center gap-2 px-1 font-mono2 text-[10px] tracking-wider text-slate-400">
+                      {m.role === "assistant" ? (
+                        <>
+                          <ModelGlyph name={SOVEREIGN.glyph} className="h-3 w-3" />
+                          <span className="font-bold" style={{ color: SOVEREIGN.accent }}>{SOVEREIGN.name}</span>
+                          <span>{timeLabel(m.createdAt)}</span>
+                          <span>{m.latencyMs}ms</span>
+                          {m.relay && (
+                            <span className="inline-flex items-center gap-1 rounded bg-amber-400/15 px-1.5 py-0.5 text-amber-300">
+                              <Server className="h-2.5 w-2.5" /> RELAY
+                            </span>
+                          )}
+                        </>
+                      ) : (
+                        <>
+                          <span className="font-bold text-red-300">PILOT</span>
+                          <span>{timeLabel(m.createdAt)}</span>
+                        </>
+                      )}
+                    </div>
+                    <div
+                      className={`${m.role === "user" ? "msg-user" : "msg-bubble"} px-4 py-2.5 text-[14px] font-medium leading-relaxed`}
+                    >
+                      {renderContent(m.content)}
+                    </div>
                   </div>
-                  <div className="text-[13px] leading-relaxed text-slate-100">{renderContent(m.content)}</div>
                 </div>
-              </div>
-            ))}
-            {sending && (
-              <div className="flex justify-start">
-                <div className="msg-bubble flex items-center gap-1.5 rounded-xl px-4 py-3">
-                  <span className="typing-dot" />
-                  <span className="typing-dot" />
-                  <span className="typing-dot" />
-                  <span className="ml-2 font-mono2 text-[10px] tracking-widest text-cyan-300">
-                    {model.name.toUpperCase()} IS THINKING…
-                  </span>
+              ))}
+              {sending && (
+                <div className="flex justify-start">
+                  <div className="msg-bubble flex items-center gap-1.5 px-4 py-3">
+                    <span className="typing-dot" />
+                    <span className="typing-dot" />
+                    <span className="typing-dot" />
+                    <span className="ml-2 font-mono2 text-[10px] tracking-widest text-cyan-300">
+                      {SOVEREIGN.name.toUpperCase()} IS THINKING…
+                    </span>
+                  </div>
                 </div>
-              </div>
-            )}
-          </div>
-        )}
+              )}
+            </div>
+          )}
+        </div>
+        <span className="scanline" aria-hidden />
       </div>
 
+      {/* ── error + suggestions dock ── */}
       {error && (
-        <div className="mx-3 mt-2 flex items-center gap-2 rounded-lg border border-red-400/40 bg-red-500/10 px-3 py-2 text-[11px] text-red-300">
+        <div className="mx-3 mt-2 flex flex-none items-center gap-2 rounded-lg border border-red-400/40 bg-red-500/10 px-3 py-2 text-[12px] font-medium text-red-300">
           <AlertTriangle className="h-3.5 w-3.5 flex-none" /> {error}
           <button onClick={() => setError(null)} className="ml-auto font-bold underline">dismiss</button>
         </div>
       )}
 
       {showSuggestions && (
-        <div className="mx-3 mt-2 grid gap-1.5 rounded-lg border border-cyan-400/25 bg-black/50 p-2 sm:grid-cols-2">
+        <div className="mx-3 mt-2 grid flex-none gap-1.5 rounded-lg border border-cyan-400/25 bg-black/50 p-2 sm:grid-cols-2">
           {SUGGESTION_PROMPTS.map((s) => (
             <button
               key={s}
               onClick={() => send(s)}
-              className="rounded-md border border-white/10 bg-white/5 px-2.5 py-1.5 text-left text-[11px] text-slate-300 transition hover:border-cyan-400/50 hover:text-white"
+              className="rounded-md border border-white/10 bg-white/5 px-2.5 py-1.5 text-left text-[12px] font-medium text-slate-300 transition hover:border-cyan-400/50 hover:text-white"
             >
               {s}
             </button>
@@ -331,8 +355,8 @@ export function ChatPanel({
         </div>
       )}
 
-      {/* composer */}
-      <div className="border-t border-red-500/20 p-3">
+      {/* ── composer — pinned bottom ── */}
+      <div className="mt-3 flex-none border-t border-red-500/20 p-3">
         <div className="flex items-center gap-2">
           <button
             onClick={() => setShowSuggestions((v) => !v)}
@@ -378,7 +402,7 @@ export function ChatPanel({
           </button>
         </div>
         {sessionId && (
-          <p className="mt-1.5 text-center font-mono2 text-[8px] tracking-[0.2em] text-slate-500">
+          <p className="mt-1.5 flex items-center justify-center gap-2 text-center font-mono2 text-[8px] tracking-[0.2em] text-slate-500">
             SESSION {sessionId.slice(0, 8).toUpperCase()} · ENCRYPTED SOVEREIGN CHANNEL
           </p>
         )}

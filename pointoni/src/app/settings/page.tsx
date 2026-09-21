@@ -5,6 +5,7 @@ import { Save, Check } from "lucide-react";
 import { SiteChrome } from "@/components/chrome/SiteChrome";
 import { PageHeader } from "@/components/PageHeader";
 import { Panel } from "@/components/ui/Panel";
+import { getRegionOverride, setRegionOverride } from "@/lib/billing";
 import type { AiModel } from "@/lib/types";
 
 type Profile = {
@@ -18,11 +19,18 @@ export default function SettingsPage() {
   const [profile, setProfile] = useState<Profile | null>(null);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [regionOverride, setRegionOverrideState] = useState("auto");
+  const [regionSaved, setRegionSaved] = useState(false);
 
   useEffect(() => {
+    queueMicrotask(() => setRegionOverrideState(getRegionOverride()));
     fetch("/api/profile").then((r) => r.json()).then((d) => setProfile(d.user));
     fetch("/api/models").then((r) => r.json()).then((d) => setModels(d.models ?? []));
   }, []);
+
+  function persistRegionOverride(value: string) {
+    setRegionOverride(value);
+  }
 
   async function save() {
     if (!profile) return;
@@ -107,6 +115,39 @@ export default function SettingsPage() {
                   </span>
                 </label>
               </div>
+            </Panel>
+
+            {/* billing region — ported from the old Settings view; override
+                lives on-device only (sg16/region), exactly like the old store */}
+            <Panel className="p-6">
+              <h2 className="font-display text-sm font-black tracking-widest text-white">BILLING REGION</h2>
+              <p className="mt-2 text-[12px] leading-relaxed text-slate-400">
+                Verification is fully localized: region is inferred from this device&rsquo;s own timezone
+                and locale, and the signed record lives only in your sg16/ folder. Palestine resolves to
+                the humanitarian zero-rate bypass automatically.
+              </p>
+              <label className="mt-4 block sm:max-w-[320px]">
+                <span className="mb-1 block font-mono2 text-[10px] tracking-widest text-slate-400">REGION OVERRIDE</span>
+                <select
+                  className="input-dark h-11 w-full px-3 text-sm"
+                  value={regionOverride}
+                  onChange={(e) => {
+                    setRegionOverride(e.target.value);
+                    persistRegionOverride(e.target.value);
+                    setRegionSaved(true);
+                    setTimeout(() => setRegionSaved(false), 2500);
+                  }}
+                >
+                  <option value="auto">auto (device timezone / locale)</option>
+                  <option value="Palestine">Palestine — humanitarian zero-rate</option>
+                  <option value="none">none (no special region)</option>
+                </select>
+              </label>
+              {regionSaved && (
+                <span className="mt-3 inline-flex items-center gap-2 font-display text-[11px] font-bold tracking-widest text-emerald-300">
+                  <Check className="h-4 w-4" /> REGION SAVED ON-DEVICE
+                </span>
+              )}
             </Panel>
 
             <div className="flex justify-end gap-3">

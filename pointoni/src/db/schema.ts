@@ -74,6 +74,31 @@ export const chatMessages = pgTable("chat_messages", {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
+// ---------------------------------------------------------------------------
+// SOVEREIGN IDENTITY — email-only, zero-profile by design.
+// One row per person, one column of personal data: the email itself. No names,
+// no passwords, no avatars, no telemetry. Subscription bindings live here so a
+// lost device or deleted folder never loses the paid pass — the user re-links
+// anywhere with an email magic code.
+// ---------------------------------------------------------------------------
+export const sovereignIdentities = pgTable("sovereign_identities", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  email: text("email").notNull().unique(),
+  plan: text("plan"), //                 pass label when bound (eg "1-Month Premium"), else null
+  planToken: text("plan_token"), //      signed sovereign billing record reference
+  planExpiresAt: timestamp("plan_expires_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  lastLoginAt: timestamp("last_login_at", { withTimezone: true }),
+});
+
+export const authCodes = pgTable("auth_codes", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  email: text("email").notNull(),
+  codeHash: text("code_hash").notNull(), // sha256(code + ":" + email) — the raw code is never stored
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
 export const storedFiles = pgTable("stored_files", {
   id: uuid("id").primaryKey().defaultRandom(),
   userId: uuid("user_id")

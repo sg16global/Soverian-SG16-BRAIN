@@ -3,6 +3,7 @@
 import { useState, type ReactNode, useMemo } from "react";
 import Link from "next/link";
 import { Crown } from "lucide-react";
+import { COMPANY } from "@/lib/company";
 import { TopNav } from "./TopNav";
 import { Sidebar, SidebarDrawer } from "./Sidebar";
 
@@ -55,7 +56,8 @@ export function SiteChrome({
       <Sidebar />
       <SidebarDrawer open={drawer} onClose={() => setDrawer(false)} />
 
-      <div className="xl:pl-[224px]">
+      {/* side panel auto-hides — main takes the full viewport width */}
+      <div>
         <main className="min-h-screen pt-[58px]">{children}</main>
 
         {!hideFooter && (
@@ -82,12 +84,30 @@ export function SiteChrome({
                 <br />
                 ONE MIND, ONE PLANET. ONE SOVEREIGN BRAIN.
               </p>
+              {/* official company identity — SAIF TECH GLOBAL LLC (old-site footer, mapped 1:1) */}
+              <div className="max-w-md font-mono2 leading-relaxed">
+                <div className="font-display text-[12px] font-black tracking-widest text-amber-300">
+                  {COMPANY.name}
+                </div>
+                <div className="mt-1 text-[9px] tracking-[0.14em] text-slate-400">
+                  {COMPANY.services}
+                </div>
+                <div className="mt-1 text-[9px] tracking-[0.14em] text-slate-500">
+                  {COMPANY.address}
+                </div>
+                <div className="mt-2 text-[9px] tracking-[0.14em] text-slate-400">
+                  {COMPANY.brandTagline}
+                </div>
+              </div>
               <div className="flex flex-col gap-1 font-display text-[10px] font-bold tracking-widest">
                 <Link href="/vision" className="text-slate-300 transition hover:text-red-300">OUR VISION</Link>
                 <Link href="/services" className="text-slate-300 transition hover:text-red-300">SERVICES</Link>
                 <Link href="/api-access" className="text-slate-300 transition hover:text-red-300">API ACCESS</Link>
                 <Link href="/support" className="text-slate-300 transition hover:text-red-300">SUPPORT</Link>
               </div>
+            </div>
+            <div className="border-t border-red-500/15 py-2.5 text-center font-mono2 text-[9px] tracking-[0.25em] text-slate-500">
+              {COMPANY.copyright} · {COMPANY.motto}
             </div>
             <div className="border-t border-red-500/15 py-3 text-center font-mono2 text-[9px] tracking-[0.25em] text-slate-500">
               APACHE 2.0 · SOVEREIGN BRAIN · MISTRAL X INSTRUCT · KNOWLEDGE · DIPLOMACY · A BETTER TOMORROW

@@ -7,6 +7,10 @@ export const metadata: Metadata = {
   description:
     "SG16-powered AI global intelligence network. A self-hosted Mistral engine built for ownership, not dependency on third-party AI APIs. Knowledge \u00B7 Diplomacy \u00B7 A Better Tomorrow.",
   keywords: ["Sovereign AI", "SG16 Brain", "Mistral", "multi-model AI", "self-hosted AI"],
+  applicationName: "Sovereign SG16 Brain",
+  creator: "SAIF TECH GLOBAL LLC",
+  publisher: "SAIF TECH GLOBAL LLC",
+  icons: { icon: "/images/emblem-base.png", apple: "/images/emblem-base.png" },
 };
 
 export default function RootLayout({ children }: { children: ReactNode }) {

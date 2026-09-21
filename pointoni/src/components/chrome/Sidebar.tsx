@@ -104,9 +104,27 @@ function SidebarBody({ onNavigate }: { onNavigate?: () => void }) {
 }
 
 export function Sidebar() {
+  // AUTO-HIDE sovereign side panel: a slim glowing grab strip stays visible
+  // on the left edge; hovering (or keyboard-focusing into) the strip slides
+  // the full panel out, and leaving retracts it automatically — the page
+  // content keeps the entire viewport width at all times.
   return (
-    <aside className="fixed bottom-0 left-0 top-[58px] z-40 hidden w-[224px] border-r border-red-500/30 shadow-[4px_0_30px_rgba(255,31,46,.15)] xl:block">
+    <aside
+      id="sovereign-side-panel"
+      aria-label="Sovereign side panel (auto-hide)"
+      className="group fixed bottom-0 left-0 top-[58px] z-40 hidden w-[224px] -translate-x-[calc(100%-14px)] border-r border-red-500/40 shadow-[6px_0_34px_rgba(255,31,46,.35)] transition-transform duration-300 ease-out hover:translate-x-0 focus-within:translate-x-0 xl:block"
+    >
       <SidebarBody />
+      {/* collapsed grab strip — the 14px still visible at the left edge */}
+      <span
+        aria-hidden
+        className="absolute inset-y-0 right-0 w-[14px] border-l border-red-500/40 bg-gradient-to-b from-[#180509] via-[#0a0306] to-[#180509] opacity-100 transition-opacity duration-200 group-hover:opacity-0 group-focus-within:opacity-0"
+      >
+        <span className="absolute inset-x-0 top-1/2 h-16 -translate-y-1/2 rounded-full bg-red-500/60 blur-[2px] pulse-soft" />
+        <span className="absolute inset-x-0 top-1/2 -translate-y-1/2 text-center font-mono2 text-[8px] font-bold tracking-[0.32em] text-red-300 [writing-mode:vertical-rl]">
+          PANEL ▸
+        </span>
+      </span>
     </aside>
   );
 }
