@@ -6,6 +6,7 @@ import { Crown } from "lucide-react";
 import { COMPANY } from "@/lib/company";
 import { TopNav } from "./TopNav";
 import { Sidebar, SidebarDrawer } from "./Sidebar";
+import { FooterRail } from "./FooterRail";
 
 function Embers() {
   const sparks = useMemo(
@@ -63,6 +64,8 @@ export function SiteChrome({
         {!hideFooter && (
           <footer className="relative mt-10 border-t border-red-500/30 bg-black/60">
             <div className="glow-divider" />
+            {/* the doctrine tape — runs continuously under every page */}
+            <FooterRail />
             <div className="mx-auto flex max-w-[1200px] flex-col items-center gap-4 px-4 py-10 text-center sm:flex-row sm:justify-between sm:text-left">
               <div className="flex items-center gap-3">
                 <span className="grid h-10 w-10 place-items-center rounded-lg border border-red-400/50 bg-red-950/50">

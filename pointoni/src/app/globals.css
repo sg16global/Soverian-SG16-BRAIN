@@ -499,9 +499,29 @@ input, textarea, select {
 .batch-in  { animation: batch-in .7s cubic-bezier(.22,.9,.24,1) both; }
 .batch-out { animation: batch-out .7s cubic-bezier(.22,.9,.24,1) both; }
 
+/* ---------- Sovereign footer rail (doctrine tape, horizontal) ---------- */
+/* The rail renders its item list twice and translates a clean -50%, so the
+   loop is seamless at any item length. The rail is decorative chrome: it
+   pauses on hover so a visitor can actually read a line, and it is disabled
+   entirely for reduced-motion visitors. */
+.footer-rail {
+  mask-image: linear-gradient(90deg, transparent, #000 6%, #000 94%, transparent);
+  -webkit-mask-image: linear-gradient(90deg, transparent, #000 6%, #000 94%, transparent);
+}
+@keyframes rail-x {
+  from { transform: translateX(0); }
+  to   { transform: translateX(-50%); }
+}
+.footer-rail-track { animation: rail-x 64s linear infinite; will-change: transform; }
+.footer-rail-track--slow { animation-duration: 84s; }
+.footer-rail:hover .footer-rail-track { animation-play-state: paused; }
+
 @media (prefers-reduced-motion: reduce) {
   .float-slow, .spin-slow, .spin-rev, .scanline::before, .marquee-track, .pulse-soft, .ember, .eq-bar, .status-dot::after,
-  .ticker-track, .batch-in, .batch-out, .scan-beam, .radar-ring, .stream-track {
+  .ticker-track, .batch-in, .batch-out, .scan-beam, .radar-ring, .stream-track, .footer-rail-track {
     animation: none !important;
   }
+  /* static fallback: wrap the tape instead of scrolling it past the eye */
+  .footer-rail { mask-image: none; -webkit-mask-image: none; }
+  .footer-rail-track { flex-wrap: wrap; width: 100%; }
 }
