@@ -1,0 +1,57 @@
+// ===================================================================
+// SG16 FOOTER RAIL — the sovereign tape that runs under every page.
+//
+// One continuous rail carrying the doctrine that must never be buried in a
+// legal paragraph: zero storage, one brain, the children's pledge line and
+// the frozen corporate footprint. It is the same "one mind, one planet"
+// statement the footer already makes, but it moves — so the visitor reads it
+// without being asked to.
+//
+// Legal guardrail (children charter §3): the UNICEF/UNESCO line is a *pledge
+// of funds*, never an implication of endorsement or partnership. The wording
+// below is the frozen public sentence; the interface must never suggest
+// affiliation, so no logos and no "partner/supported by" phrasing ever.
+//
+// Presentation only: no state, no fetch, no analytics. The rail pauses on
+// hover and stops entirely under `prefers-reduced-motion`.
+// ===================================================================
+
+import { COMPANY } from "@/lib/company";
+
+const RAIL_ITEMS: readonly string[] = [
+  "ZERO STORAGE · SG16 POWERED · mistralbrain.com",
+  "ONE MIND · ONE PLANET · ONE SOVEREIGN BRAIN",
+  "APACHE 2.0 · OPEN INTELLIGENCE · NO VENDOR LOCK-IN",
+  "CHILDREN'S FRIEND · FREE IN HUMANITARIAN REGIONS · NO PROFILE, EVER",
+  "All proceeds collected from paying regions are pledged to children's causes through UNICEF- and UNESCO-aligned programmes.",
+  "supporting children's education via UNICEF & UNESCO programmes",
+  "Q16.16 SOVEREIGN CORE · MISTRAL X INSTRUCT · YOUR DEVICE KEEPS ITS OWN MEMORY",
+  COMPANY.legalLine,
+];
+
+export function FooterRail() {
+  // Rendered twice so the keyframe can translate a clean -50% for a seamless
+  // loop; `aria-hidden` on the duplicate keeps screen readers at one copy.
+  const items = [...RAIL_ITEMS, ...RAIL_ITEMS];
+
+  return (
+    <div
+      className="footer-rail relative overflow-hidden border-t border-red-500/15 bg-[#04060a]/80"
+      role="marquee"
+      aria-label="Sovereign doctrine rail"
+    >
+      <div className="footer-rail-track footer-rail-track--slow flex w-max items-center py-2">
+        {items.map((item, i) => (
+          <span
+            key={`${i}-${item.slice(0, 12)}`}
+            aria-hidden={i >= RAIL_ITEMS.length}
+            className="flex flex-none items-center font-mono2 text-[9px] tracking-[0.28em] text-slate-500"
+          >
+            <span className="whitespace-nowrap uppercase">{item}</span>
+            <span className="mx-6 text-red-500/70">◆</span>
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}

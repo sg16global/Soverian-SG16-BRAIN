@@ -8,9 +8,16 @@ import {
   verifyToken,
 } from "@/lib/identity";
 import { PASSES } from "@/lib/billing";
+import { childrenIdentityBlock, childrenPreflight, withChildrenCors } from "@/lib/cors-lock";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
+
+// Children shells are cross-origin by design (their own domain, one fetch),
+// so preflight is answered before the lock refuses them.
+export async function OPTIONS(req: NextRequest) {
+  return childrenPreflight(req);
+}
 
 // SOVEREIGN IDENTITY API — email-only, magic-code sign-in.
 //  POST { action: "request", email }              → sends a 6-digit code
@@ -19,7 +26,12 @@ export const runtime = "nodejs";
 //  POST { action: "me", token }                   → current identity + plan state
 // Zero-profile contract: we store the email and the plan binding — nothing else.
 
-export async function GET() {
+export async function GET(req: NextRequest) {
+  // Charter §4: the children's edition has no identity surface at all. The
+  // lock is enforced here, not merely un-mounted in the UI.
+  const blocked = childrenIdentityBlock(req);
+  if (blocked) return blocked;
+
   return NextResponse.json({
     service: "SG16 Sovereign Identity",
     contract: "email-only — no passwords, no names, no telemetry, one column of identity",
@@ -31,6 +43,11 @@ export async function GET() {
 }
 
 export async function POST(req: NextRequest) {
+  // Same lock on writes: a children shell cannot mint, bind or read an
+  // identity — there is nothing to protect because nothing is collected.
+  const blocked = childrenIdentityBlock(req);
+  if (blocked) return blocked;
+
   try {
     const body = (await req.json()) as Record<string, unknown>;
     const action = String(body.action ?? "");
@@ -83,11 +100,17 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    return NextResponse.json({ ok: false, error: "unknown action" }, { status: 400 });
+    return withChildrenCors(
+      req,
+      NextResponse.json({ ok: false, error: "unknown action" }, { status: 400 }),
+    );
   } catch (err) {
-    return NextResponse.json(
-      { ok: false, error: err instanceof Error ? err.message : "identity op failed" },
-      { status: 400 },
+    return withChildrenCors(
+      req,
+      NextResponse.json(
+        { ok: false, error: err instanceof Error ? err.message : "identity op failed" },
+        { status: 400 },
+      ),
     );
   }
 }
