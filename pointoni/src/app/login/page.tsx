@@ -9,8 +9,9 @@ import { Panel } from "@/components/ui/Panel";
 import { CapsuleCenter } from "@/components/CapsuleCenter";
 import { PASSES } from "@/lib/billing";
 
-// SOVEREIGN LOGIN — email-only identity, magic code, subscription vaulting
-// and the device capsule. One page = the user's whole domain of the brain.
+// Email magic-code identity and host-verified pass linking. Identity tokens
+// are browser-held bearer credentials; account data and signed-in history are
+// stored by the configured deployment.
 
 const LS_KEY = "sg16/identity";
 
@@ -38,18 +39,43 @@ export default function LoginPage() {
   const [devCode, setDevCode] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [bindPass, setBindPass] = useState("month");
   const [bindNote, setBindNote] = useState<string | null>(null);
 
   useEffect(() => {
-    const t = setTimeout(() => setSession(loadSession()), 0);
-    return () => clearTimeout(t);
+    const timer = window.setTimeout(() => {
+      const stored = loadSession();
+      if (!stored) return;
+      void fetch("/api/identity", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", authorization: `Bearer ${stored.token}` },
+        body: JSON.stringify({ action: "me" }),
+        cache: "no-store",
+      }).then(async (response) => {
+        const data = await response.json();
+        if (response.ok && data.ok) {
+          const verified: Session = {
+            token: stored.token,
+            email: data.email,
+            plan: data.plan ?? null,
+            planExpiresAt: data.planExpiresAt ?? null,
+          };
+          localStorage.setItem(LS_KEY, JSON.stringify(verified));
+          setSession(verified);
+        } else if (response.status === 401) {
+          localStorage.removeItem(LS_KEY);
+        }
+      }).catch(() => undefined);
+    }, 0);
+    return () => window.clearTimeout(timer);
   }, []);
 
-  async function call(action: string, extra: Record<string, unknown> = {}) {
+  async function call(action: string, extra: Record<string, unknown> = {}, bearerToken?: string) {
     const res = await fetch("/api/identity", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        ...(bearerToken ? { authorization: `Bearer ${bearerToken}` } : {}),
+      },
       body: JSON.stringify({ action, ...extra }),
     });
     const data = await res.json();
@@ -100,22 +126,22 @@ export default function LoginPage() {
     setError(null);
     setBindNote(null);
     try {
-      // a purchased pass record may already live on this device (billing flow)
-      let tokenRef = "vaulted-by-email";
-      try {
-        const passRaw = localStorage.getItem("sg16/pass");
-        if (passRaw) {
-          const rec = JSON.parse(passRaw) as { token?: string };
-          if (rec.token) tokenRef = rec.token.slice(0, 200);
-        }
-      } catch { /* device record optional */ }
-      const d = await call("bind", { email: session.email, pass: bindPass, token: tokenRef });
-      const next: Session = { ...session, plan: d.plan, planExpiresAt: d.planExpiresAt };
+      let passToken = "";
+      const passRaw = localStorage.getItem("sg16/pass");
+      if (passRaw) {
+        const record = JSON.parse(passRaw) as { token?: unknown };
+        if (typeof record.token === "string") passToken = record.token;
+      }
+      if (!/^[a-f0-9]{64}$/.test(passToken)) {
+        throw new Error("No host-issued pass is stored in this browser. Complete checkout first.");
+      }
+      const data = await call("bind", { pass_token: passToken }, session.token);
+      const next: Session = { ...session, plan: data.plan, planExpiresAt: data.planExpiresAt };
       localStorage.setItem(LS_KEY, JSON.stringify(next));
       setSession(next);
-      setBindNote(`${d.plan} is now vaulted to ${d.email}. Work mode follows you on every device.`);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "bind failed");
+      setBindNote(`${data.plan} was linked to ${data.email}. The host checks its validity when you use it.`);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not link the pass.");
     } finally {
       setBusy(false);
     }
@@ -133,7 +159,7 @@ export default function LoginPage() {
     <SiteChrome>
       <PageHeader
         title="YOUR SOVEREIGN DOMAIN"
-        subtitle="One email is the whole key. No passwords, no profiles, no stored chats — your subscription and your conversations follow you, and only you hold them."
+        subtitle="Verify an email with a one-time code. The deployment stores your identity and linked pass; signed-in chat history may be stored in its database. Retention depends on deployment settings."
       />
 
       <div className="mx-auto grid max-w-[1100px] gap-5 px-3 pb-10 sm:px-5 lg:grid-cols-2">
@@ -256,52 +282,42 @@ export default function LoginPage() {
                   </div>
                 )}
 
-                {/* vault a purchased pass to this email */}
+                {/* link an existing pass only after server-side verification */}
                 <div className="rounded-lg border border-white/10 bg-white/[0.03] p-3">
                   <div className="font-display text-[10px] font-black tracking-[0.2em] text-slate-200">
-                    VAULT A PASS TO THIS EMAIL
+                    LINK A HOST-VERIFIED PASS
                   </div>
-                  <div className="mt-2 flex gap-2">
-                    <select
-                      value={bindPass}
-                      onChange={(e) => setBindPass(e.target.value)}
-                      className="input-dark h-10 flex-1 px-2 text-[12px]"
-                    >
-                      {PASSES.map((p) => (
-                        <option key={p.id} value={p.id}>
-                          {p.label} · ${p.price}
-                        </option>
-                      ))}
-                    </select>
-                    <button
-                      onClick={bind}
-                      disabled={busy}
-                      className="btn-red px-4 py-2 font-display text-[10px] font-black tracking-[0.18em] disabled:opacity-50"
-                    >
-                      VAULT
-                    </button>
-                  </div>
+                  <p className="mt-2 text-[11px] leading-relaxed text-slate-400">
+                    This links the bearer token saved by checkout. The server verifies it; a tier name or locally fabricated record is not accepted.
+                  </p>
+                  <button
+                    onClick={bind}
+                    disabled={busy}
+                    className="btn-red mt-3 px-4 py-2 font-display text-[10px] font-black tracking-[0.18em] disabled:opacity-50"
+                  >
+                    {busy ? "VERIFYING…" : "VERIFY & LINK"}
+                  </button>
                   {bindNote && <p className="mt-2 text-[11px] font-medium text-emerald-200">{bindNote}</p>}
                 </div>
               </>
             )}
             {error && <p className="rounded-lg border border-red-400/40 bg-red-500/10 px-3 py-2 text-[12px] font-medium text-red-300">{error}</p>}
             <p className="font-mono2 text-[9px] leading-relaxed tracking-[0.14em] text-slate-500">
-              CONTRACT · we keep exactly one column about you — this email — so a lost phone never
-              loses a paid pass. Everything else is on your device or inside your capsule.
+              DATA NOTE · the account database stores your verified email and plan binding. Signed-in
+              conversations and other account data may also be stored by this deployment; check its retention policy.
             </p>
           </div>
         </Panel>
 
         {/* ── device capsule ── */}
-        <CapsuleCenter email={session?.email ?? null} />
+        <CapsuleCenter email={session?.email ?? null} token={session?.token ?? null} />
 
         {/* ── doctrine strip ── */}
         <Panel className="lg:col-span-2" soft>
           <div className="flex flex-wrap items-center justify-center gap-x-8 gap-y-2 px-4 py-4 text-center font-mono2 text-[10px] tracking-[0.2em] text-slate-400">
-            <span className="inline-flex items-center gap-2"><ShieldCheck className="h-4 w-4 text-emerald-300" /> NOTHING STORED ABOUT YOU EXCEPT ONE EMAIL</span>
-            <span className="inline-flex items-center gap-2"><Globe2 className="h-4 w-4 text-cyan-300" /> ANY DEVICE · SAME DOMAIN</span>
-            <span className="inline-flex items-center gap-2"><Fingerprint className="h-4 w-4 text-amber-300" /> LOST FOLDER ≠ LOST SUBSCRIPTION</span>
+            <span className="inline-flex items-center gap-2"><ShieldCheck className="h-4 w-4 text-emerald-300" /> VERIFIED EMAIL · ACCOUNT DATA</span>
+            <span className="inline-flex items-center gap-2"><Globe2 className="h-4 w-4 text-cyan-300" /> BROWSER-HELD BEARER TOKEN</span>
+            <span className="inline-flex items-center gap-2"><Fingerprint className="h-4 w-4 text-amber-300" /> DEPLOYMENT RETENTION APPLIES</span>
           </div>
         </Panel>
       </div>

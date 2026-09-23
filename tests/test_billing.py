@@ -48,6 +48,20 @@ class IssueAndVerifyTests(unittest.TestCase):
         verified = billing.verify_record(record, SECRET, now=1000.0)
         self.assertEqual(verified["pass"], "week")
 
+    def test_same_tier_records_are_unique_even_in_same_second(self) -> None:
+        first = billing.issue_record("week", "Malaysia", SECRET, now=1000.0)
+        second = billing.issue_record("week", "Malaysia", SECRET, now=1000.0)
+        self.assertNotEqual(first["nonce"], second["nonce"])
+        self.assertNotEqual(first["token"], second["token"])
+        billing.verify_record(first, SECRET, now=1000.0)
+        billing.verify_record(second, SECRET, now=1000.0)
+
+    def test_tampered_nonce_is_rejected(self) -> None:
+        record = billing.issue_record("week", "Malaysia", SECRET, now=1000.0)
+        tampered = dict(record, nonce="attacker-controlled")
+        with self.assertRaises(billing.VerificationError):
+            billing.verify_record(tampered, SECRET, now=1000.0)
+
     def test_humanitarian_record_is_zero_and_flagged(self) -> None:
         record = billing.issue_record("month", "Palestine", SECRET, now=1000.0)
         self.assertEqual(record["price_charged"], 0)

@@ -3,7 +3,7 @@
     "name": "SG16 BRAIN",
     "version": "1.0.0",
     "domain": "mistralbrain.com",
-    "independent": true,
+    "independent": false,
     "open_access": true
   },
   "hosting": {
@@ -22,39 +22,27 @@
     "note": "Transport is declared by the operator, never probed. The mathematical core is transport-blind."
   },
   "engine": {
-    "model_type": "mistral-7b-apache2",
-    "head": "mistral-7b-apache2",
-    "real_model": "mistralai/Mistral-7B-v0.1",
-    "license": "Apache 2.0",
-    "architecture": "Mistral 7B - 32 layers, 4096 hidden, 14336 intermediate, 32 heads, 8 kv heads GQA, RoPE theta 10000, SwiGLU, RMSNorm, Sliding Window 4096",
-    "hidden_size": 4096,
-    "intermediate_size": 14336,
-    "num_hidden_layers": 32,
-    "num_attention_heads": 32,
-    "num_key_value_heads": 8,
-    "vocab_size": 32000,
-    "max_position_embeddings": 32768,
-    "rope_theta": 10000.0,
-    "sliding_window": 4096,
-    "weight_path": "./weights/mistral-7b",
-    "weight_origin": "trained-mistral-7b-apache2-real-when-present-seeded-simulated-fallback-for-tests",
+    "model_type": "sg16-seeded-structural-encoder",
+    "head": "sg16-seeded-structural-encoder",
+    "architecture": "Seeded Q16.16 structural encoder used for intent vectors and planning; not a pretrained language model.",
+    "weight_origin": "deterministic-seeded-matrices-not-trained",
     "fallback": {
-      "head": "devstral-small-2",
+      "head": "sg16-seeded-structural-encoder",
       "dim": 64,
       "ffn_hidden": 128,
       "chunk_bytes": 32,
       "max_chunks": 64,
       "layers": 2,
       "seed": "sg16.core.matrix.v2",
-      "density": "pure-mathematical-embedded-seeded-simulated-for-sandbox"
+      "density": "seeded-fixed-point-structural-encoder-not-trained"
     },
-    "arithmetic": "q16.16-fixed-point-seeded + fp16-bf16-real-trained-dual-path",
-    "offline_online": "OFFLINE & ONLINE MODE per SG16 Developer logo - offline once weights downloaded",
-    "note": "100% real true mathematical pure trained model Mistral 7B Apache 2.0 when weights present at weight_path. Seeded Q16.16 fallback for tests/sandbox/low-end. No fake, brother to brother honest. Download via scripts/download_mistral.py"
+    "arithmetic": "q16.16-fixed-point-structural-encoder",
+    "offline_online": "Local deterministic processing; transport label is metadata only.",
+    "note": "No autoregressive language-model inference is implemented or wired into this build. Unknown questions are deferred."
   },
   "audio": {
-    "head": "voxtral-mini",
-    "route": "devstral-small-2",
+    "head": "local-dsp-profile",
+    "route": "deterministic-acoustic-analysis",
     "bins_hz": [
       100,
       200,
@@ -65,7 +53,7 @@
       2200,
       3200
     ],
-    "transcription": "deferred-no-asr-weights"
+    "transcription": "not-implemented; caller-declared transcript only"
   },
   "gate": {
     "joint_room": [
@@ -95,11 +83,11 @@
     "sealed": true
   },
   "identity": {
-    "official_name": "SOVERIAN SG16 Brain",
+    "official_name": "Sovereign SG16 Brain",
     "designation": "SG16",
     "inscription_tag": "sg16.identity.v1",
-    "utterance": "I am Sovereign SG16 Brain, a 100% fully independent, self-contained, and sovereign core brain engine running with zero corporate dependencies.",
-    "language_parity": "native-in-process",
+    "utterance": "I'm Sovereign SG16 Brain, an AI assistant from the SG16 project. This build uses deterministic code and curated information rather than a general-purpose pretrained language model.",
+    "language_parity": "UTF-8 input only; language identification, translation, and general multilingual generation are not implemented.",
     "translation_loops": 0
   },
   "knowledge": {
@@ -109,24 +97,18 @@
     "lexical_floor": 0.18
   },
   "sessions": {
-    "max_sessions": 512,
-    "warnings_before_notice": 3
-  },
-  "notice": {
-    "simulated": true,
-    "performs_device_action": false,
-    "contacts_external_authority": false
+    "max_sessions": 512
   },
   "owner": {
-    "email": "sg16global@gmail.com",
+    "credential_env": "SG16_OWNER_SECRET",
     "bypass": [
-      "token_accounting",
       "operational_throttles"
     ],
     "never_bypass": [
       "anti_harm_gate",
       "safety_invariants"
-    ]
+    ],
+    "note": "Disabled when the server-only secret is unset. Email addresses and browser identity are not credentials."
   },
   "throttle": {
     "max_requests": 30,
@@ -134,7 +116,6 @@
     "max_chars": 200000
   },
   "billing": {
-    "secret": "sg16-sovereign-dev-secret",
     "currency": "USD",
     "humanitarian_region": "Palestine",
     "passes": {
@@ -155,7 +136,8 @@
         "half": "",
         "month": ""
       },
-      "note": "Operator credentials for the Dodo Payments MoR gateway. Fill api_key + webhook_secret + one product id per pass (from the Dodo dashboard) to switch /api/dodo/checkout onto the live gateway; DODO_API_KEY / DODO_WEBHOOK_SECRET environment variables override these. With empty credentials the host runs the sovereign local issuance path - same signed, duration-locked records, no gateway. Palestine is intercepted before the gateway in every mode and receives a valid $0 token natively."
-    }
+      "note": "Configure DODO_API_KEY, DODO_WEBHOOK_SECRET, and one product ID per pass. Paid checkout is disabled when the gateway is not configured. SG16_BILLING_SECRET should be a high-entropy server-only value. Zero-rate regional passes require a trusted proxy configured with SG16_PROXY_AUTH_SECRET."
+    },
+    "secret_env": "SG16_BILLING_SECRET"
   }
 }

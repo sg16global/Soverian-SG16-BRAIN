@@ -11,10 +11,9 @@ Covers:
 * **Dodo Payments MoR pipeline** - Standard Webhooks signature verification,
   duration-locked record signing, client pickup, and rejection of tampered,
   stale, mismatched or humanitarian-charged events.
-* **Palestine humanitarian interceptor** - payload region, ``X-SG16-Region``
-  header or edge geo country (``CF-IPCountry`` / ``X-Vercel-IP-Country``)
-  mapping to Palestine bypasses the gateway entirely and yields a valid $0
-  operational token.
+* **Regional billing trust** - browser payloads and region headers are ignored;
+  only country metadata asserted by an authenticated proxy can grant a $0
+  humanitarian record. Paid checkout fails closed when Dodo is unavailable.
 """
 
 from __future__ import annotations
@@ -27,6 +26,7 @@ import json
 import threading
 import time
 import unittest
+from unittest.mock import patch
 
 from sg16 import billing
 from sg16.brain import SG16Brain
@@ -102,7 +102,11 @@ def _success_event(pass_id: str = "week", region: str | None = "Malaysia", amoun
             "session_id": "sess_test_1",
             "amount": amount,
             "currency": "usd",
-            "metadata": {"sg16_pass": pass_id, "sg16_region": region or ""},
+            "metadata": {
+                "sg16_pass": pass_id,
+                "sg16_region": region or "",
+                "sg16_checkout_ref": "sess_test_1",
+            },
         },
     }
 
@@ -174,6 +178,18 @@ class WebhookSignatureTests(unittest.TestCase):
         with self.assertRaises(billing.VerificationError):
             billing.record_from_webhook(_success_event(pass_id="half", amount=500), SECRET)
 
+    def test_record_rejects_missing_payment_amount(self) -> None:
+        event = _success_event()
+        event["data"].pop("amount")
+        with self.assertRaisesRegex(billing.VerificationError, "amount is missing"):
+            billing.record_from_webhook(event, SECRET)
+
+    def test_record_rejects_non_usd_currency(self) -> None:
+        event = _success_event()
+        event["data"]["currency"] = "EUR"
+        with self.assertRaisesRegex(billing.VerificationError, "currency must be USD"):
+            billing.record_from_webhook(event, SECRET)
+
     def test_record_rejects_unknown_tier(self) -> None:
         with self.assertRaises(billing.VerificationError):
             billing.record_from_webhook(_success_event(pass_id="lifetime"), SECRET)
@@ -192,18 +208,24 @@ class WebhookSignatureTests(unittest.TestCase):
 # Geographic interceptor (pure layer)
 # --------------------------------------------------------------------------
 class RegionInterceptorTests(unittest.TestCase):
-    def test_payload_region_wins(self) -> None:
-        self.assertEqual(billing.resolve_region("Malaysia", "Palestine", None), "Malaysia")
+    def test_client_payload_and_region_headers_are_ignored(self) -> None:
+        self.assertIsNone(billing.resolve_region("Palestine", "Palestine", None))
 
-    def test_header_region_used_without_payload(self) -> None:
-        self.assertEqual(billing.resolve_region(None, "Palestine", None), "Palestine")
-
-    def test_geo_code_maps_palestine(self) -> None:
-        self.assertEqual(billing.resolve_region(None, None, "ps"), "Palestine")
-        self.assertEqual(billing.resolve_region(None, None, "PSE"), "Palestine")
+    def test_country_code_requires_an_authenticated_proxy(self) -> None:
+        self.assertIsNone(billing.resolve_region(None, None, "PS"))
+        self.assertEqual(
+            billing.resolve_region(None, None, "ps", proxy_authenticated=True),
+            "Palestine",
+        )
+        self.assertEqual(
+            billing.resolve_region(None, None, "PSE", proxy_authenticated=True),
+            "Palestine",
+        )
 
     def test_other_geo_codes_do_not_invent_a_region(self) -> None:
-        self.assertIsNone(billing.resolve_region(None, None, "MY"))
+        self.assertIsNone(
+            billing.resolve_region(None, None, "MY", proxy_authenticated=True)
+        )
 
     def test_palestine_code_set(self) -> None:
         self.assertEqual(billing.PALESTINE_CODES, frozenset({"PS", "PSE"}))
@@ -245,7 +267,7 @@ class ServerFixture(unittest.TestCase):
 
 
 class HardenedServerTests(ServerFixture):
-    """Default config: no Dodo credentials - sovereign local issuance mode."""
+    """Default config: no Dodo credentials; paid checkout fails closed."""
 
     config = BrainConfig.default()
 
@@ -296,13 +318,33 @@ class HardenedServerTests(ServerFixture):
         self.assertEqual(status, 400)
         self.assertIn("audio payload rejected", json.loads(raw)["error"])
 
-    # -- Palestine interceptor over HTTP ------------------------------------
-    def test_checkout_palestine_bypasses_gateway_with_zero_token(self) -> None:
+    # -- Regional trust and fail-closed checkout over HTTP ------------------
+    def test_client_region_claim_cannot_mint_a_free_pass(self) -> None:
         status, _, raw = self.request(
             "POST",
             "/api/dodo/checkout",
             {"pass": "month", "region": "Palestine", "session_id": "fix-ps-1"},
         )
+        self.assertEqual(status, 503)
+        self.assertIn("not configured", json.loads(raw)["error"])
+
+    def test_geo_country_requires_authenticated_proxy(self) -> None:
+        status, _, _ = self.request(
+            "POST",
+            "/api/dodo/checkout",
+            {"pass": "week", "session_id": "fix-ps-2"},
+            {"CF-IPCountry": "PS"},
+        )
+        self.assertEqual(status, 503)
+
+    def test_authenticated_proxy_can_issue_humanitarian_record(self) -> None:
+        with patch.dict("os.environ", {"SG16_PROXY_AUTH_SECRET": "proxy-test-secret"}):
+            status, _, raw = self.request(
+                "POST",
+                "/api/dodo/checkout",
+                {"pass": "month", "region": "Malaysia", "session_id": "fix-ps-3"},
+                {"X-SG16-Proxy-Auth": "proxy-test-secret", "CF-IPCountry": "PS"},
+            )
         self.assertEqual(status, 200)
         data = json.loads(raw)
         self.assertEqual(data["mode"], "humanitarian_bypass")
@@ -310,52 +352,47 @@ class HardenedServerTests(ServerFixture):
         self.assertEqual(record["price_charged"], 0)
         self.assertTrue(record["humanitarian_bypass"])
         self.assertEqual(record["expires_at"] - record["activated_at"], 24 * 30 * 3600)
-        # ... and the $0 token is a fully valid pass on ingest
-        status, _, raw = self.request(
-            "POST",
-            "/api/ingest",
-            {"text": "hello", "session_id": "fix-ps-use"},
-            {"X-SG16-Pass": record["token"]},
-        )
-        self.assertTrue(json.loads(raw)["premium"])
 
-    def test_geo_country_header_intercepts_palestine(self) -> None:
-        status, _, raw = self.request(
-            "POST",
-            "/api/dodo/checkout",
-            {"pass": "week", "session_id": "fix-ps-2"},
-            {"CF-IPCountry": "PS"},
-        )
-        self.assertEqual(status, 200)
-        data = json.loads(raw)
-        self.assertEqual(data["mode"], "humanitarian_bypass")
-        self.assertEqual(data["record"]["price_charged"], 0)
-
-    def test_subscribe_geo_header_intercepts_palestine(self) -> None:
+    def test_subscribe_rejects_client_region_claim(self) -> None:
         status, _, raw = self.request(
             "POST",
             "/api/subscribe",
-            {"pass": "day"},
-            {"X-Vercel-IP-Country": "PSE"},
+            {"pass": "day", "region": "Palestine"},
+            {"X-SG16-Region": "Palestine"},
         )
-        self.assertEqual(status, 200)
-        self.assertEqual(json.loads(raw)["price_charged"], 0)
+        self.assertEqual(status, 403)
 
-    # -- sovereign local issuance (no gateway credentials) -------------------
-    def test_checkout_without_credentials_issues_local_signed_record(self) -> None:
+    def test_authenticated_proxy_can_issue_regional_record(self) -> None:
+        with patch.dict("os.environ", {"SG16_PROXY_AUTH_SECRET": "proxy-test-secret"}):
+            status, _, raw = self.request(
+                "POST",
+                "/api/subscribe",
+                {"pass": "day"},
+                {"X-SG16-Proxy-Auth": "proxy-test-secret", "X-Vercel-IP-Country": "PSE"},
+            )
+        self.assertEqual(status, 200)
+        record = json.loads(raw)
+        self.assertEqual(record["price_charged"], 0)
+        billing.verify_record(record, self.server.billing_secret)
+
+    def test_pass_verification_requires_a_host_registered_signed_record(self) -> None:
+        record = billing.issue_record("day", "Malaysia", self.server.billing_secret)
+        self.server.passes[record["token"]] = record
+        status, _, raw = self.request("POST", "/api/pass/verify", {"token": record["token"]})
+        self.assertEqual(status, 200)
+        self.assertTrue(json.loads(raw)["valid"])
+
+        status, _, raw = self.request("POST", "/api/pass/verify", {"token": "f" * 64})
+        self.assertEqual(status, 403)
+
+    def test_checkout_without_credentials_fails_closed(self) -> None:
         status, _, raw = self.request(
             "POST",
             "/api/dodo/checkout",
             {"pass": "week", "region": "Malaysia", "session_id": "fix-local-1"},
         )
-        self.assertEqual(status, 200)
-        data = json.loads(raw)
-        self.assertEqual(data["mode"], "local")
-        record = data["record"]
-        self.assertEqual(record["price_charged"], 5)
-        self.assertEqual(record["gateway"], "local")
-        self.assertEqual(record["expires_at"] - record["activated_at"], 24 * 7 * 3600)
-        billing.verify_record(record, SECRET)
+        self.assertEqual(status, 503)
+        self.assertIn("not configured", json.loads(raw)["error"])
 
     def test_checkout_unknown_tier_is_400(self) -> None:
         status, _, _ = self.request(
@@ -374,7 +411,8 @@ class HardenedServerTests(ServerFixture):
         self.assertEqual(status, 200)
         gateway = json.loads(raw)["gateway"]
         self.assertEqual(gateway["provider"], "dodo-payments")
-        self.assertEqual(gateway["mode"], "sovereign-local")
+        self.assertEqual(gateway["mode"], "disabled")
+        self.assertEqual(gateway["paid_checkout_without_gateway"], "disabled; no local paid passes are issued")
         self.assertEqual(gateway["endpoints"]["webhook"], "/api/dodo/webhook")
 
 
@@ -387,6 +425,7 @@ class DodoPipelineServerTests(ServerFixture):
     @classmethod
     def setUpClass(cls) -> None:
         raw = json.loads(json.dumps(BrainConfig.default().raw))
+        raw.setdefault("billing", {})["secret"] = "a-stable-test-billing-secret-that-is-long-enough"
         raw.setdefault("billing", {})["dodo"] = {
             "test_mode": True,
             "webhook_secret": WHSEC,
@@ -419,6 +458,9 @@ class DodoPipelineServerTests(ServerFixture):
         payload = json.loads(raw)
         self.assertTrue(payload["acted"])
         self.assertEqual(payload["pass"], "week")
+        status, _, raw = self.request("POST", "/api/dodo/webhook", body, headers)
+        self.assertEqual(status, 200)
+        self.assertTrue(json.loads(raw)["duplicate"])
 
         # client pickup: the signed, duration-locked record
         status, _, raw = self.request(
@@ -429,7 +471,7 @@ class DodoPipelineServerTests(ServerFixture):
         self.assertEqual(record["pass"], "week")
         self.assertEqual(record["gateway"], "dodo")
         self.assertEqual(record["expires_at"] - record["activated_at"], 24 * 7 * 3600)
-        billing.verify_record(record, SECRET)
+        billing.verify_record(record, self.server.billing_secret)
 
         # and it is a live premium pass on the ingest path
         status, _, raw = self.request(
@@ -439,6 +481,17 @@ class DodoPipelineServerTests(ServerFixture):
             {"X-SG16-Pass": record["token"]},
         )
         self.assertTrue(json.loads(raw)["premium"])
+
+    def test_signed_success_webhook_without_host_checkout_is_rejected(self) -> None:
+        orphan_event = _success_event()
+        orphan_event["id"] = "evt_orphan_1"
+        orphan_event["data"]["session_id"] = "sess_orphan_1"
+        orphan_event["data"]["payment_id"] = "pay_orphan_1"
+        orphan_event["data"]["metadata"]["sg16_checkout_ref"] = "sess_orphan_1"
+        body, headers = _sign_webhook(WHSEC, orphan_event, msg_id="msg_orphan_0001")
+        status, _, raw = self.request("POST", "/api/dodo/webhook", body, headers)
+        self.assertEqual(status, 404)
+        self.assertIn("does not match a checkout", json.loads(raw)["error"])
 
     def test_webhook_bad_signature_is_403(self) -> None:
         body, headers = _sign_webhook(WHSEC, _success_event())

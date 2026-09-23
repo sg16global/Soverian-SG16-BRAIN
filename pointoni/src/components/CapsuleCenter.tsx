@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { HardDriveDownload, HardDriveUpload, Lock, Unlock, TriangleAlert } from "lucide-react";
 import { Panel } from "@/components/ui/Panel";
+import { identityHeaders } from "@/lib/browser-identity";
 import {
   downloadCapsule,
   openCapsule,
@@ -11,14 +12,14 @@ import {
   type CapsuleSession,
 } from "@/lib/capsule";
 
-// DEVICE CAPSULE center — seal everything into an encrypted file the user owns
-// (their Google Drive / phone folder), and restore it anywhere. The platform
-// holds nothing and can read nothing.
+// DEVICE CAPSULE center — exports account conversation data into a
+// user-held encrypted file. Restoring decrypts in the browser, then uploads
+// messages into the signed-in deployment's readable account archive.
 
 type SessionRow = { id: string; title: string; modelId: string; updatedAt?: string };
 type Checklist = { key: string; text: string };
 
-export function CapsuleCenter({ email }: { email: string | null }) {
+export function CapsuleCenter({ email, token }: { email: string | null; token: string | null }) {
   const [pass, setPass] = useState("");
   const [busy, setBusy] = useState<"idle" | "sealing" | "opening">("idle");
   const [note, setNote] = useState<string | null>(null);
@@ -27,18 +28,25 @@ export function CapsuleCenter({ email }: { email: string | null }) {
   async function sealAll() {
     setError(null);
     setNote(null);
-    if (pass.length < 4) {
-      setError("Choose a passphrase of 4+ characters — it is never sent anywhere.");
+    if (!token) {
+      setError("Sign in to export saved account conversations.");
+      return;
+    }
+    if (pass.length < 12) {
+      setError("Choose a passphrase of at least 12 characters. It stays in this browser and protects the downloaded file.");
       return;
     }
     setBusy("sealing");
     try {
-      const sessionsRes = await fetch("/api/brain?sessions=1");
+      const headers = identityHeaders();
+      const sessionsRes = await fetch("/api/brain?sessions=1", { headers, cache: "no-store" });
+      if (!sessionsRes.ok) throw new Error("Could not read the signed-in account archive.");
       const { sessions = [] } = (await sessionsRes.json()) as { sessions?: SessionRow[] };
 
       const bundle: CapsuleSession[] = [];
       for (const s of sessions.slice(0, 40)) {
-        const msgsRes = await fetch(`/api/brain?session=${s.id}`);
+        const msgsRes = await fetch(`/api/brain?session=${encodeURIComponent(s.id)}`, { headers, cache: "no-store" });
+        if (!msgsRes.ok) throw new Error("Could not read a conversation from the account archive.");
         const { messages = [] } = (await msgsRes.json()) as {
           messages?: { role: string; content: string; modelId: string; createdAt: string }[];
         };
@@ -65,7 +73,7 @@ export function CapsuleCenter({ email }: { email: string | null }) {
       const sealedJson = await sealCapsule(payload, pass);
       downloadCapsule(email ?? "sovereign", sealedJson);
       setNote(
-        `Capsule sealed: ${bundle.length} session(s), AES-256-GCM. Keep the file in your own Drive or phone folder — we keep nothing.`,
+        `Encrypted export created: ${bundle.length} saved session(s), AES-GCM with PBKDF2. The original account history remains in the deployment database.`,
       );
     } catch (e) {
       setError(e instanceof Error ? e.message : "Sealing failed.");
@@ -83,23 +91,31 @@ export function CapsuleCenter({ email }: { email: string | null }) {
     }
     setBusy("opening");
     try {
+      if (!token) {
+        setError("Sign in to restore this export into the signed-in account archive.");
+        return;
+      }
       const payload = await openCapsule(await file.text(), pass);
       let restored = 0;
+      let failures = 0;
       const restoredChecklist: Checklist[] = [];
       for (const s of payload.sessions) {
         const res = await fetch("/api/brain/restore", {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: identityHeaders({ "Content-Type": "application/json" }),
           body: JSON.stringify({ title: s.title, messages: s.messages }),
         });
         if (res.ok) {
           const { restored: n } = (await res.json()) as { restored?: number };
           restored += n ?? 0;
           restoredChecklist.push({ key: s.title, text: `${n ?? 0} msg` });
+        } else {
+          failures += 1;
         }
       }
+      if (failures) throw new Error(`${failures} session(s) were not restored into the account archive.`);
       setNote(
-        `Capsule opened: ${payload.sessions.length} session(s), ${restored} message(s) restored to your chat archive${payload.owner ? ` · sealed by ${payload.owner}` : ""}.`,
+        `Capsule opened: ${payload.sessions.length} session(s), ${restored} message(s) restored into this deployment's account database${payload.owner ? ` · sealed by ${payload.owner}` : ""}.`,
       );
     } catch (e) {
       setError(e instanceof Error ? e.message : "Opening failed.");
@@ -113,7 +129,7 @@ export function CapsuleCenter({ email }: { email: string | null }) {
       <div className="border-b border-amber-400/25 px-4 py-3 text-center">
         <h3 className="panel-title text-base text-gold-gradient">DEVICE CAPSULE</h3>
         <p className="mt-1 font-mono2 text-[9px] tracking-[0.22em] text-slate-400">
-          YOUR FOLDER · YOUR DATA · AES-256-GCM · PLATFORM READS NOTHING
+          ENCRYPTED FILE · AES-256-GCM · RESTORE WRITES INTO THIS DEPLOYMENT
         </p>
       </div>
       <div className="space-y-3 p-4">

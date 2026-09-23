@@ -1,54 +1,44 @@
-"""SG16 BRAIN - the VIP owner signature.
+"""Secret-backed owner identification for server-side operational exemptions.
 
-The official company identity ``sg16global@gmail.com`` maps to a zero-
-restriction priority path: when a request carries a signature that resolves to
-this owner, the host skips all token accounting and operational throttles.
-
-Important boundary: this bypass covers *operations* (rate limits, token
-budgets, accounting) and **never** the safety invariants.  The anti-harm gate
-is absolute for every caller, owner included - charter invariant 5 admits no
-exception and this module is deliberately not consulted by the gate's
-allow/reject decision.
-
-Signatures are compared as salted SHA-256 digests so the raw email never needs
-to travel in the clear; a plain ``X-SG16-Owner`` header carrying the email is
-also accepted for operator convenience and reduced to the same digest.
+An email address or public digest is an identifier, not an authenticator. The
+only accepted credential is a bearer token supplied by the server operator via
+``SG16_OWNER_SECRET``. Keep that value server-side; never ship it to browser
+code. If it is unset, no request is treated as the owner.
 """
 
 from __future__ import annotations
 
-import hashlib
+import hmac
+import os
 
-__all__ = ["OWNER_EMAIL", "OWNER_SALT", "owner_digest", "matches_owner", "resolve_signature"]
-
-OWNER_EMAIL = "sg16global@gmail.com"
-OWNER_SALT = "sg16-owner-v1"
+__all__ = ["matches_owner", "resolve_signature"]
 
 
-def owner_digest(email: str | None = None) -> str:
-    """The canonical digest for the owner (or an arbitrary email)."""
-    target = (email or OWNER_EMAIL).strip().casefold()
-    return hashlib.sha256(f"{OWNER_SALT}:{target}".encode("utf-8")).hexdigest()
+def matches_owner(signature: str | None, secret: str | None = None) -> bool:
+    """Check a bearer credential against the configured server-side secret.
 
-
-def matches_owner(signature: str | None) -> bool:
-    """True when a request signature maps to the official owner email."""
-    if not signature:
+    ``secret`` is an explicit injection point for tests and trusted embedding;
+    the HTTP server leaves it unset and reads ``SG16_OWNER_SECRET``. Email
+    addresses, public hashes, and an unconfigured server never authenticate.
+    """
+    expected = secret if secret is not None else os.environ.get("SG16_OWNER_SECRET")
+    if not isinstance(signature, str) or not isinstance(expected, str):
         return False
     candidate = signature.strip()
-    if not candidate:
+    expected = expected.strip()
+    if not candidate or not expected:
         return False
-    expected = owner_digest()
-    # accept either the digest form or the plain email form
-    if candidate.casefold() == OWNER_EMAIL:
-        return True
-    return hashlib.sha256(candidate.encode("utf-8")).hexdigest() == expected or candidate == expected
+    return hmac.compare_digest(candidate, expected)
 
 
-def resolve_signature(headers: dict) -> bool:
-    """Convenience for the host: check the owner headers of one request."""
-    for key in ("X-SG16-Owner-Sig", "X-SG16-Owner"):
-        value = headers.get(key)
-        if value and matches_owner(value):
-            return True
-    return False
+def resolve_signature(headers: dict, secret: str | None = None) -> bool:
+    """Check only the secret-bearing owner signature header."""
+    signature = next(
+        (
+            value
+            for key, value in headers.items()
+            if str(key).casefold() == "x-sg16-owner-sig"
+        ),
+        None,
+    )
+    return matches_owner(signature, secret=secret)

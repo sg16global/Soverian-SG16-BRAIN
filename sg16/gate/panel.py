@@ -84,11 +84,6 @@ class Verdict:
 class GatePanel:
     """Shell + Kali + Terminal, acting jointly on one door."""
 
-    #: Official VIP owner.  The owner gets a zero-restriction path for token
-    #: accounting and throttles - never for the safety invariants, which stay
-    #: absolute for every caller (charter invariant 5).
-    owner_email: str = ownermod.OWNER_EMAIL
-
     def __init__(
         self,
         weights: CompiledWeights | None = None,
@@ -182,8 +177,10 @@ class GatePanel:
         return self.weights.explain(member, feature)
 
     def is_owner(self, signature: str | None) -> bool:
-        """True when a request signature maps to the VIP owner email.
+        """Validate the configured server-side bearer credential.
 
-        Operational bypass only; it does not alter the allow/reject verdict.
+        An email address or public digest is not an authentication factor. The
+        exemption is disabled unless the host has configured
+        ``SG16_OWNER_SECRET``; this never changes the safety verdict.
         """
         return ownermod.matches_owner(signature)

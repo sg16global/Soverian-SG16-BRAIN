@@ -2,7 +2,7 @@
 // PROJECT VITAL SCAN — deterministic project health engine (SCAN-CORE v1)
 //
 // DESIGN CONTRACT
-//  • Zero storage: files live in request memory only and are discarded.
+//  • Request-memory processing: files live in request memory only and are discarded.
 //  • Deterministic: identical input bytes ⇒ identical findings & score.
 //  • Evidenced: every finding cites path:line with a (redacted) snippet.
 //  • Transparent: thresholds and weights are published here in code.

@@ -9,12 +9,12 @@ const PILLARS = [
     body: "Intelligence should be available to every nation, institution and developer — auditable, explainable and released under Apache 2.0, not locked behind opaque dependencies.",
   },
   {
-    title: "GLOBAL IMPACT",
-    body: "Six federated nodes across the USA, UK, France, Russia, China and Germany share one vision while respecting local jurisdiction, language and sovereignty.",
+    title: "GLOBAL PRESENCE PRESENTATION",
+    body: "The interface shows timezone labels for the USA, UK, France, Russia, China and Germany. These clocks are presentation only and do not claim six active operational facilities.",
   },
   {
-    title: "REAL SOLUTIONS",
-    body: "Healthcare diagnostics, education, research, governance and developer tooling — deployed where the data lives, with measurable outcomes instead of demos.",
+    title: "FOCUSED TOOLING",
+    body: "This build focuses on a configured assistant gateway, account storage and operational tooling. Broader healthcare, education, research or governance deployments are not implemented here.",
   },
   {
     title: "A SMARTER WORLD",
@@ -35,9 +35,9 @@ export default function VisionPage() {
             OWNERSHIP, NOT DEPENDENCY
           </h2>
           <p className="mx-auto mt-3 max-w-2xl text-[14px] leading-relaxed text-slate-300">
-            The self-hosted Mistral engine by SG16 Brain exists so that communities and countries own
-            their intelligence — their models, their data, their uptime. We connect to Claude, GPT-5.5,
-            Gemini and other systems as peers, never as dependencies.
+            This reference stack is designed so operators can host the gateway path under their own
+            control. External providers such as Claude, GPT or Gemini are optional and only become live
+            when the operator configures credentials; this build does not claim those connections by default.
           </p>
         </Panel>
         <div className="grid gap-4 sm:grid-cols-2">

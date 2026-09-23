@@ -98,8 +98,8 @@ host serves `web/` as native ES modules — though `web/` is also a valid Vite p
 | `GET /api/charter` | invariants + canonical lines |
 | `GET /api/parity` | online/offline parity proof |
 | `GET /api/weight?member=&feature=` | charter provenance of one weight |
-| `GET/DELETE /api/session/<id>` | read / forget a session |
-| `POST /api/subscribe` | host-signed local subscription record (sovereign issuance) |
+| `POST /api/session/forget` | clear host-side conversation context (no session data returned) |
+| `POST /api/subscribe` | proxy-verified humanitarian record only; paid local issuance disabled |
 | `POST /api/dodo/checkout` | Dodo Payments MoR checkout session for one pass |
 | `POST /api/dodo/webhook` | signed Dodo payment confirmation (Standard Webhooks) |
 | `POST /api/dodo/confirm` | client pickup of the confirmed, duration-locked record |
@@ -109,20 +109,20 @@ host serves `web/` as native ES modules — though `web/` is also a valid Vite p
 * **Cinematic homepage** — the green/gold emblem sits at the top centre over the
   crimson stage matrix; neon dashboard grid throughout.
 * **Buy API / API Portal** — prominent controls; the portal lists the endpoints and
-  issues a *local* API key.
+  issues an account-scoped API token stored hashed in the configured database.
 * **Premium passes** — 24h **$3** · 1-week **$5** · 15-day **$8** · 1-month **$15**,
-  sold through the live **Dodo Payments Merchant-of-Record** checkout
-  (`/api/dodo/checkout` → Dodo-hosted payment → signed webhook confirmation →
-  `/api/dodo/confirm`). On confirmation the host signs a **duration-locked token**
-  and the client commits it to the on-device `sg16/` storage directory. Without
-  gateway credentials the host signs the same records itself (sovereign local
-  issuance); the pricing table, dialogue ledger and pass records live **only** in
-  the user's local folder — the core grid keeps **0 client logs**.
-* **Humanitarian exception** — the geographic interceptor on the routing path maps
-  the declared region, the `X-SG16-Region` header, or edge geo headers
-  (`CF-IPCountry` / `X-Vercel-IP-Country` = `PS`/`PSE`) onto **Palestine** and
-  bypasses the payment gateway entirely: a valid **$0** operational token is
-  issued natively and the dashboard stays open, free and unlimited.
+  sold through **Dodo Payments Merchant-of-Record** only when the operator
+  configures gateway credentials (`/api/dodo/checkout` → Dodo-hosted payment →
+  signed webhook confirmation correlated to a host-created checkout →
+  `/api/dodo/confirm`). Without gateway credentials paid checkout fails closed.
+  The client may cache a bearer pass record locally, but access is only granted
+  after the host verifies the token. Process-local pass/checkout state is lost
+  on restart; deployment logs and backups are operator concerns.
+* **Humanitarian exception** — a zero-rate record is issued only when an
+  operator-trusted proxy authenticates geo headers (`X-SG16-Proxy-Auth` plus
+  `CF-IPCountry` / `X-Vercel-IP-Country` / `X-SG16-Geo-Country` = `PS`/`PSE`).
+  Browser locale, JSON region claims and unauthenticated `X-SG16-Region` cannot
+  mint a free pass.
 * **Byte-stream delivery** — every asset and module is served by the sovereign host
   itself (`X-SG16-Stream: binary`), no CDN, no external origin.
 * **Footer** carries the corporate footprint: *SAIF TECH GLOBAL LLC — Technology
@@ -141,11 +141,11 @@ identical mathematics.
   fine print; the brain has no capability to lock hardware.
 * **Payments are live through Dodo Payments (MoR)** only when the operator
   fills `billing.dodo` in `config/brain.json` (API key, webhook secret and one
-  product id per pass). With empty credentials the host says so — `mode:
-  sovereign-local` on `/api/billing` — and signs records locally; nothing
-  pretends to be a gateway. Webhook confirmations are verified with the
-  Standard Webhooks HMAC scheme before a token is ever signed, and humanitarian
-  passes are structurally incapable of being charged.
+  product id per pass). With empty credentials paid checkout reports unavailable
+  on `/api/billing`. Webhook confirmations are verified with the Standard
+  Webhooks HMAC scheme, required to match a host-created checkout, amount and
+  USD currency, and humanitarian passes are structurally incapable of being
+  charged. Pass and pending-checkout state is currently in-memory.
 * **Speech-to-text is deferred, not faked.** Voxtral measures real acoustics
   (RMS, peak, ZCR, 8-bin Goertzel spectrum) and reports them; the transcript is
   deferred unless the caller declares one, which is labelled `declared-by-caller`.

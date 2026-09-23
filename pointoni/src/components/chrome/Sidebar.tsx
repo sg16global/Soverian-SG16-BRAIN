@@ -55,12 +55,19 @@ function SidebarBody({
   const router = useRouter();
 
   async function signOut() {
+    try {
+      window.localStorage.removeItem("sg16/identity");
+      window.localStorage.removeItem("sg16/pass");
+    } catch {
+      // browser storage may be unavailable
+    }
     await fetch("/api/session", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ state: "out" }),
     });
     router.push("/signed-out");
+    router.refresh();
     onNavigate?.();
   }
 

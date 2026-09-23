@@ -11,11 +11,8 @@ import {
   HUMANITARIAN_REGION,
   PASSES,
   formatExpiry,
-  getRegionOverride,
   loadPassRecord,
-  localIssue,
   passLabel,
-  resolveRegion,
   storePassRecord,
   type PassId,
   type PassRecord,
@@ -23,72 +20,94 @@ import {
 
 export default function SubscriptionPage() {
   const [record, setRecord] = useState<PassRecord | null>(null);
-  const [region, setRegion] = useState<string | null>(null);
-  const [regionOverride, setRegionOverrideState] = useState("auto");
   const [busy, setBusy] = useState<string | null>(null);
   const [confirmed, setConfirmed] = useState<string | null>(null);
   const [gateway, setGateway] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    queueMicrotask(() => {
-      const override = getRegionOverride();
-      setRegionOverrideState(override);
-      setRegion(resolveRegion(override));
-      setRecord(loadPassRecord());
-    });
-    fetch("/api/billing")
-      .then((r) => r.json())
-      .then((d) => setGateway(d.billing?.gateway?.mode ?? null))
-      .catch(() => {});
-  }, []);
-
-  const humanitarian = region === HUMANITARIAN_REGION;
-
-  async function choose(id: PassId, label: string) {
-    setBusy(id);
-    setError(null);
-    try {
-      const res = await fetch("/api/billing", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          pass: id,
-          region,
-          provider: "guest",
-          return_url: window.location.href,
-        }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "core checkout unavailable");
-
-      if (data.mode === "dodo" && data.checkout_url) {
-        // Live Dodo Payments Merchant-of-Record session: redirect.
-        window.location.assign(data.checkout_url);
-        return;
-      }
-      // Sovereign local issuance or humanitarian bypass: record handed over.
-      activate({ ...(data.record as PassRecord), gateway: data.gateway ?? data.mode });
-    } catch {
-      // Exact old fallback: the host is unreachable, so this device issues
-      // the same duration-locked record locally and keeps the deck open.
-      activate(localIssue(id, humanitarian ? HUMANITARIAN_REGION : region));
-    } finally {
-      setBusy(null);
-    }
-  }
-
   function activate(rec: PassRecord) {
     storePassRecord(rec);
     setRecord(rec);
     setConfirmed(passLabel(rec.pass));
-    setTimeout(() => setConfirmed(null), 3200);
-    // Soften the account page into agreement (best effort, like old sync).
-    fetch("/api/profile", {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ plan: passLabel(rec.pass) }),
-    }).catch(() => {});
+    window.setTimeout(() => setConfirmed(null), 3200);
+  }
+
+  useEffect(() => {
+    queueMicrotask(() => setRecord(loadPassRecord()));
+    fetch("/api/billing")
+      .then((response) => response.json())
+      .then((data) => setGateway(data.billing?.gateway?.mode ?? null))
+      .catch(() => setGateway("unavailable"));
+
+    const checkoutRef = new URLSearchParams(window.location.search).get("sg16_checkout_ref");
+    if (!checkoutRef) return;
+    let cancelled = false;
+    setBusy("confirm");
+    setError(null);
+    void (async () => {
+      try {
+        for (let attempt = 0; attempt < 6 && !cancelled; attempt += 1) {
+          const response = await fetch("/api/billing/confirm", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ session_id: checkoutRef }),
+            cache: "no-store",
+          });
+          const data = await response.json();
+          if (!response.ok) throw new Error(data.error || "The host could not confirm payment.");
+          if (data.confirmed && data.record) {
+            activate({ ...(data.record as PassRecord), gateway: "dodo" });
+            const clean = new URL(window.location.href);
+            clean.searchParams.delete("sg16_checkout_ref");
+            window.history.replaceState({}, "", clean.toString());
+            return;
+          }
+          await new Promise((resolve) => window.setTimeout(resolve, 2000));
+        }
+        if (!cancelled) setError("Payment is not confirmed yet. No pass was activated; check back shortly.");
+      } catch (cause) {
+        if (!cancelled) setError(cause instanceof Error ? cause.message : "Payment confirmation is unavailable.");
+      } finally {
+        if (!cancelled) setBusy(null);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  const humanitarian = record?.region === HUMANITARIAN_REGION;
+
+  async function choose(id: PassId) {
+    setBusy(id);
+    setError(null);
+    try {
+      const response = await fetch("/api/billing", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pass: id, return_url: window.location.href }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "Checkout is unavailable.");
+
+      if (data.mode === "dodo" && typeof data.checkout_url === "string") {
+        const checkoutUrl = new URL(data.checkout_url);
+        if (checkoutUrl.protocol !== "https:") throw new Error("Payment provider returned an unsafe checkout URL.");
+        window.location.assign(checkoutUrl.toString());
+        return;
+      }
+      if (data.mode === "humanitarian_bypass" && data.record) {
+        const hostRecord = data.record as PassRecord;
+        if (!hostRecord.token || !/^[a-f0-9]{64}$/.test(hostRecord.token)) {
+          throw new Error("The host returned an invalid pass record.");
+        }
+        activate({ ...hostRecord, gateway: "verified-humanitarian" });
+        return;
+      }
+      throw new Error("The host did not issue a pass or create a checkout session.");
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Checkout is unavailable.");
+    } finally {
+      setBusy(null);
+    }
   }
 
   return (
@@ -110,9 +129,8 @@ export default function SubscriptionPage() {
             </div>
             {record ? (
               <p className="font-mono2 text-[11px] tracking-wider text-emerald-300">
-                ACTIVE PASS · {passLabel(record.pass)} · ${record.price_charged} CHARGED ·
-                EXPIRES {formatExpiry(record.expires_at)} · VERIFIED{" "}
-                {record.verified_locally ? "LOCALLY" : "BY HOST"}
+                STORED PASS · {passLabel(record.pass)} · ${record.price_charged} CHARGED ·
+                EXPIRES {formatExpiry(record.expires_at)} · HOST VALIDATION REQUIRED
               </p>
             ) : (
               <p className="font-mono2 text-[11px] tracking-wider text-slate-400">
@@ -121,9 +139,8 @@ export default function SubscriptionPage() {
             )}
             <span className="ml-auto inline-flex items-center gap-2 font-mono2 text-[10px] tracking-[0.2em] text-slate-400">
               <Globe2 className="h-3.5 w-3.5 text-cyan-300" />
-              REGION: {(humanitarian ? HUMANITARIAN_REGION : region) ?? "auto"}
-              {regionOverride !== "auto" && " (override)"}
-              {humanitarian && <span className="text-emerald-300">· FREE (HUMANITARIAN)</span>}
+              REGION: {humanitarian ? HUMANITARIAN_REGION : "DETERMINED BY HOST"}
+              {humanitarian && <span className="text-emerald-300">· HOST-VERIFIED ZERO-RATE RECORD</span>}
               {gateway && <span className="text-slate-500">· GATEWAY {gateway.toUpperCase()}</span>}
             </span>
           </div>
@@ -157,11 +174,10 @@ export default function SubscriptionPage() {
                 </div>
                 <div className="mt-4 flex items-end gap-2">
                   <span className="font-display text-4xl font-black" style={{ color: p.accent }}>
-                    ${humanitarian ? 0 : p.price}
+                    ${p.price}
                   </span>
                   <span className="pb-1 font-mono2 text-[10px] tracking-widest text-slate-400">
                     {p.unit}
-                    {humanitarian && " · ZERO-RATE"}
                   </span>
                 </div>
                 <ul className="mt-5 flex-1 space-y-2.5">
@@ -175,7 +191,7 @@ export default function SubscriptionPage() {
                   </li>
                   <li className="flex items-start gap-2.5 text-[12.5px] text-slate-300">
                     <Check className="mt-0.5 h-4 w-4 flex-none" style={{ color: p.accent }} strokeWidth={3} />
-                    Panel throttle lifted · signed record on-device
+                    Host validates the bearer token on use; keep it private
                   </li>
                 </ul>
                 {isCurrent ? (
@@ -184,11 +200,11 @@ export default function SubscriptionPage() {
                   </span>
                 ) : (
                   <button
-                    onClick={() => choose(p.id, p.label)}
-                    disabled={busy === p.id}
+                    onClick={() => choose(p.id)}
+                    disabled={busy !== null}
                     className="btn-red mt-6 py-2.5 text-[11px] disabled:opacity-50"
                   >
-                    {busy === p.id ? "ACTIVATING…" : "SUBSCRIBE"}
+                    {busy !== null ? busy === p.id ? "OPENING CHECKOUT…" : "PLEASE WAIT…" : "SUBSCRIBE"}
                   </button>
                 )}
               </Panel>

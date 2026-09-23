@@ -1,4 +1,4 @@
-"""Block 7: identity inscription, designation, and native language parity."""
+"""Identity inscription, bounded response scope, and language limitations."""
 
 from __future__ import annotations
 
@@ -72,18 +72,17 @@ class UniversalAccessTests(unittest.TestCase):
         self.assertEqual(tx.response.canonical_key, CanonKey.UNIVERSAL)
         self.assertNotIn("I do not know", tx.response.text)
 
-    def test_bangla_question_opens_answer_path(self) -> None:
+    def test_non_english_fact_is_deferred_without_fabrication(self) -> None:
         tx = self.brain.submit(
             "ফ্রান্সের রাজধানী কি?", session_id="univ-bn"
         )
-        self.assertNotEqual(tx.response.stage, "idea_invited")
-        self.assertIn(tx.response.stage, ("answering", "solution_offered"))
+        self.assertEqual(tx.response.stage, "deferred")
+        self.assertEqual(tx.response.canonical_key, CanonKey.UNKNOWN)
 
 
 class LanguageParityTests(unittest.TestCase):
-    def test_bangla_script_detected(self) -> None:
-        # Universal brain: all human speech as pure mathematical patterns, no language codes
-        self.assertEqual(detect("তুমি কে?"), "universal")
+    def test_language_is_reported_as_undetermined(self) -> None:
+        self.assertEqual(detect("তুমি কে?"), "und")
 
     def test_bangla_question_marker(self) -> None:
         self.assertTrue(has_question_marker("তুমি কে?"))

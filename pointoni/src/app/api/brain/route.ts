@@ -2,10 +2,11 @@ import { randomUUID } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { db, persistenceMode } from "@/db";
 import { aiModels, chatMessages, chatSessions } from "@/db/schema";
-import { asc, desc, eq } from "drizzle-orm";
-import { getDefaultUser } from "@/lib/seed";
+import { and, asc, desc, eq } from "drizzle-orm";
+import { ensureSeeded } from "@/lib/seed";
+import { resolveAccount } from "@/lib/account-auth";
 import { generateReply } from "@/lib/ai-engine";
-import { consumeBucket, resolveTier } from "@/lib/identity";
+import { consumeBucket, planActive, resolveTier } from "@/lib/identity";
 import {
   BrainGatewayError,
   MAX_BRAIN_MESSAGE_CHARS,
@@ -83,61 +84,53 @@ export async function GET(req: NextRequest) {
     }
   }
 
-  const user = await getDefaultUser();
   const sessionId = searchParams.get("session");
 
   // A children shell never reads the flagship's archive. The children edition
-  // keeps its whole history in the child's own browser, so there is nothing
-  // the platform should hand back here — and a shared archive must never be
-  // reachable from a children origin (charter §4, cors-lock doctrine).
+  // keeps its history on its own device and is never handed an account archive.
   if (isChildrenOrigin(req)) {
     if (sessionId) {
       return withChildrenCors(
         req,
-        NextResponse.json(
-          {
-            error:
-              "The children's edition keeps its history on the child's own device — there is no archive to read here.",
-            friend: true,
-            stored: false,
-          },
-          { status: 403 },
-        ),
+        NextResponse.json({ error: "No server-side child archive is available.", friend: true, stored: false }, { status: 403 }),
       );
     }
-    return withChildrenCors(
-      req,
-      NextResponse.json({ sessions: [], friend: true, stored: false }),
-    );
+    return withChildrenCors(req, NextResponse.json({ sessions: [], friend: true, stored: false }));
+  }
+
+  const account = await resolveAccount(req);
+  if (!account) {
+    return NextResponse.json({ error: "Sign in to access saved conversations." }, { status: 401 });
   }
 
   if (sessionId) {
+    const sessions = await db
+      .select()
+      .from(chatSessions)
+      .where(and(eq(chatSessions.id, sessionId), eq(chatSessions.userId, account.user.id)))
+      .limit(1);
+    if (!sessions[0]) return NextResponse.json({ error: "Conversation not found." }, { status: 404 });
     const messages = await db
       .select()
       .from(chatMessages)
       .where(eq(chatMessages.sessionId, sessionId))
       .orderBy(asc(chatMessages.createdAt));
-    const sessions = await db
-      .select()
-      .from(chatSessions)
-      .where(eq(chatSessions.id, sessionId))
-      .limit(1);
-    return NextResponse.json({ session: sessions[0] ?? null, messages });
+    return NextResponse.json({ session: sessions[0], messages });
   }
 
   const sessions = await db
     .select()
     .from(chatSessions)
-    .where(eq(chatSessions.userId, user.id))
+    .where(eq(chatSessions.userId, account.user.id))
     .orderBy(desc(chatSessions.updatedAt))
     .limit(50);
   return NextResponse.json({ sessions });
 }
 
-// POST { sessionId?, modelId, message }
+// POST { sessionId?, modelId, message } | { forgetSessionId }
 // Tier gate: free guests share a fair-use hourly bucket per device-IP; a
-// bound subscriber (Bearer sovereign token) enters WORK mode automatically —
-// wide personal bucket, same exclusive core, zero stored profiles.
+// bound subscriber (Bearer identity/API token) enters WORK mode —
+// wider process-local bucket, same configured core path.
 export async function POST(req: NextRequest) {
   // A body's shape is decided by its origin, never by its request body:
   // a children shell cannot ask to be treated as the flagship.
@@ -177,13 +170,21 @@ export async function POST(req: NextRequest) {
   }
 
   const body = (await req.json().catch(() => null)) as {
-    sessionId?: string | null;
-    modelId?: string;
-    message?: string;
+    sessionId?: unknown;
+    modelId?: unknown;
+    message?: unknown;
+    forgetSessionId?: unknown;
   } | null;
 
-  const message = body?.message?.trim();
-  const modelId = body?.modelId || "sg16-brain";
+  if (typeof body?.forgetSessionId === "string") {
+    const forgetId = body.forgetSessionId;
+    if (forgetId.length > 64) return json({ error: "Session id is invalid." }, { status: 400 });
+    await brainForgetSession(forgetId);
+    return json({ ok: true, hostContext: "reset", storedHistory: "unchanged" });
+  }
+
+  const message = typeof body?.message === "string" ? body.message.trim() : "";
+  const modelId = typeof body?.modelId === "string" ? body.modelId : "sg16-brain";
   if (!message) {
     return json({ error: "Message is required." }, { status: 400 });
   }
@@ -194,7 +195,8 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const user = await getDefaultUser();
+  await ensureSeeded();
+  const account = children ? null : await resolveAccount(req);
   const modelRows = await db.select().from(aiModels).where(eq(aiModels.id, modelId)).limit(1);
   const model = modelRows[0];
   if (!model) {
@@ -229,7 +231,14 @@ export async function POST(req: NextRequest) {
 
     try {
       // Sovereign path: the SG16 core answers through its master door.
-      const transaction = await brainChat(text, sessionId ?? `ephemeral-${randomUUID()}`);
+      const passToken = account?.identity && planActive(account.identity)
+        ? account.identity.planToken
+        : null;
+      const transaction = await brainChat(
+        text,
+        sessionId ?? `ephemeral-${randomUUID()}`,
+        passToken,
+      );
       return { content: transaction.reply, brain: "core", relay: false };
     } catch (err) {
       const detail = err instanceof BrainGatewayError ? err.message : "core link down";
@@ -290,53 +299,95 @@ export async function POST(req: NextRequest) {
     });
   }
 
-  // ---- the flagship: the device's ledger, as before ----------------------
-  let sessionId = body?.sessionId || null;
-  if (!sessionId) {
-    const created = await db
-      .insert(chatSessions)
-      .values({
-        userId: user.id,
-        title: message.slice(0, 56) + (message.length > 56 ? "\u2026" : ""),
-        modelId: model.id,
-      })
-      .returning();
-    sessionId = created[0].id;
+  const requestedSession = typeof body?.sessionId === "string" ? body.sessionId : null;
+  if (requestedSession && requestedSession.length > 64) {
+    return json({ error: "Session id is invalid." }, { status: 400 });
   }
 
-  const insertedUser = await db
-    .insert(chatMessages)
-    .values({ sessionId, role: "user", content: message, modelId: model.id })
-    .returning();
+  if (account) {
+    let sessionId: string;
+    if (requestedSession) {
+      if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(requestedSession)) {
+        return json({ error: "Conversation not found." }, { status: 404 });
+      }
+      const owned = await db
+        .select({ id: chatSessions.id })
+        .from(chatSessions)
+        .where(and(eq(chatSessions.id, requestedSession), eq(chatSessions.userId, account.user.id)))
+        .limit(1);
+      if (!owned[0]) return json({ error: "Conversation not found." }, { status: 404 });
+      sessionId = requestedSession;
+    } else {
+      const created = await db
+        .insert(chatSessions)
+        .values({
+          userId: account.user.id,
+          title: message.slice(0, 56) + (message.length > 56 ? "\u2026" : ""),
+          modelId: model.id,
+        })
+        .returning();
+      sessionId = created[0].id;
+    }
 
-  const started = performance.now();
-  const turn = await think(message, sessionId);
-  const latencyMs = Math.round(performance.now() - started);
+    const insertedUser = await db
+      .insert(chatMessages)
+      .values({ sessionId, role: "user", content: message, modelId: model.id })
+      .returning();
+    const started = performance.now();
+    const turn = await think(message, sessionId);
+    const latencyMs = Math.round(performance.now() - started);
+    const insertedAssistant = await db
+      .insert(chatMessages)
+      .values({
+        sessionId,
+        role: "assistant",
+        content: turn.content,
+        modelId: model.id,
+        relay: turn.relay,
+        latencyMs,
+      })
+      .returning();
+    await db
+      .update(chatSessions)
+      .set({ updatedAt: new Date(), modelId: model.id })
+      .where(and(eq(chatSessions.id, sessionId), eq(chatSessions.userId, account.user.id)));
 
-  const insertedAssistant = await db
-    .insert(chatMessages)
-    .values({
+    return json({
       sessionId,
-      role: "assistant",
-      content: turn.content,
-      modelId: model.id,
-      relay: turn.relay,
-      latencyMs,
-    })
-    .returning();
+      userMessage: insertedUser[0],
+      assistantMessage: insertedAssistant[0],
+      brain: turn.brain,
+      tier: tierInfo.tier,
+      friend: false,
+      stored: true,
+      tierChip: tierChip(bodyKind, tierInfo.tier),
+    });
+  }
 
-  await db
-    .update(chatSessions)
-    .set({ updatedAt: new Date(), modelId: model.id })
-    .where(eq(chatSessions.id, sessionId));
-
+  // Unauthenticated flagship use is supported without storing the transcript
+  // in the account database. A high-entropy guest handle lets the core retain
+  // short in-memory context; it is not an archive or an authentication factor.
+  const guestSessionId = requestedSession && /^guest-[0-9a-f-]{36}$/i.test(requestedSession)
+    ? requestedSession
+    : `guest-${randomUUID()}`;
+  const started = performance.now();
+  const turn = await think(message, guestSessionId);
+  const now = new Date().toISOString();
+  const latencyMs = Math.round(performance.now() - started);
   return json({
-    sessionId,
-    userMessage: insertedUser[0],
-    assistantMessage: insertedAssistant[0],
+    sessionId: guestSessionId,
+    userMessage: {
+      id: randomUUID(), sessionId: guestSessionId, role: "user", content: message,
+      modelId: model.id, relay: false, latencyMs: 0, createdAt: now,
+    },
+    assistantMessage: {
+      id: randomUUID(), sessionId: guestSessionId, role: "assistant", content: turn.content,
+      modelId: model.id, relay: turn.relay, latencyMs, createdAt: now,
+    },
     brain: turn.brain,
     tier: tierInfo.tier,
     friend: false,
+    stored: false,
     tierChip: tierChip(bodyKind, tierInfo.tier),
   });
 }
@@ -350,7 +401,13 @@ export async function DELETE(req: NextRequest) {
       NextResponse.json({ error: "session id required" }, { status: 400 }),
     );
   }
-  await db.delete(chatSessions).where(eq(chatSessions.id, sessionId));
+  const account = await resolveAccount(req);
+  if (!account) return NextResponse.json({ error: "Sign in to delete saved conversations." }, { status: 401 });
+  const deleted = await db
+    .delete(chatSessions)
+    .where(and(eq(chatSessions.id, sessionId), eq(chatSessions.userId, account.user.id)))
+    .returning({ id: chatSessions.id });
+  if (!deleted[0]) return NextResponse.json({ error: "Conversation not found." }, { status: 404 });
   await brainForgetSession(sessionId);
-  return withChildrenCors(req, NextResponse.json({ ok: true }));
+  return withChildrenCors(req, NextResponse.json({ ok: true, coreContextMayRemain: true }));
 }

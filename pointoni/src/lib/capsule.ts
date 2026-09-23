@@ -2,10 +2,11 @@
 // DEVICE CAPSULE — the user's own encrypted vault file.
 //
 // The capsule is sealed in the BROWSER with AES-256-GCM (PBKDF2 250k) and a
-// passphrase only the user knows. The platform can hold nothing and can read
-// nothing: the user keeps <name>-capsule.sg16.json in their own Google Drive
-// or phone folder — his folder, his data. Lost device → email sign-in for the
-// subscription + import the capsule for the conversations.
+// passphrase only the user knows. The downloaded file is readable only with
+// that passphrase; however the SOURCE data is the signed-in account archive
+// (already stored by the deployment), and restoring uploads decrypted messages
+// into the signed-in account's readable database. Deployment logs, backups and
+// retention policies still apply.
 // ===================================================================
 
 export type CapsuleSession = {
@@ -62,7 +63,7 @@ async function deriveKey(passphrase: string, salt: Uint8Array, iterations: numbe
 }
 
 export async function sealCapsule(payload: CapsulePayload, passphrase: string): Promise<string> {
-  if (passphrase.length < 4) throw new Error("Passphrase must be at least 4 characters.");
+  if (passphrase.length < 12) throw new Error("Passphrase must be at least 12 characters.");
   const iterations = 250_000;
   const salt = crypto.getRandomValues(new Uint8Array(16));
   const iv = crypto.getRandomValues(new Uint8Array(12));

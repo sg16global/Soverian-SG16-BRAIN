@@ -59,13 +59,37 @@ class InboundRequest:
     declared_transcript: str | None = None
     transport: str = "offline"
 
+    @property
+    def content_text(self) -> str:
+        """Text that the character and reasoning paths will actually process.
+
+        A caller-declared transcript is authoritative only when audio is
+        attached. The original text remains available as additional context to
+        the gate, but the core plan must describe the payload the character
+        answered.
+        """
+        transcript = self.declared_transcript
+        if self.audio and isinstance(transcript, str) and transcript.strip():
+            return transcript.strip()
+        return self.text
+
+    @property
+    def gate_text(self) -> str:
+        """All user-authored text that may influence the response."""
+        parts = [
+            part.strip()
+            for part in (self.text, self.declared_transcript or "")
+            if part.strip()
+        ]
+        return "\n".join(dict.fromkeys(parts))
+
     def to_dict(self) -> dict:
         return {
             "request_id": self.request_id,
             "session_id": self.session_id,
-            "text": self.text,
+            "text_chars": len(self.text),
             "audio_bytes": len(self.audio) if self.audio else 0,
-            "declared_transcript": self.declared_transcript,
+            "has_declared_transcript": bool(self.declared_transcript),
             "transport": self.transport,
         }
 
@@ -118,7 +142,7 @@ class MasterDoor:
     def enter(self, request: InboundRequest) -> Verdict:
         """First gate drop.  A rejected payload never goes any further."""
         self.entered += 1
-        verdict = self._panel.inspect(request.text)
+        verdict = self._panel.inspect(request.gate_text)
         if not verdict.allowed:
             self.thrown_back += 1
         return verdict
@@ -169,7 +193,7 @@ class SealedHousing:
             "perimeter": self.spec.to_dict(),
             "master_door": self.door.counters(),
             "joint_room": ["Shell GPT", "Kali GPT", "Terminal GPT"],
-            "core": "devstral-small-2",
+            "core": "sg16-seeded-structural-encoder",
             "audio_slot": "voxtral-mini",
             "re_inspection_on_exit": False,
         }

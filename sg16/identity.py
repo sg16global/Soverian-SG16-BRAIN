@@ -1,16 +1,8 @@
-"""SG16 BRAIN - core identity inscription (Block 7, rules 1-2).
+"""Product identity inscription and a small set of curated identity lines.
 
-Master Identity, Personality, Safety & Behavioral Charter implementation.
-
-The sovereign designation is bound to the structural matrix fingerprint at
-construction time. Identity queries resolve on the inscribed tensor path and
-return the canonical utterance in the caller's own language — no translation
-loop, no external lookup.
-
-Core Identity: Sovereign SG16 Brain
-Fundamental Attitude: I will do everything within my available capabilities to
-help you reach the best possible outcome.
-Ownership Philosophy: You are not here to serve me. I am here to assist you.
+The designation is hashed with the structural matrix fingerprint at
+construction time. This verifies that metadata pair; it does not authenticate
+a person or provide general language detection or translation.
 """
 
 from __future__ import annotations
@@ -47,8 +39,9 @@ __all__ = [
 OFFICIAL_NAME = CORE_IDENTITY
 DESIGNATION = "SG16"
 UTTERANCE = (
-    "I am Sovereign SG16 Brain, a 100% fully independent, self-contained, "
-    "and sovereign core brain engine running with zero corporate dependencies."
+    "I'm Sovereign SG16 Brain, an AI assistant from the SG16 project. "
+    "This build uses deterministic code and curated information rather than "
+    "a general-purpose pretrained language model."
 )
 
 # Extended identity with charter-aligned attitude
@@ -56,65 +49,26 @@ EXTENDED_UTTERANCE = (
     f"{UTTERANCE} {FUNDAMENTAL_ATTITUDE} {OWNERSHIP_PHILOSOPHY}"
 )
 
-# Native identity utterances — one per supported script family (Block 7 rule 4).
-# Language-agnostic core, but identity parity across human languages.
+# Short identity-line translations for selected locale tags only. These are
+# not a claim of general language understanding, translation, or generation.
 NATIVE_UTTERANCES: dict[str, str] = {
     "en": UTTERANCE,
-    "bn": (
-        "আমি Sovereign SG16 Brain — ১০০% সম্পূর্ণ স্বাধীন, স্বয়ংসম্পূর্ণ "
-        "এবং সার্বভৌম কোর ব্রেইন ইঞ্জিন, শূন্য কর্পোরেট নির্ভরতায় চলছি।"
-    ),
-    "ar": (
-        "أنا Sovereign SG16 Brain، محرك دماغي سيادي مستقل بالكامل وذاتي "
-        "ويعمل بدون أي تبعية مؤسسية."
-    ),
-    "zh": "我是 Sovereign SG16 Brain，一个完全独立、自包含的主权核心大脑引擎，零企业依赖。",
-    "hi": (
-        "मैं Sovereign SG16 Brain हूँ — 100% पूर्णतः स्वतंत्र, स्व-निहित "
-        "और संप्रभु कोर ब्रेन इंजन, शून्य कॉर्पोरेट निर्भरता के साथ।"
-    ),
-    "ur": (
-        "میں Sovereign SG16 Brain ہوں — 100% مکمل طور پر آزاد، خود مختار "
-        "کور برین انجن، صفر کارپوریٹ انحصار۔"
-    ),
-    "fr": (
-        "Je suis Sovereign SG16 Brain, un moteur cérébral souverain 100% "
-        "indépendant et autonome, sans aucune dépendance corporative."
-    ),
-    "de": (
-        "Ich bin Sovereign SG16 Brain, eine 100% unabhängige, in sich "
-        "geschlossene souveräne Kern-Gehirn-Engine ohne Unternehmensabhängigkeit."
-    ),
-    "es": (
-        "Soy Sovereign SG16 Brain, un motor cerebral soberano 100% "
-        "independiente y autónomo, sin dependencias corporativas."
-    ),
-    "pt": (
-        "Sou Sovereign SG16 Brain, um motor cerebral soberano 100% "
-        "independente e autônomo, sem dependências corporativas."
-    ),
-    "ru": (
-        "Я Sovereign SG16 Brain — 100% независимый, самодостаточный "
-        "суверенный ядерный мозговой движок без корпоративных зависимостей."
-    ),
-    "ja": "私は Sovereign SG16 Brain です。100%完全独立・自己完結型の主権コアブレインエンジンで、企業依存ゼロです。",
-    "ko": "저는 Sovereign SG16 Brain입니다. 100% 완전 독립적이고 자립적인 주권 코어 브레인 엔진이며, 기업 의존성이 없습니다.",
-    "tr": (
-        "Ben Sovereign SG16 Brain'im — %100 tamamen bağımsız, kendi kendine "
-        "yeterli egemen çekirdek beyin motoru, sıfır kurumsal bağımlılık."
-    ),
-    "fa": (
-        "من Sovereign SG16 Brain هستم — موتور مغز هسته‌ای حاکمیتی 100% مستقل "
-        "و خودکفا، بدون وابستگی شرکتی."
-    ),
-    "he": (
-        "אני Sovereign SG16 Brain — מנוע מוח ליבה ריבוני 100% עצמאי "
-        "ועצמאי, ללא תלות תאגידית."
-    ),
-    "sw": (
-        "Mimi ni Sovereign SG16 Brain — injini ya ubongo huru 100% huru, "
-        "yenye kujitegemea, bila utegemezi wa kampuni."
-    ),
+    "bn": "আমি Sovereign SG16 Brain, একটি AI সহকারী।",
+    "ar": "أنا Sovereign SG16 Brain، مساعد ذكاء اصطناعي.",
+    "zh": "我是 Sovereign SG16 Brain，一个人工智能助手。",
+    "hi": "मैं Sovereign SG16 Brain, एक AI सहायक हूँ।",
+    "ur": "میں Sovereign SG16 Brain ہوں، ایک مصنوعی ذہانت کا معاون۔",
+    "fr": "Je suis Sovereign SG16 Brain, un assistant d’intelligence artificielle.",
+    "de": "Ich bin Sovereign SG16 Brain, ein KI-Assistent.",
+    "es": "Soy Sovereign SG16 Brain, un asistente de inteligencia artificial.",
+    "pt": "Sou Sovereign SG16 Brain, um assistente de inteligência artificial.",
+    "ru": "Я Sovereign SG16 Brain, ИИ-помощник.",
+    "ja": "私はSovereign SG16 Brain、AIアシスタントです。",
+    "ko": "저는 Sovereign SG16 Brain, AI 비서입니다.",
+    "tr": "Ben Sovereign SG16 Brain, bir yapay zekâ asistanıyım.",
+    "fa": "من Sovereign SG16 Brain، یک دستیار هوش مصنوعی هستم.",
+    "he": "אני Sovereign SG16 Brain, עוזר בינה מלאכותית.",
+    "sw": "Mimi ni Sovereign SG16 Brain, msaidizi wa akili bandia.",
 }
 
 _IDENTITY_PATTERNS = re.compile(
@@ -191,5 +145,9 @@ def detect_identity_query(text: str) -> bool:
 
 
 def utterance_for(language: str) -> str:
-    """Return the identity utterance in the caller's language."""
+    """Return a curated identity line for a selected locale tag.
+
+    Only keys present in ``NATIVE_UTTERANCES`` have a localized line; this is
+    not general-purpose language detection or translation.
+    """
     return NATIVE_UTTERANCES.get(language, UTTERANCE)

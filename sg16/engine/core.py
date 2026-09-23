@@ -1,21 +1,16 @@
-"""SG16 BRAIN - the core working area (Block 2, rule 4).
+"""Deterministic fixed-point structural encoder used by SG16 planning.
 
-``DevstralCore`` is the main head controller of the sealed room.  It owns the
-byte-tokenization pipeline and the structural processing matrix, and it runs
-them as one in-process mathematical function:
+``DevstralCore`` applies seeded Q16.16 matrices to byte-level input and
+produces an intent vector plus a reproducible execution trace. The matrices
+are deterministic initial values, not trained weights. The output is not a
+language-model completion and this component cannot generate natural-language
+answers on its own. Text responses are produced by separate templates,
+curated knowledge, and arithmetic helpers.
 
-    text -> tokens -> byte-block embedding -> +positional basis
-         -> LayerNorm -> scaled dot-product self-attention -> +residual
-         -> LayerNorm -> tanh feed-forward -> +residual -> LayerNorm
-         -> mean-pool -> intent vector
-
-Every number in that chain is a Q16.16 integer, so the *reasoning plan* it
-produces is byte-for-byte identical whether the host is online or air-gapped
-(Block 3, rule 2).  The plan digest deliberately excludes the transport label:
-the transport is metadata about the host, never an input to the mathematics.
-
-When a payload carries audio, :class:`sg16.engine.voxtral.VoxtralRoute`
-processes it and returns control here, exactly as rule 4 requires.
+The transport label is metadata and is deliberately excluded from the plan
+digest. This makes the structural calculation repeatable across declared
+transport modes; it does not prove response quality or equivalence of external
+hosting layers.
 """
 
 from __future__ import annotations
@@ -37,25 +32,16 @@ MAX_INPUT_CHARS = 8192
 
 @dataclass(frozen=True)
 class EngineConfig:
-    """Fixed geometry of the structural processing matrix.
+    """Geometry and seed for a deterministic, non-trained encoder."""
 
-    v2: pure mathematical density, ultra-efficient, fully embedded,
-    self-contained, no external weight mounts. Runs on any device from
-    low-end phone to high-end server — tea-vendor to industrialist.
-
-    dim 64 / ffn 128 / 2 layers = ~45k Q16.16 params (~180KB), still
-    tiny, but 4x denser reasoning than 32/64/1-layer. No GPU, no external
-    binary, no corporate API.
-    """
-
-    head: str = "devstral-small-2"
+    head: str = "sg16-seeded-structural-encoder"
     dim: int = 64
     ffn_hidden: int = 128
     chunk_bytes: int = 32
     max_chunks: int = 64
     layers: int = 2
     seed: str = "sg16.core.matrix.v2"
-    density: str = "pure-mathematical-embedded"
+    density: str = "seeded-fixed-point-structural-encoder-not-trained"
 
     @property
     def fingerprint(self) -> str:
@@ -67,7 +53,7 @@ class EngineConfig:
 
 @dataclass(frozen=True)
 class ReasoningPlan:
-    """The verifiable, transport-blind product of one reasoning pass."""
+    """Trace of one structural-encoder pass; not a generated answer."""
 
     head: str
     route: str
@@ -103,11 +89,10 @@ class ReasoningPlan:
 
 
 class DevstralCore:
-    """Head controller for all primary logic inside the sealed boundary.
+    """Seeded structural encoder; not the pretrained Devstral model.
 
-    Pure mathematical density: 2 layers of attention+FFN, all Q16.16,
-    synthesised in-process from named seeds, no external mount, no GPU.
-    ~45k params, ~180KB, runs on low-end phone and old laptop out-of-the-box.
+    The matrices are generated from named seeds, not learned from training
+    data. Its output is a structural feature vector and trace, not fluent text.
     """
 
     def __init__(self, config: EngineConfig | None = None) -> None:
@@ -245,10 +230,11 @@ class DevstralCore:
         return self._feed_forward_with(x, layer["wh"], layer["bh"], layer["wo"], layer["bo"])
 
     def plan(self, text: str, route: str = "text", transport: str = "unknown") -> ReasoningPlan:
-        """Run one full reasoning pass and return its verifiable plan.
+        """Run one deterministic structural-encoding pass and return its trace.
 
-        v2: pure mathematical density — 2 layers of attention+FFN, all Q16.16,
-        synthesised in-process, no external mount, runs on low-end phone.
+        The plan records seeded fixed-point transforms. It is not a natural-
+        language answer, an estimate of semantic understanding, or a quality
+        guarantee across languages.
         """
         clipped = text[:MAX_INPUT_CHARS]
         token_ids = T.encode(clipped)
@@ -256,7 +242,7 @@ class DevstralCore:
         if not blocks:
             blocks = [[T.PAD]]
 
-        steps: list[str] = ["tokenize:byte-level-universal"]
+        steps: list[str] = ["tokenize:utf8-byte"]
         x = self._embed_chunks(blocks)
         trace = {"embed": x.sha256()}
 

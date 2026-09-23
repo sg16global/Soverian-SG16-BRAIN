@@ -58,8 +58,7 @@ export function isAllowedChildrenOrigin(origin: string | null | undefined): bool
 /**
  * Headers a children shell is allowed to receive. No `Access-Control-Allow-
  * Credentials` on purpose: there is no cookie, no token, no session to send.
- * `no-store` mirrors the charter's zero-storage claim so no intermediary
- * keeps a copy of a child's turn either.
+ * `no-store` avoids intermediary response caching for children turns. Reverse-proxy request logging may still apply.
  */
 export function childrenCorsHeaders(origin: string): Record<string, string> {
   return {

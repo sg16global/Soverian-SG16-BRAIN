@@ -5,6 +5,7 @@ import { MonitorSmartphone, Trash2, ShieldCheck, Plus } from "lucide-react";
 import { SiteChrome } from "@/components/chrome/SiteChrome";
 import { PageHeader } from "@/components/PageHeader";
 import { Panel } from "@/components/ui/Panel";
+import { identityHeaders } from "@/lib/browser-identity";
 
 type Device = {
   id: string;
@@ -48,34 +49,39 @@ function describeDevice(): string {
 export default function DevicesPage() {
   const [devices, setDevices] = useState<Device[] | null>(null);
   const [registered, setRegistered] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
-    const res = await fetch("/api/devices", { cache: "no-store" });
+    const res = await fetch("/api/devices", { headers: identityHeaders(), cache: "no-store" });
     if (res.ok) setDevices((await res.json()).devices ?? []);
+    else {
+      const data = await res.json().catch(() => ({}));
+      setError(data.error || "Sign in to manage devices.");
+    }
   }, []);
 
   useEffect(() => {
     (async () => {
-      await fetch("/api/devices", {
+      const res = await fetch("/api/devices", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: identityHeaders({ "Content-Type": "application/json" }),
         body: JSON.stringify({ deviceName: describeDevice(), userAgent: navigator.userAgent }),
       });
-      setRegistered(true);
+      setRegistered(res.ok);
       load();
     })();
   }, [load]);
 
   async function remove(id: string) {
     if (!confirm("Remove this device from your trusted registry?")) return;
-    await fetch(`/api/devices?id=${id}`, { method: "DELETE" });
+    await fetch(`/api/devices?id=${encodeURIComponent(id)}`, { method: "DELETE", headers: identityHeaders() });
     load();
   }
 
   async function registerAgain() {
     await fetch("/api/devices", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: identityHeaders({ "Content-Type": "application/json" }),
       body: JSON.stringify({ deviceName: describeDevice() + " (new)", userAgent: navigator.userAgent + "|" + Date.now() }),
     });
     load();
@@ -83,19 +89,20 @@ export default function DevicesPage() {
 
   return (
     <SiteChrome>
-      <PageHeader title="MY DEVICES" subtitle="Every browser and machine connected to your sovereign account, registered with a fingerprint and last-seen timestamp.">
+      <PageHeader title="MY DEVICES" subtitle="Account device records stored by this deployment. Registration uses a browser-derived descriptor and last-seen timestamp.">
         <button onClick={registerAgain} className="btn-red inline-flex items-center gap-2 px-4 py-2 text-[11px]">
           <Plus className="h-4 w-4" /> REGISTER DEVICE
         </button>
       </PageHeader>
 
       <div className="mx-auto max-w-[900px] px-4 py-8">
+        {error && <Panel className="mb-4 border-amber-400/30 p-4 text-sm text-amber-200">{error}</Panel>}
         <Panel className="mb-4 flex items-center gap-3 p-4">
           <ShieldCheck className="h-6 w-6 text-emerald-400" />
           <p className="text-[12.5px] text-slate-300">
             {registered
-              ? "This device is registered and trusted. Heartbeats refresh every time you open the platform."
-              : "Registering this device with the sovereign registry…"}
+              ? "This device record is stored with your account in this deployment's database."
+              : "Waiting for an account device registration…"}
           </p>
         </Panel>
 

@@ -10,9 +10,8 @@ import { FinancialTicker } from "@/components/home/FinancialTicker";
 import { ModelGrid } from "@/components/home/ModelGrid";
 import { PageHeader } from "@/components/PageHeader";
 
-// Exclusive sovereign workspace: the chat pane is locked 100% to SG16 Brain
-// via /api/brain — no model selector, no external options. The global AI
-// directory cycles below; the news slot now streams the global markets tape.
+// Workspace routes all chat through /api/brain. The active Python core is a
+// limited deterministic structural engine, not a general-purpose language model.
 
 function Workspace() {
   const params = useSearchParams();
@@ -28,7 +27,7 @@ function Workspace() {
     <>
       <PageHeader
         title="SOVEREIGN WORKSPACE"
-        subtitle="Exclusive SG16 core channel — every exchange is answered by the anchored sovereign brain and persisted to your sovereign session log."
+        subtitle="Configured SG16 gateway chat. Signed-in account sessions may be stored in this deployment database; guest chats are not archived there."
       >
         <Link href="/history" className="btn-ghost inline-flex items-center gap-2 px-4 py-2 text-[11px]">
           <HistoryIcon className="h-4 w-4" /> HISTORY
@@ -50,7 +49,7 @@ function Workspace() {
               </div>
             </div>
             <p className="flex items-center justify-center gap-2 text-center font-mono2 text-[9px] tracking-[0.25em] text-slate-500">
-              <Globe2 className="h-3 w-3" /> SELF-HOSTED MISTRAL ENGINE · APACHE 2.0 · OWNERSHIP, NOT DEPENDENCY
+              <Globe2 className="h-3 w-3" /> CONFIGURED SG16 GATEWAY · LIMITED STRUCTURAL CORE · APACHE 2.0 REFERENCE STACK
             </p>
           </div>
         )}

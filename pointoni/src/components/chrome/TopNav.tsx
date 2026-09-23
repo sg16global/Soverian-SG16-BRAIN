@@ -1,14 +1,29 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Crown, Grid2x2, Menu } from "lucide-react";
 import { TOP_LINKS } from "./nav-items";
-import { useState } from "react";
 
 export function TopNav({ onMenu }: { onMenu: () => void }) {
   const pathname = usePathname();
-  const [online] = useState(true);
+  const [online, setOnline] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    void fetch("/api/health", { cache: "no-store" })
+      .then((r) => r.json())
+      .then((d) => {
+        if (!cancelled) setOnline(Boolean(d.ok || d.database));
+      })
+      .catch(() => {
+        if (!cancelled) setOnline(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   return (
     <header className="fixed inset-x-0 top-0 z-50 h-[58px] border-b border-red-500/35 bg-[#070a10]/90 shadow-[0_2px_24px_rgba(255,31,46,.25)] backdrop-blur-md">
@@ -66,7 +81,7 @@ export function TopNav({ onMenu }: { onMenu: () => void }) {
             }`}
           >
             <span className="status-dot" style={{ background: online ? "#22e08c" : "#ff3b4c", color: online ? "#22e08c" : "#ff3b4c" }} />
-            GLOBAL ONLINE
+            {online ? "SYSTEM ONLINE" : "STATUS UNKNOWN"}
           </span>
           <Link
             href="/login"

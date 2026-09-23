@@ -15,23 +15,22 @@ const CORE_RULES: Rule[] = [
   {
     test: /\b(hi|hello|hey|greetings|good (morning|afternoon|evening))\b/i,
     paragraphs: [
-      "Greetings, Pilot. I am SG16 Brain \u2014 the sovereign intelligence core of this platform.",
-      "I can explain AI concepts, write and debug code, compare the connected models (Claude, GPT-5.5, Gemini, Llama 3, Stable Diffusion XL), or walk you through the self-hosted Mistral X engine. What are we building today?",
+      "Greetings. I am SG16 Brain — a limited deterministic assistant on this platform.",
+      "I can explain AI concepts, write short code snippets, walk through arithmetic, and help plan focused tasks within this build's limited knowledge scope. External model names in the catalog are not live unless the operator configured them. What are we building today?",
     ],
   },
   {
     test: /sovereign|self.?host|ownership|dependency|mistral|on-?prem|private deploy/i,
     paragraphs: [
-      "SG16 Brain runs a self-hosted Mistral engine \u2014 it is built for ownership, not dependency on third-party AI APIs.",
-      "That means the model weights, inference, logs and your data reside inside your own deployment. There is no external training leakage, no per-token dependency on a foreign endpoint, and the stack is released under Apache 2.0. Other models in the multi-model grid are orchestrated alongside the core but clearly labelled when a request is relayed outside the sovereign boundary.",
+      "This build runs a deterministic structural core in-process. It is not a broad pretrained language model, and external providers only become live when an operator configures them.",
+      "Sovereign hosting can keep the structural core inside your deployment. This application does not train models on your chats. Account data may still be stored by the deployment, and logs/backups depend on operator configuration. External relays are only used when credentials are configured.",
     ],
   },
   {
     test: /\b(claude|gpt|gemini|llama|stable diffusion|model|compare|difference)\b/i,
     paragraphs: [
-      "The platform currently orchestrates seven systems, each with a distinct role:",
-      "\u2022 SG16 Brain (Mistral X Instruct) \u2014 sovereign reasoning core, self-hosted, ~40ms local latency.\n\u2022 Mistral X Instruct \u2014 the self-hosted instruct engine for ownership-first workloads.\n\u2022 Claude (Anthropic) \u2014 long-context analysis and careful reasoning.\n\u2022 GPT-5.5 (OpenAI) \u2014 multimodal general intelligence.\n\u2022 Gemini (Google DeepMind) \u2014 deep multimodal research.\n\u2022 Llama 3 (Meta) \u2014 open-weight frontier model.\n\u2022 Stable Diffusion XL (Stability AI) \u2014 image synthesis.",
-      "You can switch the active system at any time in the model selector above the chat or by selecting a node in the Multi-Model Intelligence Grid. Self-hosted systems answer in-region; external systems are relayed by the SG16 orchestrator.",
+      "This build uses one configured gateway path. Optional external relays require operator credentials; without them the structural core answers or defers.",
+      "• SG16 structural core — deterministic gateway path with limited coverage.\n• Optional Ollama bridge — only if the operator enables it.\n• External providers — catalog examples; live only with configured credentials.",
     ],
   },
   {
@@ -47,7 +46,7 @@ const CORE_RULES: Rule[] = [
     paragraphs: [
       "API access is live. Open \u201CAPI Access\u201D in the sidebar to mint an SG16 token, then call the chat endpoint:",
       "curl -X POST https://your-deployment/api/chat \\\n  -H \"Authorization: Bearer sg16_xxxx\" \\\n  -H \"Content-Type: application/json\" \\\n  -d '{\"modelId\":\"sg16-brain\",\"message\":\"Hello SG16\"}'",
-      "Responses include the model id, latency in milliseconds, and a relay flag telling you whether the answer stayed inside the sovereign boundary. Tokens can be revoked instantly from the same panel.",
+      "Responses include the model id and a brain/runtime field identifying which path produced the answer. Account API tokens can be revoked from the API Access panel.",
     ],
   },
   {
@@ -68,15 +67,15 @@ const CORE_RULES: Rule[] = [
   {
     test: /country|countries|global|usa|uk|france|russia|china|germany|time|node/i,
     paragraphs: [
-      "The Global Presence network spans six nodes: the USA, the UK, France, Russia, China and Germany \u2014 different nations, one vision, a brighter human future.",
-      "Each node in the sidebar reports its real local time, timezone abbreviation and live status. The clocks are computed in your browser with IANA timezone data, so they reflect the actual current time in every region.",
+      "The Global Presence interface shows six timezone labels: the USA, the UK, France, Russia, China and Germany. These are presentation clocks, not verified operational nodes.",
+      "Each sidebar clock is computed in your browser with IANA timezone data. A correct local time does not prove that an operational facility exists in that region.",
     ],
   },
   {
     test: /price|pricing|plan|subscription|cost|pay|billing|enterprise\b/i,
     paragraphs: [
-      "Premium passes follow the sovereign deck: 24-Hour Entry ($3/day) with high-speed operational metrics, 1-Week Premium ($5/week), 15-Day Premium ($8/15 days, the featured pass) and 1-Month Premium ($15/month) \u2014 each with unlimited execution access.",
-      "Verification is fully localized and the signed, duration-locked record lives only in your on-device sg16/ folder; a pass lifts the panel throttle. Humanitarian exception: inbound environments detected as Palestine receive a zero-rate billing bypass \u2014 the full dashboard stays open, free and unlimited. Checkout runs through the Dodo Payments Merchant-of-Record gateway, or sovereign local issuance when no gateway credentials are configured.",
+      "Passes are host-issued, time-limited entitlements: 24-Hour Entry ($3), 1-Week Premium ($5), 15-Day Premium ($8) and 1-Month Premium ($15). The host still applies safety gates and any configured operational limits.",
+      "Checkout uses Dodo Payments only when the operator has configured gateway credentials; otherwise paid checkout fails closed. The browser may cache a bearer pass record locally, but it cannot grant access by itself. Regional zero-rate eligibility must be verified by an operator-trusted proxy; browser locale or region overrides do not qualify.",
     ],
   },
   {
@@ -89,8 +88,8 @@ const CORE_RULES: Rule[] = [
 ];
 
 const FALLBACK = [
-  "Understood. As the SG16 sovereign core I will work through that with you directly.",
-  "I have context from this conversation and the platform\u2019s live systems (model grid, global nodes, news feed, API and device registry). Give me any constraints, data or desired output format and I will produce a concrete, production-ready answer \u2014 code, analysis or step-by-step reasoning.",
+  "Understood. I will work through that with you directly.",
+  "I can help best with focused questions, arithmetic, planning, and short code explanations within this build's limited knowledge scope. Share any constraints or the exact output you need; if the topic is outside that scope, I will say so instead of inventing an answer.",
 ];
 
 function buildCoreReply(prompt: string): string[] {
@@ -103,7 +102,7 @@ function buildCoreReply(prompt: string): string[] {
 const PERSONAS: Record<string, (p: string[]) => string> = {
   "sg16-brain": (p) => p.join("\n\n"),
   "mistral-x": (p) =>
-    `[Mistral X Instruct \u2014 self-hosted inference]\n\n${p.join("\n\n")}`,
+    `[Configured local path]\n\n${p.join("\n\n")}`,
   claude: (p) =>
     `[Relayed via SG16 Orchestrator \u2192 Claude]\n\n${p
       .map((para) => para)

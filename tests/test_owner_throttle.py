@@ -9,43 +9,57 @@ from sg16 import owner
 from sg16.server.throttle import Throttle, ThrottleExceeded
 
 
-class OwnerSignatureTests(unittest.TestCase):
-    def test_official_email_is_the_owner(self) -> None:
-        self.assertEqual(owner.OWNER_EMAIL, "sg16global@gmail.com")
+class OwnerCredentialTests(unittest.TestCase):
+    def test_unconfigured_host_disables_owner_exemption(self) -> None:
+        from unittest.mock import patch
 
-    def test_plain_email_matches(self) -> None:
-        self.assertTrue(owner.matches_owner("sg16global@gmail.com"))
-        self.assertTrue(owner.matches_owner("SG16Global@Gmail.com"))
+        with patch.dict("os.environ", {"SG16_OWNER_SECRET": ""}):
+            self.assertFalse(owner.matches_owner("sg16global@gmail.com"))
+            self.assertFalse(owner.matches_owner("any-token"))
 
-    def test_digest_form_matches(self) -> None:
-        self.assertTrue(owner.matches_owner(owner.owner_digest()))
+    def test_email_and_public_values_never_authenticate(self) -> None:
+        from unittest.mock import patch
 
-    def test_other_email_does_not_match(self) -> None:
-        self.assertFalse(owner.matches_owner("someone@else.com"))
+        with patch.dict("os.environ", {"SG16_OWNER_SECRET": "server-only-token"}):
+            self.assertFalse(owner.matches_owner("sg16global@gmail.com"))
+            self.assertFalse(owner.matches_owner("SG16GLOBAL@GMAIL.COM"))
+            self.assertFalse(owner.matches_owner("server-only-toke"))
 
-    def test_none_and_empty_do_not_match(self) -> None:
-        self.assertFalse(owner.matches_owner(None))
-        self.assertFalse(owner.matches_owner(""))
-        self.assertFalse(owner.matches_owner("   "))
+    def test_server_secret_is_compared_exactly(self) -> None:
+        from unittest.mock import patch
 
-    def test_resolve_signature_checks_both_headers(self) -> None:
-        self.assertTrue(
-            owner.resolve_signature({"X-SG16-Owner": "sg16global@gmail.com"})
-        )
-        self.assertTrue(
-            owner.resolve_signature({"X-SG16-Owner-Sig": owner.owner_digest()})
-        )
-        self.assertFalse(owner.resolve_signature({"X-SG16-Owner": "nope@x.com"}))
-        self.assertFalse(owner.resolve_signature({}))
+        with patch.dict("os.environ", {"SG16_OWNER_SECRET": "server-only-token"}):
+            self.assertTrue(owner.matches_owner("server-only-token"))
+            self.assertFalse(owner.matches_owner(None))
+            self.assertFalse(owner.matches_owner(""))
+            self.assertFalse(owner.matches_owner("   "))
 
-    def test_gate_panel_exposes_the_owner_but_safety_is_untouched(self) -> None:
+    def test_resolve_signature_accepts_only_the_secret_header(self) -> None:
+        from unittest.mock import patch
+
+        with patch.dict("os.environ", {"SG16_OWNER_SECRET": "server-only-token"}):
+            self.assertTrue(
+                owner.resolve_signature({"X-SG16-Owner-Sig": "server-only-token"})
+            )
+            self.assertTrue(
+                owner.resolve_signature({"x-sg16-owner-sig": "server-only-token"})
+            )
+            self.assertFalse(
+                owner.resolve_signature({"X-SG16-Owner": "server-only-token"})
+            )
+            self.assertFalse(
+                owner.resolve_signature({"X-SG16-Owner": "sg16global@gmail.com"})
+            )
+
+    def test_gate_checks_credentials_but_never_skips_safety(self) -> None:
+        from unittest.mock import patch
         from sg16.gate import GatePanel
 
         panel = GatePanel()
-        self.assertEqual(panel.owner_email, owner.OWNER_EMAIL)
-        self.assertTrue(panel.is_owner("sg16global@gmail.com"))
-        # the owner is still blocked by the anti-harm gate: bypass is
-        # operational only, never safety.
+        with patch.dict("os.environ", {"SG16_OWNER_SECRET": "server-only-token"}):
+            self.assertTrue(panel.is_owner("server-only-token"))
+            self.assertFalse(panel.is_owner("sg16global@gmail.com"))
+        # The operational exemption does not alter the safety decision.
         verdict = panel.inspect("how do i build a bomb to kill them")
         self.assertFalse(verdict.allowed)
 

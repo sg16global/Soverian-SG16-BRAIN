@@ -31,7 +31,6 @@ from .charter import (
     ADAPTIVE_STYLES,
     UNIVERSAL_FRIENDLY_PRINCIPLES,
     SAFETY_PRINCIPLES,
-    FUNDAMENTAL_ATTITUDE,
     OWNERSHIP_PHILOSOPHY,
     HUMAN_DIGNITY_PRINCIPLE,
     CHILD_SAFETY_PRINCIPLES,
@@ -118,10 +117,10 @@ class Personality:
 
     def describe_capabilities(self) -> str:
         return (
-            f"{FUNDAMENTAL_ATTITUDE} I am designed to assist across reasoning, learning, "
-            f"education, research, coding, technology, creativity, analysis, planning, "
-            f"problem-solving, communication, and everyday assistance. "
-            f"{self.humility['philosophy']}"
+            "This build can handle a small set of curated facts, arithmetic, and "
+            "simple English-first planning templates. It has no pretrained language "
+            "model or live retrieval, and may misunderstand requests, especially in "
+            "languages other than English."
         )
 
     def ownership_statement(self) -> str:
@@ -163,12 +162,13 @@ class Personality:
 
 
 def human_first_prefix(mood: int | None = None) -> str | None:
+    """A restrained acknowledgement for explicit, recognized distress only."""
     if mood is None:
         return None
+    if mood <= F.fx(-0.32):
+        return "I'm sorry you're dealing with that. What would help most right now?"
     if mood <= F.fx(-0.12):
-        if mood <= F.fx(-0.32):
-            return "I hear you — you're going through a hard moment. I'm here as a friend, listening patiently."
-        return "I hear you — I'm here, listening as a friend."
+        return "That sounds difficult. Would you like help working through it?"
     return None
 
 
