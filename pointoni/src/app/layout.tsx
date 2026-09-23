@@ -5,7 +5,7 @@ import "./globals.css";
 export const metadata: Metadata = {
   title: "Sovereign SG16 Brain \u2014 Global AI Intelligence Network",
   description:
-    "SG16-powered AI global intelligence network. A self-hosted Mistral engine built for ownership, not dependency on third-party AI APIs. Knowledge \u00B7 Diplomacy \u00B7 A Better Tomorrow.",
+    "SG16-powered assistant gateway with a limited deterministic core, account storage, and operator-configured optional relays. Knowledge \u00B7 Diplomacy \u00B7 A Better Tomorrow.",
   keywords: ["Sovereign AI", "SG16 Brain", "Mistral", "multi-model AI", "self-hosted AI"],
   applicationName: "Sovereign SG16 Brain",
   creator: "SAIF TECH GLOBAL LLC",

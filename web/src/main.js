@@ -10,7 +10,7 @@
 // door, reasoning plan, gate reasons, parity) stay mounted in the DOM so the
 // brain keeps rendering them on every payload - they are simply out of the
 // public view until an operator reveals them from Settings.
-import { api, getJson, delJson, fileToBase64 } from "./api.js";
+import { api, getJson, fileToBase64 } from "./api.js";
 import { renderMarkdown } from "./markdown.js";
 import {
   sessionId,
@@ -21,19 +21,16 @@ import {
 } from "./storage.js";
 import {
   PASSES,
-  OWNER_EMAIL,
   resolveBilling,
   effectivePrice,
   startCheckout,
   confirmDodoReturn,
-  ensureHumanitarianPass,
   persistPricingStatus,
   currentPass,
-  attestIdentity,
+  saveLocalProfile,
   currentIdentity,
   generateApiKey,
   currentApiKey,
-  hasFullSpeedBypass,
 } from "./billing.js";
 
 const $ = (id) => document.getElementById(id);
@@ -100,7 +97,7 @@ const els = {
   diagnostics: $("diagnostics"),
 };
 
-const session = sessionId();
+let session = sessionId();
 const PANEL_THROTTLE_MS = 800;
 let lastSubmitAt = 0;
 
@@ -270,37 +267,35 @@ function showNotice(notice) {
 function refreshPricing() {
   const billing = resolveBilling();
   persistPricingStatus(billing);
-  const vip = hasFullSpeedBypass();
-  if (els.vipChip) els.vipChip.hidden = !vip;
-  els.regionLine.textContent =
-    `region: ${billing.region || "auto"}` +
-    (vip ? " · VIP OWNER · full-speed bypass" : billing.humanitarian ? " · FREE (humanitarian)" : "");
+  if (els.vipChip) els.vipChip.hidden = true;
+  els.regionLine.textContent = "region: verified by the host during checkout";
   document.querySelectorAll(".pass").forEach((passCard) => {
     const id = passCard.dataset.pass;
     const price = effectivePrice(id, billing);
     const priceEl = passCard.querySelector(".price");
     priceEl.innerHTML = `$${price}<span>${PASSES[id].unit}</span>`;
-    passCard.classList.toggle("free", billing.humanitarian || vip);
+    passCard.classList.toggle("free", billing.humanitarian);
   });
   const pass = currentPass();
-  els.pricingNote.textContent = vip
-    ? "VIP owner recognized (sg16global@gmail.com): continuous full-speed throttle bypass active across the 3-GPT panel."
-    : pass
-      ? `Active pass: ${PASSES[pass.pass]?.label || pass.pass} · $${pass.price_charged} · expires ${pass.expires_at} · verified locally.`
-      : "Localized verification runs entirely on your device. Your credentials and history never leave it.";
+  els.pricingNote.textContent = pass
+    ? `Stored pass: ${PASSES[pass.pass]?.label || pass.pass} · $${pass.price_charged} · host validation required · expires ${pass.expires_at}.`
+    : "No active pass is stored in this browser. Server access is decided by the host, not this local interface.";
   if (openView === "subscription") renderView("subscription");
 }
 
 async function handleBuy(passId) {
-  const billing = resolveBilling();
-  let identity = currentIdentity();
-  if (!identity) {
-    const provider = window.confirm("Continue with Google? (Cancel for Apple)")
-      ? "Google"
-      : "Apple";
-    identity = await attestIdentity(provider);
+  let result;
+  try {
+    result = await startCheckout(passId);
+  } catch (error) {
+    addMessage(
+      "audio-note",
+      "checkout unavailable",
+      `${String(error?.message || error)} No pass was issued; try again after the host's payment service is available.`,
+      false,
+    );
+    return;
   }
-  const result = await startCheckout(passId, identity);
   refreshPricing();
 
   if (result.mode === "dodo" && result.checkout_url) {
@@ -308,8 +303,8 @@ async function handleBuy(passId) {
       "audio-note",
       "dodo payments · secure mor checkout",
       `Opening the Dodo Payments Merchant-of-Record checkout for the ${PASSES[passId].label}. ` +
-        `The moment payment confirms, the signed, duration-locked pass token is committed ` +
-        `to your local sg16/ folder - it never leaves your device.`,
+        `After payment is confirmed, the host will return a signed pass record. ` +
+        `The browser stores its bearer token locally, and sends it when requesting premium access.`,
       false
     );
     setTimeout(() => {
@@ -319,13 +314,13 @@ async function handleBuy(passId) {
   }
 
   const record = result.record;
+  if (!record) return;
   addMessage(
     "audio-note",
-    "local subscription",
-    `${PASSES[record.pass].label} activated on-device for $${record.price_charged}` +
-      (record.humanitarian_bypass ? " (humanitarian zero-rate bypass — gateway skipped)" : "") +
-      (record.vip_owner_bypass ? " (VIP owner bypass)" : "") +
-      `. History stays in your local folder; the core grid keeps 0 client logs.`
+    "host-issued pass",
+    `${PASSES[record.pass]?.label || record.pass} issued for $${record.price_charged}` +
+      (record.humanitarian_bypass ? " (host-verified humanitarian rate)" : "") +
+      `. The signed token is stored in this browser and is sent to the host when used.`
   );
   if (openView === "subscription") renderView("subscription");
 }
@@ -334,20 +329,15 @@ async function handleBuy(passId) {
 // Data Ingest Dispatcher
 // ------------------------------------------------------------------
 async function submit(text, audioB64) {
-  if (!hasFullSpeedBypass()) {
-    const wait = PANEL_THROTTLE_MS - (Date.now() - lastSubmitAt);
-    if (wait > 0) await new Promise((resolve) => setTimeout(resolve, wait));
-  }
+  const wait = PANEL_THROTTLE_MS - (Date.now() - lastSubmitAt);
+  if (wait > 0) await new Promise((resolve) => setTimeout(resolve, wait));
   lastSubmitAt = Date.now();
 
   addMessage("user", `you · ${session}`, text || "[audio attached]", false);
   const payload = { text, session_id: session };
-  if (hasFullSpeedBypass()) payload.vip_owner = true;
   if (audioB64) payload.audio_b64 = audioB64;
 
   const headers = { "Content-Type": "application/json" };
-  const identity = currentIdentity();
-  if (identity && identity.email === OWNER_EMAIL) headers["X-SG16-Owner"] = identity.email;
   const pass = store.get("pass");
   if (pass && pass.token) headers["X-SG16-Pass"] = pass.token;
 
@@ -582,7 +572,7 @@ const VIEW_RENDERERS = {
       card("On-device only", [
         el("p", {
           text:
-            "Attachments are read into memory for the audio route and never stored on the sovereign host. Only the name, size and timestamp are kept here, in your local sg16/ folder.",
+            "Selected audio is sent to the configured host for acoustic profiling. This browser keeps only a local file label, size and timestamp; host, proxy and platform retention depend on deployment.",
         }),
         row("recorded attachments", files.length),
       ]),
@@ -611,11 +601,10 @@ const VIEW_RENDERERS = {
 
   subscription() {
     const billing = resolveBilling();
-    const vip = hasFullSpeedBypass();
     const pass = currentPass();
     const passCards = Object.entries(PASSES).map(([id, def]) =>
       card(def.label, [
-        row("price", vip || billing.humanitarian ? "$0" : `$${def.price}${def.unit}`),
+        row("price", billing.humanitarian ? "$0" : `$${def.price}${def.unit}`),
         row("duration", `${def.hours} h`),
         el("div", { class: "view-actions" }, [
           el("button", {
@@ -628,24 +617,22 @@ const VIEW_RENDERERS = {
     );
     return [
       card("Current entitlement", [
-        vip
-          ? el("p", { text: "VIP owner · full-speed bypass active. No pass required." })
-          : pass
-            ? [
-                row("pass", PASSES[pass.pass]?.label || pass.pass),
-                row("charged", `$${pass.price_charged}`),
-                row("expires", fmtTime(pass.expires_at)),
-                row("verified", "on this device"),
-              ]
-            : el("p", { text: "No active pass. The brain still answers; a pass lifts the panel throttle." }),
-        row("region", billing.region || "auto"),
-        row("humanitarian zero-rate", billing.humanitarian ? "yes" : "no"),
+        pass
+          ? [
+              row("pass", PASSES[pass.pass]?.label || pass.pass),
+              row("charged", `$${pass.price_charged}`),
+              row("expires", fmtTime(pass.expires_at)),
+              row("record", "stored in this browser; the host validates signed tokens"),
+            ]
+          : el("p", { text: "No active pass. The brain still answers; a pass lifts the panel throttle." }),
+        row("region", "verified by host during checkout"),
+        row("humanitarian zero-rate", pass?.humanitarian_bypass ? "host-verified" : "not verified"),
       ]),
       ...passCards,
       card("Note", [
         el("p", {
           text:
-            "Verification is fully localized: region is inferred from this device's own timezone and locale, and the signed record lives only in your sg16/ folder.",
+            "This browser cannot verify payment or location. Paid passes require confirmed host-side checkout; any regional zero-rate eligibility must be asserted by a proxy the operator trusts. The returned token is stored locally but is not secret from this browser's user.",
         }),
       ]),
     ];
@@ -668,12 +655,12 @@ const VIEW_RENDERERS = {
         ]),
       ]),
       card("Endpoints", [
-        el("p", { text: "Every route is served by the sovereign host itself. No external gateway." }),
+        el("p", { text: "Chat and brain endpoints run on the configured host. Paid checkout uses Dodo Payments when the operator has enabled it." }),
         row("POST /api/ingest", "payload through the door"),
         row("POST /api/audio", "audio route"),
         row("GET /api/health", "readiness + digests"),
-        row("GET /api/charter", "seven invariants"),
-        row("GET /api/parity", "online/offline parity"),
+        row("GET /api/charter", "eight behavioral invariants"),
+        row("GET /api/parity", "repeatability of the structural plan"),
         row("GET /api/weight", "weight provenance"),
       ]),
       card("Transport", [
@@ -702,7 +689,7 @@ const VIEW_RENDERERS = {
       card("Residency", [
         el("p", {
           text:
-            "The device list is a local convenience record. The sovereign host holds no client logs and no device inventory.",
+            "This device list is local. Requests still reach the configured host, which keeps bounded session context; proxy, platform and infrastructure logging depend on deployment.",
         }),
         el("div", { class: "view-actions" }, [
           el("button", {
@@ -754,7 +741,7 @@ const VIEW_RENDERERS = {
         row("parity identical", host.parity ? (host.parity.identical ? "yes" : "NO") : "—"),
       ]),
       card("Your data", [
-        el("p", { text: "Everything below lives only in this browser's sg16/ folder." }),
+        el("p", { text: "Interface preferences, profile labels and displayed chat history are stored in this browser. Requests are sent to the configured host, which keeps bounded in-memory context; deployment logging and retention may vary." }),
         el("div", { class: "view-actions" }, [
           el("button", {
             class: "btn ghost",
@@ -779,50 +766,36 @@ const VIEW_RENDERERS = {
 
   account() {
     const identity = currentIdentity();
-    const vip = hasFullSpeedBypass();
     return [
-      card("Identity", [
+      card("Browser-local profile", [
         identity
           ? [
-              row("email", identity.email),
-              row("provider", identity.provider),
-              row("designation", host.designation || "—"),
-              row("attested", identity.attested_at ? identity.attested_at.slice(0, 16).replace("T", " ") : "—"),
-              row("hash", (identity.hash || "").slice(0, 20)),
+              row("label", identity.label),
+              row("profile type", "local only; not verified"),
+              row("created", identity.created_at ? identity.created_at.slice(0, 16).replace("T", " ") : "—"),
             ]
-          : el("p", { text: "Not signed in. Attest with Google or Apple to attach a pass to this device." }),
-        row("owner tier", vip ? "VIP OWNER · full speed" : "standard"),
+          : el("p", { text: "No local profile is saved. A profile is optional and does not sign you in." }),
       ]),
-      card("Attestation", [
+      card("Local profile", [
         el("p", {
           text:
-            "The credential is hashed on this device only. It is never uploaded, and the sovereign host keeps no client logs.",
+            "This label is stored in this browser only. It is not a Google or Apple sign-in, is not verified, and does not authenticate requests or grant owner access.",
         }),
         el("div", { class: "view-actions" }, [
           el("button", {
             class: "btn primary",
-            text: "Continue with Google",
+            text: identity ? "Change local label" : "Set local label",
             onclick: async () => {
-              await attestIdentity("Google");
-              refreshPricing();
-              renderView("account");
-            },
-          }),
-          el("button", {
-            class: "btn ghost",
-            text: "Continue with Apple",
-            onclick: async () => {
-              await attestIdentity("Apple");
-              refreshPricing();
+              await saveLocalProfile();
               renderView("account");
             },
           }),
         ]),
       ]),
       identity
-        ? card("Session", [
+        ? card("Local data", [
             el("div", { class: "view-actions" }, [
-              el("button", { class: "btn ghost", text: "Sign out", onclick: () => signOut() }),
+              el("button", { class: "btn ghost", text: "Clear local profile", onclick: () => signOut() }),
             ]),
           ])
         : null,
@@ -832,10 +805,10 @@ const VIEW_RENDERERS = {
   help() {
     return [
       card("Start here", [
-        el("p", { text: "Type an idea in the console and send it. The brain inspects the payload at the gate, then reasons in fixed-point Q16.16 arithmetic inside the core." }),
-        row("new chat", "clears this session on device and host"),
-        row("attach audio", "sends a WAV / audio clip for the acoustic route"),
-        row("history", "every turn, stored on this device only"),
+        el("p", { text: "This build answers a small set of curated facts, arithmetic, and English-first planning requests. Other questions are deferred; it has no general-purpose pretrained language model or live retrieval." }),
+        row("new chat", "clears the local transcript and starts a new server context; older contexts are bounded and evicted"),
+        row("attach audio", "sends a clip for local acoustic profiling; speech transcription is not implemented"),
+        row("history", "the UI transcript is stored locally; accepted request context also exists in bounded host memory"),
       ]),
       card(`Charter · ${host.charter.length} invariants`, host.charter.length
         ? host.charter.map((inv, i) => row(`${i + 1}. ${inv.key.replace(/_/g, " ")}`, inv.text))
@@ -850,24 +823,37 @@ const VIEW_RENDERERS = {
 
 // --------------------------- shell actions ---------------------------
 async function startNewChat() {
-  await delJson(`/api/session/${encodeURIComponent(session)}`).catch(() => {});
-  store.del(`history/${session}`);
+  const previousSession = session;
+  store.del(`history/${previousSession}`);
+  store.del("session");
+  session = sessionId();
   els.transcript.innerHTML = "";
-  addMessage("brain", "sg16 brain", "Fresh session. Share your idea first.");
+  addMessage("brain", "sg16 brain", "Fresh chat. What would you like help with?");
   if (openView === "history") renderView("history");
   els.input.focus();
+  // Best-effort host context reset so New chat does not continue old core memory.
+  try {
+    await fetch("/api/session/forget", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ session_id: previousSession }),
+    });
+  } catch {
+    /* host context still ages out via bounded LRU/restart */
+  }
 }
 
 async function signOut() {
-  const ok = window.confirm("Sign out on this device? Your local pass and identity are cleared.");
+  const ok = window.confirm("Sign out on this device? Your local pass and profile are cleared.");
   if (!ok) return;
-  await delJson(`/api/session/${encodeURIComponent(session)}`).catch(() => {});
   store.del("identity");
   store.del("pass");
   store.del("api_key");
+  store.del("session");
+  session = sessionId();
   refreshPricing();
   closeView();
-  addMessage("audio-note", "sg16 brain", "Signed out on this device. Identity, pass and API key cleared locally.");
+  addMessage("audio-note", "sg16 brain", "Signed out on this device. Profile, pass and API key cleared locally.");
 }
 
 // --------------------------- shell wiring ---------------------------
@@ -987,11 +973,6 @@ async function boot() {
         false
       );
     }
-  } catch {}
-
-  // Palestine interceptor: humanitarian devices get their $0 token on boot.
-  try {
-    await ensureHumanitarianPass();
   } catch {}
 
   registerDevice();

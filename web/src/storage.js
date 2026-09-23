@@ -1,11 +1,10 @@
 // Localized device storage directory.
 //
-// Everything the brain persists for a user lives ONLY on the user's device,
-// namespaced under "sg16/".  The sovereign host keeps no client logs: it holds
-// an in-memory session for the duration of a conversation and persists nothing.
-// In a packaged desktop/mobile build this namespace maps 1:1 onto an isolated
-// application directory on disk; in the browser it maps onto localStorage, and
-// the user can export the whole folder as a file at any time.
+// The interface's chat history and profile labels are stored locally under
+// "sg16/". Requests still go to the configured host, which keeps bounded
+// in-memory session context; proxy/platform logging and retention depend on
+// deployment. Browser localStorage is not encrypted storage. Users can export
+// the local folder, but an export may contain sensitive conversation text.
 
 const NS = "sg16";
 
@@ -35,7 +34,10 @@ export const store = {
 export function sessionId() {
   let id = store.get("session");
   if (!id) {
-    id = "guest-" + Math.random().toString(36).slice(2, 10);
+    if (!globalThis.crypto?.randomUUID) {
+      throw new Error("A secure browser context is required to create a session.");
+    }
+    id = `guest-${globalThis.crypto.randomUUID()}`;
     store.set("session", id);
   }
   return id;

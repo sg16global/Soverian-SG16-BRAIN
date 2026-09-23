@@ -1,10 +1,7 @@
-"""SG16 BRAIN - engine package.
-
-The in-process mathematical engine.  Nothing in this package may perform
-network I/O, spawn a subprocess, or talk to a daemon; ``tests/test_isolation.py``
-enforces that mechanically.
-
-Now includes Mistral 7B Apache 2.0 true trained core - 100% real when weights present.
+"""Local structural encoding, deterministic audio measurements, and an
+experimental Mistral checkpoint container. No component in this package
+implements a general autoregressive chat model; the Mistral placeholder is not
+used by SG16Brain's request path.
 """
 
 from __future__ import annotations

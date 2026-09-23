@@ -15,16 +15,16 @@ import {
 import { Panel, PanelTitle } from "@/components/ui/Panel";
 import { ModelGlyph } from "@/components/ModelGlyph";
 import { SUGGESTION_PROMPTS } from "@/lib/content";
+import { identityHeaders } from "@/lib/browser-identity";
 import type { ChatMessageDto } from "@/lib/types";
 
-// CHAT IS EXCLUSIVELY SOVEREIGN: no model selector, no external or dummy
-// options.  Every message routes to /api/brain and is answered by the SG16
-// core through the master door.
+// Chat uses the configured SG16 gateway. The active Python core is a limited
+// deterministic structural engine, not a general-purpose language model.
 const SOVEREIGN = {
   id: "sg16-brain",
   name: "SG16 Brain",
   vendor: "Sovereign Systems",
-  role: "Sovereign reasoning core",
+  role: "Deterministic structural core · limited coverage",
   glyph: "brain",
   accent: "#22e08c",
 };
@@ -77,7 +77,10 @@ export function ChatPanel({
   const [identity, setIdentity] = useState<{ token: string; email: string; plan: string | null } | null>(null);
 
   const loadSession = useCallback(async (id: string) => {
-    const res = await fetch(`/api/brain?session=${id}`);
+    const res = await fetch(`/api/brain?session=${encodeURIComponent(id)}`, {
+      headers: identityHeaders(),
+      cache: "no-store",
+    });
     if (!res.ok) return;
     const data = (await res.json()) as { messages: ChatMessageDto[] };
     setMessages(data.messages);
@@ -89,8 +92,23 @@ export function ChatPanel({
       try {
         const raw = localStorage.getItem("sg16/identity");
         if (raw) {
-          const s = JSON.parse(raw) as { token?: string; email?: string; plan?: string | null };
-          if (s.token && s.email) setIdentity({ token: s.token, email: s.email, plan: s.plan ?? null });
+          const s = JSON.parse(raw) as { token?: string; email?: string };
+          const token = s.token;
+          if (token && s.email) {
+            fetch("/api/identity", {
+              method: "POST",
+              headers: identityHeaders({ "Content-Type": "application/json" }),
+              body: JSON.stringify({ action: "me" }),
+              cache: "no-store",
+            }).then(async (response) => {
+              const current = await response.json();
+              if (response.ok && current.ok) {
+                setIdentity({ token, email: current.email, plan: current.plan ?? null });
+              } else if (response.status === 401) {
+                localStorage.removeItem("sg16/identity");
+              }
+            }).catch(() => undefined);
+          }
         }
       } catch { /* device storage unavailable */ }
     }, 0);
@@ -108,10 +126,19 @@ export function ChatPanel({
   }, [messages, sending]);
 
   function newChat() {
+    const previous = sessionId;
     setMessages([]);
     setSessionId(null);
     setError(null);
     setInput("");
+    if (previous) {
+      // Best-effort host-side context reset; DB history is separate.
+      void fetch("/api/brain", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ forgetSessionId: previous }),
+      }).catch(() => undefined);
+    }
   }
 
   async function send(raw?: string) {
@@ -139,14 +166,19 @@ export function ChatPanel({
     try {
       const res = await fetch("/api/brain", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          ...(identity ? { authorization: `Bearer ${identity.token}` } : {}),
-        },
+        headers: identityHeaders({ "Content-Type": "application/json" }),
         body: JSON.stringify({ sessionId, modelId: SOVEREIGN.id, message }),
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "The SG16 core is unreachable. Try again.");
+      if (!res.ok) {
+        if (res.status === 429 && data.retryAt) {
+          const waitSec = Math.max(1, Math.ceil((Number(data.retryAt) - Date.now()) / 1000));
+          throw new Error(
+            `${data.error || "Fair-use pause active."} You can try again in about ${waitSec}s. Your text was kept in the composer history view.`,
+          );
+        }
+        throw new Error(data.error || "The SG16 core is unreachable. Try again.");
+      }
       setSessionId(data.sessionId);
       setMessages((prev) => [
         ...prev.filter((m) => m.id !== tempId),
@@ -177,7 +209,7 @@ export function ChatPanel({
       return;
     }
     const rec = new Rec();
-    rec.lang = "en-US";
+    rec.lang = navigator.language || "en-US";
     rec.interimResults = false;
     rec.onresult = (e: SpeechResultEvent) => {
       const text = e.results[0]?.[0]?.transcript ?? "";
@@ -237,9 +269,9 @@ export function ChatPanel({
           </span>
           <span className="flex-none inline-flex items-center gap-1.5 font-mono2 text-[9px] tracking-wider text-emerald-300">
             <span className="status-dot" style={{ background: SOVEREIGN.accent, color: SOVEREIGN.accent }} />
-            ONLINE
+            LIMITED
           </span>
-          <span className="hidden flex-none font-mono2 text-[9px] text-slate-400 sm:block">42ms · 128K</span>
+          <span className="hidden flex-none font-mono2 text-[9px] text-slate-400 sm:block">8K CHAR LIMIT · HOST GATEWAY</span>
           {identity?.plan ? (
             <Link
               href="/login"
@@ -279,7 +311,7 @@ export function ChatPanel({
                 Welcome to SG16 Developer Pilot
               </div>
               <p className="max-w-md text-[13px] font-medium leading-relaxed text-slate-200">
-                Your AI-powered development partner — ask anything, build anything, solve anything.
+                Ask a focused question. This build handles a limited set of curated facts, arithmetic, and English-first planning; it may defer questions outside that scope.
               </p>
             </div>
           ) : (
@@ -403,7 +435,7 @@ export function ChatPanel({
         </div>
         {sessionId && (
           <p className="mt-1.5 flex items-center justify-center gap-2 text-center font-mono2 text-[8px] tracking-[0.2em] text-slate-500">
-            SESSION {sessionId.slice(0, 8).toUpperCase()} · ENCRYPTED SOVEREIGN CHANNEL
+            SESSION {sessionId.slice(0, 8).toUpperCase()} · HOST GATEWAY CHANNEL
           </p>
         )}
       </div>

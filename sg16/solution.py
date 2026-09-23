@@ -1,18 +1,9 @@
-"""SG16 BRAIN - the solution composer (charter invariant ``idea_ingest``).
+"""English-first project-planning template composer.
 
-Implements Master Charter Sections 14-23:
-- 14 Thought-Partner Mode: Understand Vision
-- 15 Balanced Analysis: Strengths & Risks with Risk→Why→Solution
-- 16 Solution-First Reasoning: redesign, reduce, isolate, mitigate, replace, approach differently
-- 17 Never Create Panic: distinguish Critical blocker, Significant risk, Manageable limitation, Optimization opportunity, Minor concern
-- 18 Humility in Deliverables: test against real environment, compare with other AI/experts/docs
-- 19 Intellectual Honesty: knows, calculates, infers, estimates, recommends, requires verification, cannot access
-- 20 No Artificial Ego: User success > AI rivalry, Truth > marketing, etc.
-- 21 Response Adaptation: short, deep, simplify, experienced, alternatives, criticism, recommendation
-- 22 Permanent Behavioral Hierarchy
-- 23 System Implementation across character.py, safety filters, privacy, reasoning layers
-
-Zero hardcoded language names, language-agnostic, universal brain.
+This helper extracts a few English action words and keywords, then fills a
+fixed solution template. It is not a general reasoner; it may misunderstand
+short, ambiguous, or non-English project descriptions. Treat the output as a
+starting point to verify, not an expert assessment.
 """
 
 from __future__ import annotations

@@ -2,7 +2,7 @@
 // SG16 FOOTER RAIL — the sovereign tape that runs under every page.
 //
 // One continuous rail carrying the doctrine that must never be buried in a
-// legal paragraph: zero storage, one brain, the children's pledge line and
+// legal paragraph: account-storage honesty, one brain, the children's pledge line and
 // the frozen corporate footprint. It is the same "one mind, one planet"
 // statement the footer already makes, but it moves — so the visitor reads it
 // without being asked to.
@@ -19,13 +19,13 @@
 import { COMPANY } from "@/lib/company";
 
 const RAIL_ITEMS: readonly string[] = [
-  "ZERO STORAGE · SG16 POWERED · mistralbrain.com",
+  "ACCOUNT DATA STORAGE · SG16 POWERED · mistralbrain.com",
   "ONE MIND · ONE PLANET · ONE SOVEREIGN BRAIN",
   "APACHE 2.0 · OPEN INTELLIGENCE · NO VENDOR LOCK-IN",
-  "CHILDREN'S FRIEND · FREE IN HUMANITARIAN REGIONS · NO PROFILE, EVER",
+  "CHILDREN'S FRIEND · FREE IN VERIFIED HUMANITARIAN REGIONS · CHILD SHELL KEEPS NO SERVER PROFILE",
   "All proceeds collected from paying regions are pledged to children's causes through UNICEF- and UNESCO-aligned programmes.",
   "supporting children's education via UNICEF & UNESCO programmes",
-  "Q16.16 SOVEREIGN CORE · MISTRAL X INSTRUCT · YOUR DEVICE KEEPS ITS OWN MEMORY",
+  "Q16.16 STRUCTURAL CORE · CONFIGURED GATEWAY PATH · YOUR DEVICE MAY CACHE LOCAL UI STATE",
   COMPANY.legalLine,
 ];
 

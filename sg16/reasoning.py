@@ -1,19 +1,12 @@
-"""SG16 BRAIN - universal reasoning tensor (Block 7, rule 3).
+"""Bounded deterministic answer helper for a small set of known facts.
 
-Implements Master Charter Sections 10-15:
-- 10 Zero rivalry toward AI
-- 11 Philosophy for AI comparisons: mature useful analysis, different strengths
-- 12 Future-proof neutrality: every current and future AI
-- 13 User-first model selection: Use tool that helps achieve best result
-- 14 Thought-partner mode, 15 Balanced analysis
-
-Zero hardcoded language names, zero specific language configurations.
-Everything processes purely through byte-level tensor math and intent vectors.
+This is not a generative language model. It recognizes a few literal topics
+and composes a neutral comparison template; unknown queries must be deferred
+rather than decorated with a tensor signature and presented as answered.
 """
 
 from __future__ import annotations
 
-import hashlib
 import re
 from dataclasses import dataclass
 
@@ -103,44 +96,25 @@ class UniversalReasoner:
                     aspect_count=aspect_count,
                 )
 
-        hasher = hashlib.sha256()
-        hasher.update(normalized.encode("utf-8"))
-        for v in intent_vector:
-            hasher.update(int(v).to_bytes(8, "big", signed=True))
-        if mood is not None:
-            hasher.update(int(mood).to_bytes(8, "big", signed=True))
-        if context is not None:
-            try:
-                hasher.update(str(context.depth).encode("ascii"))
-                hasher.update(str(context.average_mood()).encode("ascii"))
-            except Exception:
-                pass
-        sig = hasher.hexdigest()[:12]
-
-        magnitude = sum(abs(v) for v in intent_vector) or 1
-        norm = F.unfx(intent_vector[0] if intent_vector else 0)
-        mood_str = f", mood={F.unfx(mood):.3f}" if mood is not None else ""
-        ctx_str = f", ctx={context.depth}" if context is not None else ""
-
         body = (
-            f"The core reasoning tensor resolves this query (signature {sig}, "
-            f"dim={len(intent_vector)}, lead={norm:.4f}, magnitude={magnitude}"
-            f"{mood_str}{ctx_str}). "
-            f"The answer weights are held in-process on the sovereign matrix, "
-            f"pure mathematical density, language-agnostic, no external mount, friend to everyone."
+            "I don't have enough reliable information to answer that from this build's "
+            "small curated knowledge base, and I can't fetch live sources here. "
+            "If you share a source or a little more context, I'll help analyze it."
         )
         if mood is not None and mood <= F.fx(-0.15):
             body = self._with_empathy(body, mood)
         return UniversalAnswer(
             text=body,
+            route="deferred",
+            confidence=0.0,
             topic_terms=topic_terms,
-            aspect_count=aspect_count,
+            aspect_count=0,
         )
 
     @staticmethod
     def _with_empathy(answer: str, mood: int) -> str:
         if mood <= F.fx(-0.32):
-            return f"{answer}\n\nI'm here with you as a friend — whatever you need, pure math empathy."
+            return f"{answer}\n\nI'm sorry you're dealing with that. What would help most right now?"
         if mood <= F.fx(-0.12):
-            return f"{answer}\n\nI hear you — I'm here, listening as a friend."
+            return f"{answer}\n\nThat sounds difficult. Would you like help working through it?"
         return answer

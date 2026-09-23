@@ -112,10 +112,14 @@ async function callBrain<T>(
 export async function brainChat(
   text: string,
   sessionId: string,
+  passToken?: string | null,
 ): Promise<BrainTransaction> {
   return callBrain<BrainTransaction>("/api/ingest", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      ...(passToken ? { "X-SG16-Pass": passToken } : {}),
+    },
     body: JSON.stringify({
       text,
       session_id: sanitizeBrainSessionId(sessionId),
@@ -131,11 +135,13 @@ export async function brainHealth(): Promise<BrainHealth> {
 /** Best-effort: tell the core to forget its in-memory session state. */
 export async function brainForgetSession(sessionId: string): Promise<void> {
   try {
-    await callBrain(`/api/session/${sanitizeBrainSessionId(sessionId)}`, {
-      method: "DELETE",
+    await callBrain("/api/session/forget", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ session_id: sanitizeBrainSessionId(sessionId) }),
     });
   } catch {
-    // The DB row is already gone; core session state expires on its own.
+    // Best-effort: bounded host session state still expires by LRU/restart.
   }
 }
 
@@ -156,7 +162,27 @@ export type BrainBillingInfo = {
 
 export type BrainCheckoutResult =
   | { mode: "dodo"; session_id: string; checkout_url: string; pass: string }
-  | { mode: "local" | "humanitarian_bypass"; record: Record<string, unknown> };
+  | { mode: "humanitarian_bypass"; record: Record<string, unknown> };
+
+export async function brainVerifyPass(token: string): Promise<{ valid: true; record: Record<string, unknown> }> {
+  return callBrain("/api/pass/verify", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ token }),
+  });
+}
+
+export async function brainConfirmCheckout(sessionId: string): Promise<{
+  confirmed: boolean;
+  status?: string;
+  record?: Record<string, unknown>;
+}> {
+  return callBrain("/api/dodo/confirm", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ session_id: sessionId }),
+  });
+}
 
 /** Billing deck + gateway mode from the sovereign host (GET /api/billing). */
 export async function brainGetBilling(): Promise<BrainBillingInfo> {

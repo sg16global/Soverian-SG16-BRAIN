@@ -18,14 +18,12 @@ Merchant-of-Record checkout products):
 Gateway model: ``/api/dodo/checkout`` creates a Dodo checkout session for the
 tier's product; Dodo confirms the payment by calling ``/api/dodo/webhook``,
 which verifies the Standard Webhooks signature and then signs a duration-locked
-token with :func:`record_from_webhook`.  The client commits that token to its
-on-device ``sg16/`` storage directory.  Without gateway credentials the host
-falls back to sovereign local issuance - same signed records, no gateway.
-
-Humanitarian rule: region ``Palestine`` (or any edge geo mapping that lands on
-it) is a zero-rate billing bypass evaluated *before* the gateway is ever
-contacted - the price is 0, the gateway never runs, and the dashboard stays
-open.  This module performs no external geolocation.
+token with :func:`record_from_webhook`. The host stores verification state in
+process memory and returns the token as an untrusted bearer credential for the
+client to retain. Without gateway
+credentials, paid checkout is disabled. A zero-rate regional record may only
+be issued after a trusted proxy assertion; browser-provided region data is not
+authoritative. This module performs no external geolocation.
 """
 
 from __future__ import annotations
@@ -34,6 +32,7 @@ import base64
 import binascii
 import hashlib
 import hmac
+import secrets
 import time
 from dataclasses import dataclass
 from typing import Mapping
@@ -97,9 +96,18 @@ def effective_price(pass_id: str, region: str | None) -> int:
     return PASSES[pass_id].price
 
 
-def _token(secret: str, pass_id: str, region: str, price: int, expires_epoch: int) -> str:
-    body = f"{secret}|{pass_id}|{region or ''}|{price}|{expires_epoch}"
-    return hashlib.sha256(body.encode("utf-8")).hexdigest()
+def _token(
+    secret: str,
+    pass_id: str,
+    region: str,
+    price: int,
+    expires_epoch: int,
+    nonce: str,
+) -> str:
+    message = (
+        f"sg16-pass-v1|{pass_id}|{region or ''}|{price}|{expires_epoch}|{nonce}"
+    ).encode("utf-8")
+    return hmac.new(secret.encode("utf-8"), message, hashlib.sha256).hexdigest()
 
 
 def issue_record(
@@ -116,6 +124,7 @@ def issue_record(
     spec = PASSES[pass_id]
     price = effective_price(pass_id, region)
     expires_epoch = int(now + spec.hours * 3600)
+    nonce = secrets.token_urlsafe(18)
     return {
         "pass": pass_id,
         "label": spec.label,
@@ -126,7 +135,8 @@ def issue_record(
         "humanitarian_bypass": region == HUMANITARIAN_REGION,
         "activated_at": int(now),
         "expires_at": expires_epoch,
-        "token": _token(secret, pass_id, region, price, expires_epoch),
+        "nonce": nonce,
+        "token": _token(secret, pass_id, region, price, expires_epoch, nonce),
         "verified_by": "sg16-host",
     }
 
@@ -161,8 +171,14 @@ def verify_record(record: Mapping, secret: str, now: float | None = None) -> dic
     if expires < now:
         raise VerificationError("subscription expired")
 
-    expected_token = _token(secret, pass_id, region, expected_price, expires)
-    if record.get("token") != expected_token:
+    nonce = record.get("nonce")
+    if not isinstance(nonce, str) or not nonce or len(nonce) > 128:
+        raise VerificationError("record nonce is missing or invalid")
+    expected_token = _token(secret, pass_id, region, expected_price, expires, nonce)
+    supplied_token = record.get("token")
+    if not isinstance(supplied_token, str) or not hmac.compare_digest(
+        supplied_token, expected_token
+    ):
         raise VerificationError("token does not recompute - record was not issued by this host")
 
     return dict(record)
@@ -180,25 +196,22 @@ def resolve_region(
     payload_region: object = None,
     header_region: str | None = None,
     geo_country: str | None = None,
+    *,
+    proxy_authenticated: bool = False,
 ) -> str | None:
-    """Route-layer region resolution with the Palestine interceptor baked in.
+    """Resolve only a country code asserted by an authenticated proxy.
 
-    Resolution order:
-
-    1. the region declared in the request payload,
-    2. the ``X-SG16-Region`` header,
-    3. edge geo headers (``CF-IPCountry`` / ``X-Vercel-IP-Country``) - these
-       can only ever *trigger the humanitarian bypass*: a country code that
-       maps to Palestine yields ``"Palestine"``, any other code yields ``None``
-       because a CDN code is not a region name.
-
-    Any Palestine mapping at any layer sends the request around the payment
-    gateway: the host issues a valid $0 operational token natively.
+    ``payload_region`` and ``header_region`` are retained for source
+    compatibility but deliberately ignored: both are user-controlled. The
+    caller must first authenticate its trusted proxy, then pass the proxy's
+    country code with ``proxy_authenticated=True``.
     """
-    for candidate in (payload_region, header_region):
-        if isinstance(candidate, str) and candidate.strip():
-            return candidate.strip()
-    if isinstance(geo_country, str) and geo_country.strip().upper() in PALESTINE_CODES:
+    del payload_region, header_region
+    if (
+        proxy_authenticated
+        and isinstance(geo_country, str)
+        and geo_country.strip().upper() in PALESTINE_CODES
+    ):
         return HUMANITARIAN_REGION
     return None
 
@@ -316,15 +329,19 @@ def record_from_webhook(
         )
 
     amount = payment.get("amount", payment.get("total_amount"))
-    if amount is not None:
-        try:
-            paid = int(amount)
-        except (TypeError, ValueError) as exc:
-            raise VerificationError("payment amount is not an integer") from exc
-        if paid != PASSES[pass_id].price * 100:
-            raise VerificationError(
-                f"paid amount {paid} does not match the host price for {pass_id!r}"
-            )
+    if amount is None:
+        raise VerificationError("payment amount is missing")
+    try:
+        paid = int(amount)
+    except (TypeError, ValueError) as exc:
+        raise VerificationError("payment amount is not an integer") from exc
+    if paid != PASSES[pass_id].price * 100:
+        raise VerificationError(
+            f"paid amount {paid} does not match the host price for {pass_id!r}"
+        )
+    currency = str(payment.get("currency") or payment.get("currency_code") or "").upper()
+    if currency != "USD":
+        raise VerificationError("payment currency must be USD")
 
     return issue_record(pass_id, region, secret, provider=provider, now=now)
 

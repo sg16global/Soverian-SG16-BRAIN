@@ -165,7 +165,7 @@ class VoxtralDspTests(unittest.TestCase):
         profile = self.route.analyse(make_wav(sine(8000, 440, 0.5)))
         self.assertIsNone(profile.declared_transcript)
         self.assertEqual(profile.transcript_source, "deferred-no-asr-weights")
-        self.assertIn("Please give me a moment", self.route.summary_for_core(profile))
+        self.assertIn("don't have enough reliable information", self.route.summary_for_core(profile))
 
     def test_to_dict_is_json_serialisable(self) -> None:
         json.dumps(self.route.analyse(make_wav(sine(8000, 440, 0.5))).to_dict())

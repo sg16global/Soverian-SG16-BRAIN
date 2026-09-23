@@ -1,11 +1,8 @@
-"""SG16 BRAIN - pure mathematical emotional density, language-agnostic.
+"""Small, English-only affect cues and bounded in-process context.
 
-Zero hardcoded language names, zero specific language configurations.
-Everything processes purely through byte-level tensor math and intent vectors.
-Engine understands ALL human speech naturally as pure mathematical patterns.
-
-Backend real memory (ContextStack + EmotionalFilter), not browser localStorage.
-Q16.16 fixed-point, self-contained, runs on any device.
+These rules are not emotion understanding. They recognize a narrow set of
+explicit English distress phrases; unrecognized or non-English text is treated
+as neutral. Structural encoder values are not interpreted as sentiment.
 """
 
 from __future__ import annotations
@@ -34,89 +31,38 @@ def _word_list(text: str) -> list[str]:
     words = re.findall(r"[^\W\d_]+", folded, flags=re.UNICODE)
     return words
 
-def _byte_stats(text: str) -> tuple[int, int, int, int]:
-    b = text.encode("utf-8")
-    if not b:
-        return 0, 0, 0, 0
-    punct = text.count("!") + text.count("?")
-    repeat = 0
-    triple = 0
-    for i in range(2, len(text)):
-        if text[i] == text[i-1] == text[i-2] and not text[i].isspace():
-            triple += 1
-    words = _word_list(text)
-    if words:
-        uniq = len(set(words))
-        total = len(words)
-        if total > 0 and uniq < total:
-            repeat += (total - uniq)
-    return len(b), punct, repeat, triple
-
 def mood_from_intent(intent_vector: list[int]) -> int:
-    if not intent_vector:
-        return 0
-    lead = intent_vector[0]
-    head = intent_vector[:4]
-    avg = F.div_round(sum(head), len(head)) if head else 0
-    blended = F.div(F.add(lead, avg), F.fx_int(2))
-    return F.clamp(F.mul(blended, F.fx(0.18)), -F.fx(0.15), F.fx(0.15))
+    """Return neutral: the structural intent vector is not sentiment-trained."""
+    return 0
+
+_DISTRESS_PATTERNS = (
+    re.compile(r"\b(?:i feel|i'm feeling|i am feeling|i've been feeling)\s+(?:really\s+)?(?:sad|scared|afraid|anxious|worried|lonely|overwhelmed|hopeless|hurt|upset|depressed)\b", re.I),
+    re.compile(r"\b(?:i'm|i am)\s+(?:having a hard time|struggling|not okay|not ok|overwhelmed)\b", re.I),
+    re.compile(r"\b(?:i lost someone|someone close to me died|i'm grieving|i am grieving)\b", re.I),
+)
+
+_POSITIVE_PATTERNS = (
+    re.compile(r"\b(?:i feel|i'm feeling|i am feeling)\s+(?:really\s+)?(?:happy|glad|excited|hopeful|relieved|proud)\b", re.I),
+    re.compile(r"\b(?:that's great|that is great|i'm doing well|i am doing well|i'm okay|i am okay)\b", re.I),
+)
 
 def pain_score(text: str, intent_vector: list[int] | None = None) -> int:
-    if not text or not text.strip():
+    """Score a few explicit English distress phrases; otherwise return zero."""
+    if not text:
         return 0
-    words = _word_list(text)
-    total_words = max(len(words), 1)
-    _, punct, repeat, triple = _byte_stats(text)
-
-    punct_ratio = F.div(F.fx_int(punct), F.fx_int(total_words))
-    repeat_ratio = F.div(F.fx_int(repeat), F.fx_int(total_words))
-    triple_ratio = F.div(F.fx_int(triple), F.fx_int(total_words))
-
-    base = F.mul(punct_ratio, F.fx(0.10))
-    base = F.add(base, F.mul(repeat_ratio, F.fx(0.12)))
-    base = F.add(base, F.mul(triple_ratio, F.fx(0.25)))
-
-    tensor_pain = 0
-    if intent_vector is not None:
-        tm = mood_from_intent(intent_vector)
-        if tm < 0:
-            tensor_pain = F.mul(F.neg(tm), F.fx(1.6))
-    else:
-        h = hashlib.sha256(text.encode("utf-8")).digest()
-        pseudo = F.div(F.fx_int(h[0] % 16), F.fx_int(255))
-        tensor_pain = pseudo
-
-    combined = F.add(base, tensor_pain)
-    return F.clamp(combined, 0, F.FX_ONE)
+    hits = sum(bool(pattern.search(text)) for pattern in _DISTRESS_PATTERNS)
+    return F.clamp(F.fx(min(hits, 3) * 0.25), 0, F.FX_ONE)
 
 def joy_score(text: str, intent_vector: list[int] | None = None) -> int:
-    if not text or not text.strip():
+    """Score a few explicit English positive-affect phrases; not a mood model."""
+    if not text:
         return 0
-    words = _word_list(text)
-    total_words = max(len(words), 1)
-
-    uniq = len(set(words)) if words else 0
-    diversity = F.div(F.fx_int(uniq), F.fx_int(total_words)) if words else 0
-
-    base = F.mul(diversity, F.fx(0.08))
-
-    tensor_joy = 0
-    if intent_vector is not None:
-        tm = mood_from_intent(intent_vector)
-        if tm > 0:
-            tensor_joy = F.mul(tm, F.fx(1.6))
-    else:
-        h = hashlib.sha256(text.encode("utf-8")).digest()
-        pseudo = F.div(F.fx_int(h[1] % 16), F.fx_int(255))
-        tensor_joy = pseudo
-
-    combined = F.add(base, tensor_joy)
-    return F.clamp(combined, 0, F.FX_ONE)
+    hits = sum(bool(pattern.search(text)) for pattern in _POSITIVE_PATTERNS)
+    return F.clamp(F.fx(min(hits, 3) * 0.25), 0, F.FX_ONE)
 
 def mood_from_text(text: str, intent_vector: list[int] | None = None) -> int:
-    p = pain_score(text, intent_vector)
-    j = joy_score(text, intent_vector)
-    return F.clamp(F.sub(j, p), -F.FX_ONE, F.FX_ONE)
+    """Return a bounded heuristic from a small English phrase list."""
+    return F.clamp(F.sub(joy_score(text), pain_score(text)), -F.FX_ONE, F.FX_ONE)
 
 def combine_mood(prev_mood: int, curr_mood: int, alpha: int = F.fx(0.55)) -> int:
     if prev_mood == 0:
@@ -125,12 +71,12 @@ def combine_mood(prev_mood: int, curr_mood: int, alpha: int = F.fx(0.55)) -> int
     return F.clamp(F.add(F.mul(alpha, prev_mood), F.mul(one_minus, curr_mood)), -F.FX_ONE, F.FX_ONE)
 
 def empathy_text(mood: int, language: str | None = None) -> str | None:
-    if mood > F.fx(-0.12):
-        return None
-    strong = mood <= F.fx(-0.32)
-    if strong:
-        return "I hear you — you're going through a hard moment. I'm here as a friend, listening with pure mathematical empathy, no external mount, for everyone."
-    return "I hear you — I'm here, listening as a friend."
+    """Offer a restrained acknowledgement only for explicit distress cues."""
+    if mood <= F.fx(-0.32):
+        return "I'm sorry you're dealing with that. What would help most right now?"
+    if mood <= F.fx(-0.12):
+        return "That sounds difficult. Would you like help working through it?"
+    return None
 
 @dataclass(frozen=True)
 class ContextEntry:
@@ -162,7 +108,7 @@ class ContextStack:
         p = pain_score(text, intent)
         j = joy_score(text, intent)
         entry = ContextEntry(
-            text=text.strip(),
+            text=text.strip()[:2000],
             intent=tuple(intent),
             mood=mood,
             turn=turn,

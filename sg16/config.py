@@ -101,6 +101,11 @@ class BrainConfig:
     def cors_origins(self) -> list[str]:
         return [str(o) for o in self._section("hosting").get("cors_origins", [])]
 
+    @property
+    def proxy_auth_secret(self) -> str:
+        """Secret for trusting proxy-supplied client-IP and country headers."""
+        return str(os.environ.get("SG16_PROXY_AUTH_SECRET", ""))
+
     # transport
     @property
     def transport(self) -> Transport:
@@ -110,27 +115,25 @@ class BrainConfig:
         except ValueError:
             return Transport.OFFLINE
 
-    # engine - supports both devstral small and mistral 7b Apache 2.0
+    # Active request path: deterministic seeded structural encoder.
     @property
     def engine(self) -> EngineConfig:
         e = self._section("engine")
-        # If mistral-7b config present, still return EngineConfig for backward compat
-        # Real Mistral config is accessed via mistral_engine property
         fallback = e.get("fallback", {}) if isinstance(e.get("fallback"), dict) else {}
         return EngineConfig(
-            head=str(e.get("head", fallback.get("head", "devstral-small-2"))),
+            head=str(e.get("head", fallback.get("head", "sg16-seeded-structural-encoder"))),
             dim=int(e.get("dim", fallback.get("dim", 64))),
             ffn_hidden=int(e.get("ffn_hidden", fallback.get("ffn_hidden", 128))),
             chunk_bytes=int(e.get("chunk_bytes", fallback.get("chunk_bytes", 32))),
             max_chunks=int(e.get("max_chunks", fallback.get("max_chunks", 64))),
             layers=int(e.get("layers", fallback.get("layers", 2))),
             seed=str(e.get("seed", fallback.get("seed", "sg16.core.matrix.v2"))),
-            density=str(e.get("density", fallback.get("density", "pure-mathematical-embedded"))),
+            density=str(e.get("density", fallback.get("density", "seeded-fixed-point-structural-encoder-not-trained"))),
         )
 
     @property
     def mistral_engine(self):
-        """True Mistral 7B Apache 2.0 config - 100% real trained when weights present"""
+        """Experimental checkpoint shape/path metadata; no inference is implemented."""
         from .engine.mistral import MistralConfig
         e = self._section("engine")
         return MistralConfig(
@@ -146,17 +149,18 @@ class BrainConfig:
             sliding_window=int(e.get("sliding_window", 4096)),
             head=str(e.get("head", "mistral-7b-apache2")),
             seed=str(e.get("seed", "sg16.mistral.7b.v1")),
-            density=str(e.get("density", "trained-mistral-7b-apache2-pure-math")),
+            density=str(e.get("density", "experimental-checkpoint-container-not-a-serving-model")),
             weight_path=str(e.get("weight_path", "./weights/mistral-7b")) if e.get("weight_path") else None,
         )
 
     @property
     def engine_model_type(self) -> str:
-        return str(self._section("engine").get("model_type", "devstral-small-2"))
+        return str(self._section("engine").get("model_type", "sg16-seeded-structural-encoder"))
 
     @property
     def engine_weight_path(self) -> str:
-        return str(self._section("engine").get("weight_path", "./weights/mistral-7b"))
+        """Optional checkpoint location; empty when no path is configured."""
+        return str(self._section("engine").get("weight_path", ""))
 
     # gate
     @property
@@ -195,11 +199,7 @@ class BrainConfig:
     def warnings_before_notice(self) -> int:
         return int(self._section("sessions").get("warnings_before_notice", 3))
 
-    # owner / throttle / billing
-    @property
-    def owner_email(self) -> str:
-        return str(self._section("owner").get("email", "sg16global@gmail.com"))
-
+    # throttling / billing
     @property
     def throttle_max_requests(self) -> int:
         return int(self._section("throttle").get("max_requests", 30))
@@ -214,7 +214,11 @@ class BrainConfig:
 
     @property
     def billing_secret(self) -> str:
-        return str(self._section("billing").get("secret", "sg16-sovereign-dev-secret"))
+        """Optional server-only signing secret; never embed a public default."""
+        return str(
+            os.environ.get("SG16_BILLING_SECRET")
+            or self._section("billing").get("secret", "")
+        )
 
     # ------------------------------------------------------------------
     # Dodo Payments MoR gateway (billing.dodo section, env-overridable)

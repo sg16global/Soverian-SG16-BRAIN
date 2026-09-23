@@ -9,12 +9,10 @@ Routes
     GET    /                        interface
     GET    /static/<file>           css / js / svg
     GET    /api/health              readiness, digests, topology
-    GET    /api/charter             the seven invariants and canonical lines
+    GET    /api/charter             behavioral principles and canonical lines
     GET    /api/topology            perimeter, door counters, joint room
     GET    /api/parity              online/offline reasoning-parity proof
     GET    /api/knowledge           knowledge base manifest
-    GET    /api/session/<id>        session state
-    DELETE /api/session/<id>        forget a session
     GET    /api/weight?member=&feature=   charter provenance of one weight
     POST   /api/ingest              one payload through the master door
     POST   /api/audio               audio bytes through the master door
@@ -29,9 +27,14 @@ from __future__ import annotations
 
 import base64
 import binascii
+import hashlib
+import hmac
+import ipaddress
 import json
 import os
 import posixpath
+import re
+import secrets
 import signal
 import struct
 import sys
@@ -41,7 +44,7 @@ import wave
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, urlencode, urlparse
 
 from .. import billing
 from ..brain import SG16Brain
@@ -106,13 +109,21 @@ class BrainHTTPServer(ThreadingHTTPServer):
         self.brain = brain
         self.config = config
         self._lock = threading.Lock()
-        self.billing_secret = config.billing_secret
+        configured_billing_secret = config.billing_secret.strip()
+        if configured_billing_secret and len(configured_billing_secret) < 32:
+            raise ValueError("SG16_BILLING_SECRET must contain at least 32 characters")
+        if config.dodo_api_key and not configured_billing_secret:
+            raise ValueError("SG16_BILLING_SECRET is required when payment checkout is enabled")
+        self.billing_secret_ephemeral = not bool(configured_billing_secret)
+        self.billing_secret = configured_billing_secret or secrets.token_urlsafe(48)
         self.passes: dict[str, dict] = {}
-        #: Dodo checkout sessions created by this host, keyed by the gateway
-        #: session/payment id: {"pass", "region", "status", "record_token"}.
-        #: In-memory only - the host keeps zero client logs and persists
-        #: nothing; the signed record itself lives on the user's device.
+        #: Dodo checkout sessions and webhook replay markers are process-local.
+        #: Payments must remain disabled in deployments that cannot tolerate
+        #: losing in-flight/issued state on restart; durable storage is a
+        #: deployment requirement not yet implemented here.
         self.dodo_pending: dict[str, dict] = {}
+        self.dodo_seen_webhooks: set[str] = set()
+        self.dodo_lock = threading.Lock()
         #: The Dodo MoR client, or None when no API key is configured (the
         #: sovereign local issuance path serves checkout in that state).
         self.dodo = (
@@ -158,8 +169,8 @@ class BrainRequestHandler(BaseHTTPRequestHandler):
         return self.server.config  # type: ignore[attr-defined]
 
     def log_message(self, fmt: str, *args: Any) -> None:  # noqa: A003
-        # Zero client logs on the core server grid: request lines are never
-        # written anywhere.  The brain holds in-memory session state only.
+        # This handler does not write request lines. Reverse-proxy, platform,
+        # network, and host-level logging/retention remain deployment concerns.
         return
 
     def _send(self, status: int, body: bytes, content_type: str, extra: dict | None = None) -> None:
@@ -241,9 +252,6 @@ class BrainRequestHandler(BaseHTTPRequestHandler):
             return self._api_billing()
         if route == "/api/weight":
             return self._api_weight(query)
-        if route.startswith("/api/session/"):
-            return self._api_session_get(route.rsplit("/", 1)[-1])
-
         self._error(404, f"no such route: {route}")
 
     def do_POST(self) -> None:  # noqa: N802
@@ -261,6 +269,10 @@ class BrainRequestHandler(BaseHTTPRequestHandler):
             return self._api_dodo_webhook(body)
         if route == "/api/dodo/confirm":
             return self._api_dodo_confirm(body)
+        if route == "/api/pass/verify":
+            return self._api_pass_verify(body)
+        if route == "/api/session/forget":
+            return self._api_session_forget(body)
         if route == "/api/ingest":
             return self._api_ingest(body)
         if route == "/api/audio":
@@ -271,10 +283,6 @@ class BrainRequestHandler(BaseHTTPRequestHandler):
 
     def do_DELETE(self) -> None:  # noqa: N802
         route = posixpath.normpath(urlparse(self.path).path)
-        if route.startswith("/api/session/"):
-            session_id = route.rsplit("/", 1)[-1]
-            self.brain.reset_session(session_id)
-            return self._json({"forgotten": session_id})
         self._error(404, f"no such route: {route}")
 
     # ------------------------------------------------------------------
@@ -305,6 +313,26 @@ class BrainRequestHandler(BaseHTTPRequestHandler):
     # ------------------------------------------------------------------
     def _api_health(self) -> None:
         self._json(self.brain.health())
+
+    def _api_session_forget(self, body: bytes) -> None:
+        """Clear host-side conversation context for one scoped session.
+
+        Returns no session state. This is an operational reset for New chat /
+        history delete, not a session inspection surface.
+        """
+        try:
+            payload = json.loads(body.decode("utf-8")) if body else {}
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            return self._error(400, f"body is not valid json: {exc}")
+        client_session = payload.get("session_id") if isinstance(payload, dict) else None
+        if not isinstance(client_session, str) or not client_session.strip():
+            return self._error(400, "session_id is required")
+        client_session = client_session.strip()
+        if len(client_session) > 128:
+            return self._error(400, "session id must not exceed 128 characters")
+        session_id = self._scoped_session_id(client_session)
+        self.brain.reset_session(session_id)
+        self._json({"ok": True, "host_context": "reset"})
 
     def _api_identity(self) -> None:
         """Designation-protocol handshake (Block 7, rule 2).
@@ -413,17 +441,39 @@ class BrainRequestHandler(BaseHTTPRequestHandler):
         except ValueError as exc:
             self._error(400, str(exc))
 
-    def _api_session_get(self, session_id: str) -> None:
-        self._json(self.brain.session(session_id).to_dict())
+    def _proxy_headers_trusted(self) -> bool:
+        expected = self.brain_config.proxy_auth_secret
+        supplied = self.headers.get("X-SG16-Proxy-Auth", "")
+        return bool(expected and hmac.compare_digest(supplied, expected))
 
-    def _entitlement(self, payload: dict, session_id: str, size: int):
+    def _client_ip(self) -> str:
+        """Use the socket peer unless an authenticated proxy asserted an IP."""
+        candidate = self.client_address[0]
+        if self._proxy_headers_trusted():
+            forwarded = self.headers.get("X-Forwarded-For", "").split(",", 1)[0].strip()
+            if forwarded:
+                candidate = forwarded
+        try:
+            return ipaddress.ip_address(candidate).compressed
+        except ValueError:
+            return "unknown"
+
+    def _client_rate_key(self) -> str:
+        digest = hashlib.sha256(self._client_ip().encode("utf-8")).hexdigest()[:32]
+        return f"client:{digest}"
+
+    def _scoped_session_id(self, client_session: str) -> str:
+        payload = f"sg16-session-v1|{self._client_rate_key()}|{client_session}"
+        return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+    def _entitlement(self, payload: dict, size: int):
         """Resolve owner / premium status and enforce the throttles.
 
         Returns (is_owner, premium) or sends an error response and returns
         None.  The owner and verified pass holders are exempt from operational
         throttles; everyone else is metered.  The safety gate is unaffected.
         """
-        owner_sig = self.headers.get("X-SG16-Owner-Sig") or self.headers.get("X-SG16-Owner")
+        owner_sig = self.headers.get("X-SG16-Owner-Sig")
         is_owner = self.brain.panel.is_owner(owner_sig)
 
         premium = False
@@ -441,30 +491,34 @@ class BrainRequestHandler(BaseHTTPRequestHandler):
                 return None
 
         try:
-            self.server.throttle.check(session_id, size, exempt=is_owner or premium)
+            self.server.throttle.check(self._client_rate_key(), size, exempt=is_owner or premium)
         except ThrottleExceeded as exc:
             self._error(429, str(exc))
             return None
         return is_owner, premium
 
-    def _resolve_region(self, payload: dict) -> str | None:
-        """Geographic interceptor on the routing path (item 5).
+    def _resolve_region(self, payload: dict | None = None) -> str | None:
+        """Resolve region only from headers authenticated by a trusted proxy.
 
-        Declared payload region first, then the ``X-SG16-Region`` header, then
-        edge geo headers (``CF-IPCountry`` / ``X-Vercel-IP-Country``).  A
-        Palestine mapping at any layer hard-bypasses the payment gateway
-        downstream: the host issues a valid $0 operational token natively and
-        Dodo is never contacted.
+        Browser locale, request JSON, and ``X-SG16-Region`` are user-controlled
+        and never grant a zero-rate pass. The proxy must set
+        ``X-SG16-Proxy-Auth`` to the operator's server-only secret before its
+        geo-country assertion is accepted.
         """
-        payload_region = payload.get("region") if isinstance(payload, dict) else None
-        header_region = self.headers.get("X-SG16-Region")
-        geo_country = self.headers.get("CF-IPCountry") or self.headers.get(
-            "X-Vercel-IP-Country"
+        if not self._proxy_headers_trusted():
+            return None
+        geo_country = (
+            self.headers.get("CF-IPCountry")
+            or self.headers.get("X-Vercel-IP-Country")
+            or self.headers.get("X-SG16-Geo-Country")
         )
-        return billing.resolve_region(payload_region, header_region, geo_country)
+        return billing.resolve_region(
+            geo_country=geo_country,
+            proxy_authenticated=True,
+        )
 
     def _api_subscribe(self, body: bytes) -> None:
-        """Host-signed subscription record (sovereign local issuance path)."""
+        """Issue only a proxy-verified humanitarian record; never a free paid pass."""
         try:
             payload = json.loads(body.decode("utf-8")) if body else {}
         except (UnicodeDecodeError, json.JSONDecodeError) as exc:
@@ -472,19 +526,29 @@ class BrainRequestHandler(BaseHTTPRequestHandler):
         if not isinstance(payload, dict):
             return self._error(400, "body must be a json object")
         pass_id = str(payload.get("pass", ""))
+        if pass_id not in billing.PASSES:
+            return self._error(400, f"unknown pass tier: {pass_id!r}")
+        try:
+            self.server.throttle.check(self._client_rate_key(), len(body), exempt=False)
+        except ThrottleExceeded as exc:
+            return self._error(429, str(exc))
         region = self._resolve_region(payload)
+        if region != billing.HUMANITARIAN_REGION:
+            return self._error(
+                403,
+                "local issuance is disabled; paid passes require confirmed checkout, "
+                "and regional zero-rate eligibility must be verified by the host",
+            )
         try:
             record = billing.issue_record(
                 pass_id,
                 region,
                 self.server.billing_secret,
-                provider=str(payload.get("provider", "guest")),
+                provider="verified-humanitarian",
             )
         except billing.VerificationError as exc:
             return self._error(400, str(exc))
-        record["gateway"] = (
-            "humanitarian-bypass" if record["humanitarian_bypass"] else "local"
-        )
+        record["gateway"] = "verified-humanitarian"
         self.server.passes[record["token"]] = record
         self._json(record)
 
@@ -492,12 +556,10 @@ class BrainRequestHandler(BaseHTTPRequestHandler):
     # Dodo Payments MoR checkout pipeline
     # ------------------------------------------------------------------
     def _api_dodo_checkout(self, body: bytes) -> None:
-        """Create a Dodo checkout session for one subscription pass.
+        """Create a paid Dodo session or a proxy-verified humanitarian record.
 
-        Palestine is intercepted before the gateway: the humanitarian region
-        receives a signed $0 record straight from this host.  Without gateway
-        credentials the sovereign local issuance path answers instead, so the
-        dashboard stays fully functional air-gapped.
+        Self-service local issuance for paid tiers is disabled. If the payment
+        gateway is not configured, paid checkout fails closed.
         """
         try:
             payload = json.loads(body.decode("utf-8")) if body else {}
@@ -506,70 +568,101 @@ class BrainRequestHandler(BaseHTTPRequestHandler):
         if not isinstance(payload, dict):
             return self._error(400, "body must be a json object")
         pass_id = str(payload.get("pass", ""))
+        if pass_id not in billing.PASSES:
+            return self._error(400, f"unknown pass tier: {pass_id!r}")
         region = self._resolve_region(payload)
-        session_id = str(payload.get("session_id") or "dodo-guest")
-
-        # --- humanitarian interceptor: the gateway never runs for Palestine
-        if region == billing.HUMANITARIAN_REGION:
-            try:
-                record = billing.issue_record(
-                    pass_id, region, self.server.billing_secret, provider="humanitarian"
-                )
-            except billing.VerificationError as exc:
-                return self._error(400, str(exc))
-            record["gateway"] = "humanitarian-bypass"
-            self.server.passes[record["token"]] = record
-            return self._json({"mode": "humanitarian_bypass", "record": record})
-
         try:
-            self.server.throttle.check(session_id, len(body), exempt=False)
+            self.server.throttle.check(self._client_rate_key(), len(body), exempt=False)
         except ThrottleExceeded as exc:
             return self._error(429, str(exc))
 
-        if self.server.dodo is None:
-            try:
-                record = billing.issue_record(
-                    pass_id,
-                    region,
-                    self.server.billing_secret,
-                    provider=str(payload.get("provider", "guest")),
-                )
-            except billing.VerificationError as exc:
-                return self._error(400, str(exc))
-            record["gateway"] = "local"
+        # --- humanitarian interceptor: eligibility must come from a trusted proxy
+        if region == billing.HUMANITARIAN_REGION:
+            record = billing.issue_record(
+                pass_id, region, self.server.billing_secret, provider="verified-humanitarian"
+            )
+            record["gateway"] = "verified-humanitarian"
             self.server.passes[record["token"]] = record
-            return self._json({"mode": "local", "record": record})
+            return self._json({"mode": "humanitarian_bypass", "record": record})
+
+        if self.server.dodo is None:
+            return self._error(503, "paid checkout is unavailable: Dodo Payments is not configured")
 
         product_id = self.server.config.dodo_product_ids.get(pass_id, "")
         return_url = str(payload.get("return_url") or self.headers.get("Origin") or "")
+        if return_url:
+            parsed_return = urlparse(return_url)
+            return_origin = f"{parsed_return.scheme}://{parsed_return.netloc}"
+            if (
+                parsed_return.scheme not in ("http", "https")
+                or not parsed_return.netloc
+                or return_origin not in self.brain_config.cors_origins
+            ):
+                return self._error(400, "return_url must use a configured application origin")
+        checkout_ref = secrets.token_urlsafe(24)
+        callback_url = return_url
+        if callback_url:
+            parsed_callback = urlparse(callback_url)
+            query_items = parse_qs(parsed_callback.query, keep_blank_values=True)
+            query_items["sg16_checkout_ref"] = [checkout_ref]
+            callback_url = parsed_callback._replace(
+                query=urlencode(query_items, doseq=True)
+            ).geturl()
         try:
             request_body = billing.checkout_request_body(
-                product_id, pass_id, region, return_url
+                product_id,
+                pass_id,
+                region,
+                callback_url,
+                metadata={"sg16_checkout_ref": checkout_ref},
             )
         except billing.VerificationError as exc:
             return self._error(400, str(exc))
+
+        pending = {
+            "pass": pass_id,
+            "region": region,
+            "session_id": checkout_ref,
+            "status": "creating",
+            "opened_at": int(time.time()),
+        }
+        with self.server.dodo_lock:
+            self.server.dodo_pending[checkout_ref] = pending
         try:
             session = self.server.dodo.create_checkout(request_body)
         except DodoError as exc:
+            with self.server.dodo_lock:
+                self.server.dodo_pending.pop(checkout_ref, None)
             return self._error(
                 exc.status if exc.status in (400, 401, 402, 403, 422) else 502,
                 str(exc),
             )
         checkout_id = str(session.get("session_id") or session.get("payment_id") or "")
-        if not checkout_id or not session.get("checkout_url"):
+        checkout_url = str(session.get("checkout_url") or "")
+        parsed_checkout = urlparse(checkout_url)
+        if (
+            not checkout_id
+            or parsed_checkout.scheme != "https"
+            or not parsed_checkout.hostname
+            or parsed_checkout.username is not None
+            or parsed_checkout.password is not None
+        ):
+            with self.server.dodo_lock:
+                self.server.dodo_pending.pop(checkout_ref, None)
             return self._error(502, "dodo payments returned an unusable checkout session")
-        self.server.dodo_pending[checkout_id] = {
-            "pass": pass_id,
-            "region": region,
-            "session_id": checkout_id,
-            "status": "pending",
-            "opened_at": int(time.time()),
-        }
+        pending["gateway_session_id"] = checkout_id
+        if checkout_id != checkout_ref:
+            with self.server.dodo_lock:
+                self.server.dodo_pending[checkout_id] = pending
+        with self.server.dodo_lock:
+            if pending["status"] == "creating":
+                pending["status"] = "pending"
         self._json(
             {
                 "mode": "dodo",
-                "session_id": checkout_id,
-                "checkout_url": session["checkout_url"],
+                "session_id": checkout_ref,
+                "gateway_session_id": checkout_id,
+                "checkout_url": checkout_url,
                 "pass": pass_id,
             }
         )
@@ -603,22 +696,45 @@ class BrainRequestHandler(BaseHTTPRequestHandler):
         event_type = str(event.get("type", ""))
         if event_type not in billing.WEBHOOK_SUCCESS_EVENTS:
             return self._json({"received": True, "event": event_type, "acted": False})
+        payment = billing.event_payment_object(event)
+        metadata = payment.get("metadata") if isinstance(payment.get("metadata"), dict) else {}
+        checkout_keys = (
+            payment.get("session_id"),
+            payment.get("payment_id"),
+            payment.get("checkout_id"),
+            metadata.get("sg16_checkout_ref"),
+        )
+        pending = next(
+            (self.server.dodo_pending.get(str(key)) for key in checkout_keys if key and str(key) in self.server.dodo_pending),
+            None,
+        )
+        if pending is None:
+            return self._error(404, "success event does not match a checkout created by this host")
+        if int(time.time()) - int(pending.get("opened_at", 0)) > 24 * 3600:
+            pending["status"] = "expired"
+            return self._error(410, "checkout confirmation window has expired")
+        if str(metadata.get("sg16_pass") or "") != str(pending.get("pass") or ""):
+            return self._error(400, "webhook pass does not match the host checkout")
+        if str(metadata.get("sg16_region") or "") != str(pending.get("region") or ""):
+            return self._error(400, "webhook region does not match the host checkout")
         try:
             record = billing.record_from_webhook(event, self.server.billing_secret)
         except billing.VerificationError as exc:
             return self._error(400, str(exc))
         record["gateway"] = "dodo"
-        self.server.passes[record["token"]] = record
-        payment = billing.event_payment_object(event)
-        for key in (
-            payment.get("session_id"),
-            payment.get("payment_id"),
-            payment.get("checkout_id"),
-        ):
-            pending = self.server.dodo_pending.get(str(key)) if key else None
-            if pending is not None:
-                pending["status"] = "paid"
-                pending["record_token"] = record["token"]
+
+        webhook_id = str(self.headers.get("webhook-id") or "")
+        with self.server.dodo_lock:
+            if webhook_id in self.server.dodo_seen_webhooks:
+                return self._json({"received": True, "event": event_type, "acted": False, "duplicate": True})
+            if pending.get("status") == "paid" and pending.get("record_token"):
+                self.server.dodo_seen_webhooks.add(webhook_id)
+                return self._json({"received": True, "event": event_type, "acted": False, "duplicate": True})
+            self.server.dodo_seen_webhooks.add(webhook_id)
+            self.server.passes[record["token"]] = record
+            pending["status"] = "paid"
+            pending["record_token"] = record["token"]
+
         self._json(
             {
                 "received": True,
@@ -654,6 +770,29 @@ class BrainRequestHandler(BaseHTTPRequestHandler):
             return self._error(410, "the confirmed record is no longer available")
         self._json({"confirmed": True, "record": record})
 
+    def _api_pass_verify(self, body: bytes) -> None:
+        """Validate a host-issued bearer token before an account binds it."""
+        try:
+            payload = json.loads(body.decode("utf-8")) if body else {}
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            return self._error(400, f"body is not valid json: {exc}")
+        token = payload.get("token") if isinstance(payload, dict) else None
+        if not isinstance(token, str) or not re.fullmatch(r"[a-f0-9]{64}", token):
+            return self._error(400, "token must be a 64-character host pass token")
+        try:
+            self.server.throttle.check(self._client_rate_key(), len(body), exempt=False)
+        except ThrottleExceeded as exc:
+            return self._error(429, str(exc))
+        record = self.server.passes.get(token)
+        if record is None:
+            return self._error(403, "pass token is unknown to this host")
+        try:
+            verified = billing.verify_record(record, self.server.billing_secret)
+        except billing.VerificationError as exc:
+            self.server.passes.pop(token, None)
+            return self._error(403, f"pass token failed verification: {exc}")
+        self._json({"valid": True, "record": verified})
+
     def _api_billing(self) -> None:
         cfg = self.brain_config
         self._json(
@@ -664,11 +803,10 @@ class BrainRequestHandler(BaseHTTPRequestHandler):
                     pid: {"label": spec.label, "price": spec.price, "hours": spec.hours}
                     for pid, spec in billing.PASSES.items()
                 },
-                "owner_bypass": "token_accounting+throttles only; safety never",
                 "gateway": {
                     "provider": "dodo-payments",
                     "model": "merchant-of-record",
-                    "mode": "live-mor" if cfg.dodo_api_key else "sovereign-local",
+                    "mode": "live-mor" if cfg.dodo_api_key else "disabled",
                     "test_mode": cfg.dodo_test_mode,
                     "endpoints": {
                         "checkout": "/api/dodo/checkout",
@@ -676,12 +814,18 @@ class BrainRequestHandler(BaseHTTPRequestHandler):
                         "confirm": "/api/dodo/confirm",
                     },
                     "humanitarian_intercept": (
-                        f"{billing.HUMANITARIAN_REGION} bypasses the gateway "
-                        "entirely: $0 operational token issued natively"
+                        "A zero-rate record is available only when a proxy-authenticated "
+                        "geo-country header verifies eligibility. Client region claims are ignored."
                     ),
+                    "paid_checkout_without_gateway": "disabled; no local paid passes are issued",
                     "storage": (
-                        "the signed record is committed to the user's on-device "
-                        "sg16/ storage directory; the host keeps 0 client logs"
+                        "Pass verification state is held in this process memory. The browser stores "
+                        "its returned bearer token; deployment logging and retention depend on the host."
+                    ),
+                    "signing_secret": (
+                        "configured server-side"
+                        if not self.server.billing_secret_ephemeral
+                        else "ephemeral process secret; signed records do not survive restart"
                     ),
                 },
             }
@@ -695,8 +839,26 @@ class BrainRequestHandler(BaseHTTPRequestHandler):
         if not isinstance(payload, dict):
             return self._error(400, "body must be a json object")
 
-        text = str(payload.get("text", ""))
-        session_id = str(payload.get("session_id") or "default")
+        text_value = payload.get("text", "")
+        if not isinstance(text_value, str):
+            return self._error(400, "text must be a string")
+        text = text_value
+        if len(text) > 8192:
+            return self._error(413, "text exceeds the 8192 character limit")
+        supplied_session = payload.get("session_id")
+        if supplied_session is None or supplied_session == "":
+            supplied_session = secrets.token_urlsafe(24)
+        if not isinstance(supplied_session, str):
+            return self._error(400, "session_id must be a string")
+        supplied_session = supplied_session.strip()
+        if not supplied_session or len(supplied_session) > 128:
+            return self._error(400, "session_id must contain 1 to 128 characters")
+        session_id = self._scoped_session_id(supplied_session)
+        declared_transcript = payload.get("declared_transcript")
+        if declared_transcript is not None and (
+            not isinstance(declared_transcript, str) or len(declared_transcript) > 8192
+        ):
+            return self._error(400, "declared_transcript must be a string of at most 8192 characters")
         audio: bytes | None = None
         if payload.get("audio_b64"):
             try:
@@ -704,9 +866,7 @@ class BrainRequestHandler(BaseHTTPRequestHandler):
             except (binascii.Error, ValueError) as exc:
                 return self._error(400, f"audio_b64 is not valid base64: {exc}")
 
-        entitlement = self._entitlement(
-            payload, session_id, len(text) + len(audio or b"")
-        )
+        entitlement = self._entitlement(payload, len(text) + len(audio or b""))
         if entitlement is None:
             return
         is_owner, premium = entitlement
@@ -716,7 +876,7 @@ class BrainRequestHandler(BaseHTTPRequestHandler):
                 text,
                 session_id=session_id,
                 audio=audio,
-                declared_transcript=payload.get("declared_transcript"),
+                declared_transcript=declared_transcript,
             )
         except AUDIO_DECODE_ERRORS as exc:
             if audio is None:
@@ -728,14 +888,23 @@ class BrainRequestHandler(BaseHTTPRequestHandler):
         data = transaction.to_dict()
         data["owner"] = is_owner
         data["premium"] = premium
-        data["throttle"] = self.server.throttle.counters(session_id)
+        data["throttle"] = self.server.throttle.counters(self._client_rate_key())
         self._json(data)
 
     def _api_audio(self, body: bytes) -> None:
         if not body:
             return self._error(400, "audio body is empty")
-        session_id = self.headers.get("X-Session-Id") or "default"
+        supplied_session = self.headers.get("X-Session-Id") or secrets.token_urlsafe(24)
         declared = self.headers.get("X-Transcript")
+        if len(supplied_session) > 128:
+            return self._error(400, "session id must not exceed 128 characters")
+        if declared is not None and len(declared) > 8192:
+            return self._error(413, "transcript exceeds the 8192 character limit")
+        session_id = self._scoped_session_id(supplied_session.strip())
+        entitlement = self._entitlement({}, len(body) + len(declared or ""))
+        if entitlement is None:
+            return
+        is_owner, premium = entitlement
         try:
             transaction = self.server.submit_locked(  # type: ignore[attr-defined]
                 "",
@@ -744,18 +913,28 @@ class BrainRequestHandler(BaseHTTPRequestHandler):
                 declared_transcript=declared,
             )
         except AUDIO_DECODE_ERRORS as exc:
-            # Bug #2: same boundary as /api/ingest - the payload is always
-            # audio here, so the full container-parser family is a 400
-            # validation, never an unhandled exception on the socket.
             return self._error(400, f"audio payload rejected: {exc}")
-        self._json(transaction.to_dict())
+        data = transaction.to_dict()
+        data["owner"] = is_owner
+        data["premium"] = premium
+        data["throttle"] = self.server.throttle.counters(self._client_rate_key())
+        self._json(data)
 
     def _api_introspect(self, body: bytes) -> None:
         try:
             payload = json.loads(body.decode("utf-8")) if body else {}
         except (UnicodeDecodeError, json.JSONDecodeError) as exc:
             return self._error(400, f"body is not valid json: {exc}")
-        text = str(payload.get("text", "")) if isinstance(payload, dict) else ""
+        if not isinstance(payload, dict) or not isinstance(payload.get("text", ""), str):
+            return self._error(400, "body must be an object with a string text field")
+        text = payload.get("text", "")
+        if len(text) > 8192:
+            return self._error(413, "text exceeds the 8192 character limit")
+        is_owner = self.brain.panel.is_owner(self.headers.get("X-SG16-Owner-Sig"))
+        try:
+            self.server.throttle.check(self._client_rate_key(), len(text), exempt=is_owner)
+        except ThrottleExceeded as exc:
+            return self._error(429, str(exc))
         self._json(self.brain.introspect(text))
 
 

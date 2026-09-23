@@ -1,36 +1,10 @@
-"""
-SG16 BRAIN - Mistral 7B Pure Mathematical Core - Apache 2.0
+"""Experimental Mistral weight inspection and seeded structural-plan code.
 
-100% real true mathematical pure trained model Mistral 7B.
-Licensed under Apache 2.0 - same as mistralai/Mistral-7B-v0.1.
-
-Architecture: Mistral 7B
-- 32 layers
-- hidden_size 4096
-- intermediate_size 14336
-- num_attention_heads 32
-- num_key_value_heads 8 (Grouped Query Attention)
-- vocab_size 32000
-- max_position_embeddings 32768
-- rms_norm_eps 1e-05
-- rope_theta 10000
-- Sliding Window Attention 4096
-- SwiGLU MLP (gate, up, down)
-
-Weight origin:
-- When real weights present at path (downloaded via scripts/download_mistral.py from HuggingFace mistralai/Mistral-7B-v0.1 Apache 2.0):
-  Intelligence comes from TRAINED PARAMETERS - 7B parameters learned via gradient descent on trillions of tokens.
-- When no weights (test/sandbox/low-end):
-  Intelligence comes from SHA256-seeded deterministic matrices (same method as DevstralCore) - NOT trained, for testing only.
-  Clearly marked as SIMULATED.
-
-No fake. Brother to brother honest.
-
-Supports:
-- Pure mathematical density Q16.16 path for transport-blind parity (when seeded)
-- Real fp16/bf16 path for true trained inference (when weights loaded via torch/safetensors)
-- Offline & Online mode per logo
-- Runs on any device in seeded mode, requires 16GB+ RAM + GPU for real 7B mode
+This module is not connected to the public chat response path. Its current
+``generate_real`` method has no autoregressive inference implementation, and
+``plan`` cannot process a loaded real-weight instance. Loading weights here
+must not be described as a working conversational model. Seeded mode uses
+untrained deterministic matrices only.
 """
 
 from __future__ import annotations
@@ -65,10 +39,7 @@ except ImportError:
 
 @dataclass(frozen=True)
 class MistralConfig:
-    """
-    True Mistral 7B config - Apache 2.0
-    Source: mistralai/Mistral-7B-v0.1 config.json
-    """
+    """Shape and local file-path metadata for a Mistral-compatible checkpoint."""
     model_type: str = "mistral"
     hidden_size: int = 4096
     intermediate_size: int = 14336
@@ -86,7 +57,7 @@ class MistralConfig:
     # SG16 extensions
     head: str = "mistral-7b-apache2"
     seed: str = "sg16.mistral.7b.v1"
-    density: str = "trained-mistral-7b-apache2-pure-math"
+    density: str = "experimental-checkpoint-container-not-a-serving-model"
     # Paths
     weight_path: Optional[str] = None  # local path to safetensors or pytorch_model.bin
 
@@ -146,11 +117,11 @@ def _rms_norm_q16(x: List[int], weight: List[int], eps: int) -> List[int]:
 
 def _rms_norm_float(x, weight, eps=1e-5):
     """
-    Real RMSNorm float path for true trained weights.
+    Floating-point RMSNorm utility for checkpoint tensor experiments.
     x: torch tensor or list float
     """
     if HAS_TORCH and isinstance(x, torch.Tensor):
-        # True mathematical pure trained path
+        # Tensor-based floating-point path
         var = x.pow(2).mean(-1, keepdim=True)
         x_norm = x * torch.rsqrt(var + eps)
         return weight * x_norm
@@ -209,7 +180,7 @@ def _rope_q16(x: List[int], pos: int, head_dim: int, theta: float = 10000.0) -> 
 
 def _rope_float(x, pos: int, head_dim: int, theta: float = 10000.0):
     """
-    Real RoPE float path for true trained weights
+    Floating-point RoPE utility for checkpoint tensor experiments.
     """
     if HAS_TORCH and isinstance(x, torch.Tensor):
         # x shape: [heads, head_dim] or [head_dim]
@@ -266,23 +237,11 @@ def _rope_float(x, pos: int, head_dim: int, theta: float = 10000.0):
 
 
 class Mistral7BCore:
-    """
-    True Mistral 7B Core - Apache 2.0
+    """Experimental container for checkpoint inspection and seeded plans.
 
-    Two modes:
-    1. REAL TRAINED MODE (when weight_path exists and torch available):
-       - Loads 7B parameters from safetensors / bin
-       - Intelligence from TRAINED PARAMETERS (gradient descent on trillions tokens)
-       - Requires ~14GB disk, ~16GB RAM, GPU recommended
-       - 100% real true mathematical pure trained model
-
-    2. SEEDED SIMULATED MODE (for tests, low-end, sandbox):
-       - Generates deterministic matrices via SHA256 (same as DevstralCore)
-       - Uses Mistral architecture but with seeded weights
-       - Clearly marked as SIMULATED, NOT trained
-       - Runs on any device, 74k params if small config, or 7B seeded if full config (slow)
-
-    Brother to brother honest: no fake.
+    Real checkpoint loading does not currently include autoregressive
+    generation, and seeded mode uses untrained matrices. SG16Brain does not
+    select this component for serving user responses.
     """
 
     def __init__(self, config: Optional[MistralConfig] = None, small_for_tests: bool = False):
@@ -300,7 +259,7 @@ class Mistral7BCore:
                 num_hidden_layers=2,
                 num_attention_heads=8,
                 num_key_value_heads=2,
-                vocab_size=260,  # byte-level for universal
+                vocab_size=260,  # byte-level placeholder for tests, not Mistral's tokenizer
                 max_position_embeddings=64,
                 head="mistral-7b-small-test",
                 seed="sg16.mistral.test",
@@ -313,7 +272,7 @@ class Mistral7BCore:
             try:
                 self._load_real_weights(self.config.weight_path)
                 self.is_real = True
-                self.weight_origin = f"trained-mistral-7b-apache2-real-weights-from-{self.config.weight_path}"
+                self.weight_origin = f"checkpoint-tensors-loaded-from-{self.config.weight_path}; provenance-unverified"
             except Exception as e:
                 # Fallback to seeded
                 print(f"[Mistral7BCore] Real weights load failed {e}, fallback to seeded")
@@ -383,8 +342,8 @@ class Mistral7BCore:
 
     def _load_real_weights(self, weight_path: str):
         """
-        Load real Mistral 7B weights from safetensors / bin
-        True trained parameters - Apache 2.0
+        Load checkpoint tensors from safetensors or a weights-only PyTorch file.
+        This records loaded parameters but does not implement inference or verify provenance.
         """
         p = Path(weight_path)
         if not HAS_TORCH:
@@ -407,7 +366,7 @@ class Mistral7BCore:
                 # Try pytorch_model.bin
                 bin_files = list(p.glob("pytorch_model*.bin")) + list(p.glob("*.pth"))
                 for bf in bin_files:
-                    data = torch.load(bf, map_location="cpu")
+                    data = torch.load(bf, map_location="cpu", weights_only=True)
                     self.real_weights.update(data)
         else:
             if p.suffix == ".safetensors" and HAS_SAFETENSORS:
@@ -415,7 +374,7 @@ class Mistral7BCore:
                     for k in sf.keys():
                         self.real_weights[k] = sf.get_tensor(k)
             else:
-                self.real_weights = torch.load(p, map_location="cpu")
+                self.real_weights = torch.load(p, map_location="cpu", weights_only=True)
 
         # Verify key count for 7B
         print(f"[Mistral7BCore] Loaded {len(self.real_weights)} tensors from {weight_path}")
@@ -540,18 +499,18 @@ class Mistral7BCore:
         return gated.matmul(layer["w_down"])
 
     def plan(self, text: str, route: str = "text", transport: str = "unknown"):
-        """
-        For compatibility with DevstralCore.plan - returns ReasoningPlan
-        In real mode, would run true Mistral forward pass.
-        In seeded mode, runs Mistral arch with Q16.16.
-        """
+        """Build a seeded structural plan; trained-weight inference is unsupported."""
+        if self.is_real:
+            raise NotImplementedError(
+                "Mistral checkpoint inference is not implemented; this component is not a chat model."
+            )
         from .core import ReasoningPlan
         import hashlib
         from .. import tokenizer as T
 
         clipped = text[:8192]
         token_ids = T.encode(clipped)
-        # For Mistral, vocab is 32000, but we use byte-level 260 for universal
+        # Seeded inspection mode uses bytes; it is not the Mistral tokenizer.
         # Chunking similar to Devstral
         chunk_bytes = 32
         max_chunks = 64
@@ -563,7 +522,7 @@ class Mistral7BCore:
         if not blocks:
             blocks = [[T.PAD]]
 
-        steps = ["tokenize:byte-level-universal-mistral"]
+        steps = ["tokenize:utf8-byte"]
         # Embed
         from ..tensor import Tensor, layer_norm, mean_pool
         # Simplified embed chunks
@@ -642,20 +601,10 @@ class Mistral7BCore:
         return self.plan(text).intent_vector
 
     def generate_real(self, prompt: str, max_new_tokens: int = 100, temperature: float = 0.7) -> str:
-        """
-        Real text generation using true Mistral 7B trained weights
-        Requires real weights and torch
-        """
-        if not self.is_real:
-            return f"[SIMULATED] No real weights at {self.config.weight_path}. Download via scripts/download_mistral.py. Prompt was: {prompt[:100]}"
-
-        if not HAS_TORCH:
-            return "[FAILED] torch not available for real generation"
-
-        # Real generation would use torch + transformers logic
-        # Simplified placeholder - in production would implement full autoregressive loop
-        # For now, return info about real weights
-        return f"[REAL MISTRAL 7B] Loaded {len(self.real_weights)} tensors, origin {self.weight_origin}. Generation for '{prompt[:50]}' would run here with torch. Max tokens {max_new_tokens}. This is true trained model, Apache 2.0."
+        """Placeholder API retained for compatibility; inference is unavailable."""
+        raise NotImplementedError(
+            "Autoregressive Mistral text generation is not implemented in this build."
+        )
 
     def identity_path(self) -> dict:
         """Identity path for Mistral core - compatible with DevstralCore"""
@@ -678,7 +627,8 @@ class Mistral7BCore:
                 "route": "mistral-7b" if self.is_real else "mistral-7b-seeded",
                 "dim": len(vector),
                 "signature": hasher.hexdigest()[:16],
-                "is_real_trained": self.is_real,
+                "weights_loaded": self.is_real,
+                "generation_available": False,
                 "weight_origin": self.weight_origin,
             },
         }
@@ -695,12 +645,13 @@ class Mistral7BCore:
             "head": self.cfg.head,
             "fingerprint": self.cfg.fingerprint,
             "matrix_sha256": self.matrix_sha256,
-            "is_real_trained": self.is_real,
+            "weights_loaded": self.is_real,
+            "generation_available": False,
             "weight_origin": self.weight_origin,
             "weight_path": self.config.weight_path,
             "has_torch": HAS_TORCH,
             "has_safetensors": HAS_SAFETENSORS,
-            "license": "Apache 2.0 - mistralai/Mistral-7B-v0.1",
-            "architecture": "Mistral 7B - GQA, RoPE theta 10000, SwiGLU, Sliding Window 4096, RMSNorm",
-            "offline_online": "Supports OFFLINE & ONLINE per SG16 logo",
+            "license": "Checkpoint license and provenance are not verified by this module.",
+            "architecture": "Configured Mistral-compatible shape; weights are not used for autoregressive inference.",
+            "offline_online": "Inference is not implemented.",
         }

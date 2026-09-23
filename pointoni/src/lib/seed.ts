@@ -9,113 +9,49 @@ const MODELS = [
     id: "sg16-brain",
     name: "SG16 Brain",
     vendor: "Sovereign Systems",
-    role: "Sovereign reasoning core",
+    role: "Configured structural core",
     description:
-      "Self-hosted Mistral engine by SG16 Brain \u2014 built for ownership, not dependency on third-party AI APIs.",
+      "Deterministic structural gateway path with limited knowledge coverage; not a broad pretrained language model.",
     glyph: "brain",
     accent: "#22e08c",
-    status: "online",
-    latencyMs: 42,
-    contextWindow: "128K",
+    status: "configured",
+    latencyMs: 0,
+    contextWindow: "8K chars",
     selfHosted: true,
-    capabilities: ["Reasoning", "Code", "Knowledge", "Orchestration"],
+    capabilities: ["Structure", "Arithmetic", "Safety gate"],
     sortOrder: 0,
   },
   {
     id: "mistral-x",
-    name: "Mistral X Instruct",
-    vendor: "Mistral AI \u00B7 SG16-hosted",
-    role: "Self-hosted instruct engine",
+    name: "Optional Ollama relay",
+    vendor: "Operator-configured",
+    role: "Optional local bridge",
     description:
-      "Sovereign Brain \u00B7 Mistral X Instruct \u2014 open-weight inference running inside the SG16 perimeter.",
+      "Available only when the operator enables Ollama and a local model. Not enabled by default in this reference build.",
     glyph: "flame",
     accent: "#ff8a3d",
-    status: "online",
-    latencyMs: 68,
-    contextWindow: "128K",
-    selfHosted: true,
-    capabilities: ["Instruct", "Long context", "Multilingual"],
+    status: "standby",
+    latencyMs: 0,
+    contextWindow: "depends on model",
+    selfHosted: false,
+    capabilities: ["Optional local relay"],
     sortOrder: 1,
   },
   {
     id: "claude",
-    name: "Claude",
-    vendor: "Anthropic",
-    role: "Advanced reasoning \u0027 analysis",
+    name: "External relay example",
+    vendor: "Operator-configured provider",
+    role: "Optional external path",
     description:
-      "Relayed through the SG16 orchestrator for long-context analysis, policy work and careful reasoning.",
+      "Illustrative provider slot. Availability requires operator-supplied credentials and provider connectivity; otherwise this row is not live.",
     glyph: "sparkles",
     accent: "#e0875a",
-    status: "connected",
-    latencyMs: 214,
-    contextWindow: "200K",
+    status: "not-configured",
+    latencyMs: 0,
+    contextWindow: "provider-dependent",
     selfHosted: false,
-    capabilities: ["Reasoning", "Analysis", "Writing"],
+    capabilities: ["External relay example"],
     sortOrder: 2,
-  },
-  {
-    id: "gpt-5.5",
-    name: "GPT-5.5",
-    vendor: "OpenAI",
-    role: "Multimodal general intelligence",
-    description:
-      "Frontier multimodal model relayed securely, with deep-runner reasoning chains.",
-    glyph: "atom",
-    accent: "#35d48a",
-    status: "connected",
-    latencyMs: 188,
-    contextWindow: "256K",
-    selfHosted: false,
-    capabilities: ["Reasoning", "Vision", "Code", "Voice"],
-    sortOrder: 3,
-  },
-  {
-    id: "gemini",
-    name: "Gemini",
-    vendor: "Google DeepMind",
-    role: "Deep multimodal research",
-    description:
-      "Research-grade multimodal intelligence for science, search and very long contexts.",
-    glyph: "gem",
-    accent: "#5a8dff",
-    status: "connected",
-    latencyMs: 246,
-    contextWindow: "1M",
-    selfHosted: false,
-    capabilities: ["Research", "Vision", "Audio", "Code"],
-    sortOrder: 4,
-  },
-  {
-    id: "llama-3",
-    name: "Llama 3",
-    vendor: "Meta \u00B7 open weights",
-    role: "Open-weight frontier model",
-    description:
-      "New Llama 3 model variants, hosted locally on SG16 infrastructure for dependency-free scaling.",
-    glyph: "layers",
-    accent: "#b06bff",
-    status: "standby",
-    latencyMs: 132,
-    contextWindow: "128K",
-    selfHosted: true,
-    capabilities: ["Chat", "Open weights", "Fine-tuning"],
-    sortOrder: 5,
-  },
-  {
-    id: "sd-xl",
-    name: "Stable Diffusion XL",
-    vendor: "Stability AI",
-    role: "Image synthesis node",
-    description:
-      "Improved image generation with refined latent detail, routed through the synthesis pipeline.",
-    glyph: "image",
-    accent: "#ff4fa3",
-    status: "standby",
-    latencyMs: 940,
-    contextWindow: "1024\u00D71024",
-    selfHosted: true,
-    capabilities: ["Text-to-image", "Upscale", "Inpaint"],
-    sortOrder: 6,
   },
 ];
 
@@ -219,14 +155,4 @@ export async function ensureSeeded(): Promise<void> {
   } finally {
     seedingPromise = null;
   }
-}
-
-export async function getDefaultUser() {
-  await ensureSeeded();
-  const rows = await db
-    .select()
-    .from(users)
-    .where(eq(users.handle, DEFAULT_USER_HANDLE))
-    .limit(1);
-  return rows[0];
 }

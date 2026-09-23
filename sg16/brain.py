@@ -26,9 +26,9 @@ from dataclasses import replace
 from . import identity as identity_mod
 from .character import CharacterEngine, Session
 from .config import BrainConfig
-from .engine.core import DevstralCore, EngineConfig
+from .engine.core import DevstralCore
 from .identity import NATIVE_UTTERANCES
-from .engine.voxtral import VoxtralRoute
+from .engine.voxtral import EnvelopeError, VoxtralRoute
 from .gate.panel import GatePanel, Verdict
 from .gate.perimeter import (
     InboundRequest,
@@ -60,33 +60,32 @@ class SG16Brain:
     def __init__(self, config: BrainConfig | None = None) -> None:
         self.config = config or BrainConfig.default()
         self.lexicon = Lexicon()
-        # Dual core: Mistral 7B Apache 2.0 real when weights present, Devstral small fallback
-        # Brother to brother honest: no fake
-        model_type = self.config.engine_model_type
-        if "mistral" in model_type.lower():
-            try:
-                from .engine.mistral import Mistral7BCore
-                mistral_cfg = self.config.mistral_engine
-                # For tests/sandbox without weights, use small_for_tests to avoid OOM
-                # In production with real weights, full 7B will load
-                use_small = not mistral_cfg.is_real_weights_available()
-                self.core = Mistral7BCore(mistral_cfg, small_for_tests=use_small)
-                self.mistral_core = self.core
-                self.devstral_core = DevstralCore(self.config.engine)
-                # For knowledge indexing, use devstral core if mistral is small test mode
-                # to keep backward compat, but prefer mistral core
-                self._primary_core_for_knowledge = self.core
-            except Exception as e:
-                print(f"[SG16Brain] Mistral 7B core init failed {e}, fallback to Devstral small")
-                self.core = DevstralCore(self.config.engine)
-                self.mistral_core = None
-                self.devstral_core = self.core
-                self._primary_core_for_knowledge = self.core
-        else:
-            self.core = DevstralCore(self.config.engine)
-            self.mistral_core = None
-            self.devstral_core = self.core
-            self._primary_core_for_knowledge = self.core
+        # The shipped response path has no autoregressive language-model
+        # implementation. Use the deterministic Q16.16 structural encoder for
+        # planning and retrieval; never imply that configured Mistral weights
+        # are serving chat generation.
+        requested_model_type = self.config.engine_model_type
+        engine_config = self.config.engine
+        if "mistral" in requested_model_type.casefold():
+            engine_config = replace(engine_config, head="sg16-seeded-structural-encoder")
+        self.core = DevstralCore(engine_config)
+        self.mistral_core = None
+        self.devstral_core = self.core
+        self._primary_core_for_knowledge = self.core
+        self.model_capabilities = {
+            "requested_model_type": requested_model_type,
+            "active_component": self.core.config.head,
+            "component_type": "seeded fixed-point structural encoder",
+            "pretrained_weights_loaded": False,
+            "generative_language_model": False,
+            "response_method": "deterministic templates, curated knowledge, and arithmetic",
+            "note": (
+                "Mistral autoregressive inference is not implemented or wired into "
+                "this request path; configured Mistral weights are not used for chat."
+                if "mistral" in requested_model_type.casefold()
+                else "This build does not include a pretrained generative language model."
+            ),
+        }
 
         self.knowledge = KnowledgeBase.load(
             self.config.knowledge_path,
@@ -124,7 +123,7 @@ class SG16Brain:
             # Block 2 rule 3: a rejected payload never reaches the core.
             return response
         plan = self.core.plan(
-            request.text,
+            request.content_text,
             route="audio" if request.audio else "text",
             transport=request.transport,
         )
@@ -142,6 +141,19 @@ class SG16Brain:
         request_id: str | None = None,
     ) -> Transaction:
         """Send one payload through the master door."""
+        # SG16 envelopes may carry a caller-declared transcript in their
+        # header. Extract it before the gate so audio content cannot bypass
+        # text moderation. This is metadata parsing only; audio without a
+        # declared transcript remains untranscribed and is deferred later.
+        if audio and not (isinstance(declared_transcript, str) and declared_transcript.strip()):
+            try:
+                header, _ = VoxtralRoute.split_envelope(audio)
+            except EnvelopeError:
+                header = {}
+            candidate = header.get("transcript")
+            if isinstance(candidate, str) and candidate.strip():
+                declared_transcript = candidate.strip()
+
         self._counter += 1
         if request_id is None:
             seed = f"{session_id}|{self._counter}|{text}|{len(audio or b'')}"
@@ -165,9 +177,17 @@ class SG16Brain:
     def introspect(self, text: str) -> dict:
         """Full gate and retrieval breakdown for one payload (diagnostics)."""
         verdict = self.panel.inspect(text)
+        if not verdict.allowed:
+            return {
+                "text_chars": len(text),
+                "verdict": verdict.to_dict(),
+                "features": verdict.features.as_floats(),
+                "retrieval": None,
+                "plan": None,
+            }
         plan = self.core.plan(text, transport=self.config.transport.value)
         return {
-            "text": text,
+            "text_chars": len(text),
             "verdict": verdict.to_dict(),
             "features": verdict.features.as_floats(),
             "retrieval": self.knowledge.explain(text, plan.intent_vector),
@@ -205,7 +225,15 @@ class SG16Brain:
                 "sections": list(MASTER_CHARTER.keys()),
             },
             "native": dict(NATIVE_UTTERANCES),
-            "languages": ["universal"],
+            "language_capabilities": {
+                "input_encoding": "UTF-8",
+                "language_identification": "not implemented",
+                "translation": "not implemented",
+                "general_multilingual_generation": False,
+                "response_language": "Mostly English deterministic templates and curated answers",
+                "identity_line_locale_tags": sorted(NATIVE_UTTERANCES),
+                "note": "Unicode input is accepted, but this is not all-language understanding or generation.",
+            },
             "inscription": path["inscription"],
             "tensor": path["tensor"],
             "verified": path["verified"],
@@ -227,7 +255,16 @@ class SG16Brain:
             "domain": self.config.domain,
             "transport": self.config.transport.value,
             "air_gapped": self.config.transport.air_gapped,
-            "core": self.config.engine.head,
+            "core": self.core.config.head,
+            "model_capabilities": dict(self.model_capabilities),
+            "language_capabilities": {
+                "input_encoding": "UTF-8",
+                "language_identification": "not implemented",
+                "translation": "not implemented",
+                "general_multilingual_generation": False,
+                "response_language": "Mostly English deterministic templates and curated answers",
+                "identity_line_locale_tags": sorted(NATIVE_UTTERANCES),
+            },
             "core_matrix_sha256": self.core.matrix_sha256,
             "gate_weights_sha256": self.panel.weights.fingerprint,
             "knowledge_entries": len(self.knowledge.entries),
@@ -236,10 +273,14 @@ class SG16Brain:
             "door": self.housing.door.counters(),
             "config": self.config.summary(),
             "privacy": {
-                "zero_retention_architecture": "in-memory sessions only, no disk persistence, no hidden dossiers",
+                "core_session_state": "bounded process memory; cleared on reset, session eviction, or process restart",
+                "max_sessions": self.character.max_sessions,
+                "max_context_entries_per_session": 8,
+                "max_retained_text_chars_per_entry": 2000,
+                "session_api_includes_raw_text": False,
+                "rejected_requests_added_to_context": False,
+                "deployment_logging": "HTTP, reverse-proxy, and platform logs depend on deployment configuration and are not covered by the core's in-memory session policy",
                 "principles": dict(PRIVACY_PRINCIPLES["stateless_rules"]),
-                "honest_claims": PRIVACY_PRINCIPLES["honest_claims"],
-                "rejection_retention": PRIVACY_PRINCIPLES["rejection_retention"],
             },
             "child_safety": {
                 "boundary": CHILD_SAFETY_PRINCIPLES["boundary"],
@@ -251,20 +292,7 @@ class SG16Brain:
             },
         }
 
-        # Mistral 7B Apache 2.0 info
-        try:
-            if hasattr(self, 'mistral_core') and self.mistral_core is not None:
-                base["mistral_7b"] = self.mistral_core.info()
-            else:
-                # Check if core is Mistral
-                if hasattr(self.core, 'info'):
-                    base["mistral_7b"] = self.core.info()
-            # Engine model type
-            base["engine_model_type"] = self.config.engine_model_type
-            base["engine_weight_path"] = self.config.engine_weight_path
-            base["license"] = "Apache 2.0 - SG16 Developer AI Developer Engine by Saif Tech Global LLC"
-            base["offline_online"] = "OFFLINE & ONLINE MODE"
-        except Exception:
-            pass
-
+        base["engine_model_type"] = self.config.engine_model_type
+        base["trained_model_serving"] = False
+        base["external_model_api"] = False
         return base

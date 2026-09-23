@@ -6,6 +6,7 @@ import { Send, Globe2, CheckCircle2 } from "lucide-react";
 import { SiteChrome } from "@/components/chrome/SiteChrome";
 import { PageHeader } from "@/components/PageHeader";
 import { Panel } from "@/components/ui/Panel";
+import { identityHeaders } from "@/lib/browser-identity";
 
 function ContactForm() {
   const params = useSearchParams();
@@ -29,7 +30,7 @@ function ContactForm() {
     setError(null);
     const res = await fetch("/api/tickets", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: identityHeaders({ "Content-Type": "application/json" }),
       body: JSON.stringify({ kind: "contact", subject, bodyText: body }),
     });
     if (res.ok) {
@@ -37,7 +38,8 @@ function ContactForm() {
       setSubject("");
       setBody("");
     } else {
-      setError("Could not send your message. Please try again.");
+      const data = await res.json().catch(() => ({}));
+      setError(data.error || "Could not send your message. Sign in and try again.");
     }
     setSending(false);
   }
@@ -49,8 +51,8 @@ function ContactForm() {
           <CheckCircle2 className="h-14 w-14 text-emerald-400" style={{ filter: "drop-shadow(0 0 16px rgba(34,224,140,.6))" }} />
           <h2 className="font-display text-lg font-black tracking-wide text-white">MESSAGE RECEIVED</h2>
           <p className="max-w-md text-[13px] text-slate-300">
-            The SG16 global desk has your message. A diplomacy engineer will respond within one business
-            day. Your reference is tracked in Help &amp; Support.
+            Your message has been stored in this deployment&rsquo;s ticket database. Response time depends
+            on operator staffing; no email notification is configured by this route. Your reference is tracked in Help &amp; Support.
           </p>
           <button onClick={() => setSent(false)} className="btn-ghost px-5 py-2 text-[11px]">SEND ANOTHER</button>
         </div>
@@ -85,7 +87,7 @@ function ContactForm() {
 export default function ContactPage() {
   return (
     <SiteChrome>
-      <PageHeader title="CONTACT" subtitle="Reach the global desk — partnerships, sovereign deployments, diplomacy and press." />
+      <PageHeader title="CONTACT" subtitle="Contact and ticket intake for this deployment. Response time depends on operator staffing; no multi-region desk is guaranteed by this build." />
       <div className="mx-auto grid max-w-[1000px] gap-5 px-4 py-10 lg:grid-cols-[1fr_300px]">
         <Suspense fallback={<Panel className="p-10 text-center text-sm text-slate-500">Loading…</Panel>}>
           <ContactForm />
@@ -106,7 +108,7 @@ export default function ContactPage() {
               <br />
               license: Apache 2.0
               <br />
-              engine: Sovereign Brain · Mistral X Instruct
+              engine: configured SG16 gateway path
             </p>
           </Panel>
         </div>

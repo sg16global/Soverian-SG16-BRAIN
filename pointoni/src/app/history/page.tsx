@@ -6,6 +6,7 @@ import { Trash2, MessageSquareText, SquarePen } from "lucide-react";
 import { SiteChrome } from "@/components/chrome/SiteChrome";
 import { PageHeader } from "@/components/PageHeader";
 import { Panel } from "@/components/ui/Panel";
+import { identityHeaders } from "@/lib/browser-identity";
 
 type SessionRow = {
   id: string;
@@ -20,7 +21,7 @@ export default function HistoryPage() {
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
-    const res = await fetch("/api/chat?sessions=1", { cache: "no-store" });
+    const res = await fetch("/api/chat?sessions=1", { headers: identityHeaders(), cache: "no-store" });
     if (!res.ok) {
       setError("Unable to load session history.");
       return;
@@ -31,24 +32,35 @@ export default function HistoryPage() {
 
   useEffect(() => {
     load();
+    const refresh = () => {
+      void load();
+    };
+    window.addEventListener("focus", refresh);
+    window.addEventListener("pageshow", refresh);
+    document.addEventListener("visibilitychange", refresh);
+    return () => {
+      window.removeEventListener("focus", refresh);
+      window.removeEventListener("pageshow", refresh);
+      document.removeEventListener("visibilitychange", refresh);
+    };
   }, [load]);
 
   async function remove(id: string) {
     if (!confirm("Delete this conversation permanently?")) return;
-    const res = await fetch(`/api/chat?session=${id}`, { method: "DELETE" });
+    const res = await fetch(`/api/chat?session=${encodeURIComponent(id)}`, { method: "DELETE", headers: identityHeaders() });
     if (res.ok) setSessions((prev) => (prev ?? []).filter((s) => s.id !== id));
   }
 
   return (
     <SiteChrome>
-      <PageHeader title="HISTORY" subtitle="Every sovereign conversation, stored in your PostgreSQL session archive. Open a thread to continue it.">
+      <PageHeader title="HISTORY" subtitle="Saved conversations for the signed-in account. Guest conversations are not stored in this database.">
         <Link href="/chat" className="btn-red inline-flex items-center gap-2 px-4 py-2 text-[11px]">
           <SquarePen className="h-4 w-4" /> NEW CHAT
         </Link>
       </PageHeader>
 
       <div className="mx-auto max-w-[900px] px-4 py-8">
-        {error && <p className="rounded-lg border border-red-400/40 bg-red-500/10 p-4 text-sm text-red-300">{error}</p>}
+        {error && <p className="rounded-lg border border-amber-400/40 bg-amber-500/10 p-4 text-sm text-amber-200">{error} <Link href="/login" className="underline">Sign in</Link></p>}
 
         {sessions === null && !error && (
           <Panel className="p-10 text-center text-sm tracking-widest text-slate-500 pulse-soft">
@@ -63,7 +75,7 @@ export default function HistoryPage() {
             </span>
             <h2 className="font-display text-lg font-black tracking-wide text-white">NO CONVERSATIONS YET</h2>
             <p className="max-w-sm text-sm text-slate-400">
-              Your chat history will appear here the moment you exchange your first message with an SG16 model.
+              Saved signed-in account conversations will appear here. Guest conversations are not written to this archive.
             </p>
             <Link href="/chat" className="btn-red px-5 py-2.5 text-[11px]">START A CONVERSATION</Link>
           </Panel>

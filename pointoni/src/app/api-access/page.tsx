@@ -5,6 +5,7 @@ import { KeyRound, Copy, Trash2, Eye, EyeOff, Terminal, ShieldCheck } from "luci
 import { SiteChrome } from "@/components/chrome/SiteChrome";
 import { PageHeader } from "@/components/PageHeader";
 import { Panel } from "@/components/ui/Panel";
+import { identityHeaders } from "@/lib/browser-identity";
 
 type Token = {
   id: string;
@@ -22,10 +23,15 @@ export default function ApiAccessPage() {
   const [secret, setSecret] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const [showCurl, setShowCurl] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   async function load() {
-    const res = await fetch("/api/tokens", { cache: "no-store" });
+    const res = await fetch("/api/tokens", { headers: identityHeaders(), cache: "no-store" });
     if (res.ok) setTokens((await res.json()).tokens ?? []);
+    else {
+      const data = await res.json().catch(() => ({}));
+      setError(data.error || "Sign in to manage API tokens.");
+    }
   }
   useEffect(() => {
     load();
@@ -35,21 +41,22 @@ export default function ApiAccessPage() {
     setCreating(true);
     const res = await fetch("/api/tokens", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: identityHeaders({ "Content-Type": "application/json" }),
       body: JSON.stringify({ label: label.trim() || "Developer Pilot Token" }),
     });
     const data = await res.json();
     if (res.ok) {
       setSecret(data.secret);
       setLabel("");
+      setError(null);
       load();
-    }
+    } else setError(data.error || "Could not create a token.");
     setCreating(false);
   }
 
   async function revoke(id: string) {
     if (!confirm("Revoke this token? Applications using it will stop working immediately.")) return;
-    await fetch(`/api/tokens?id=${id}`, { method: "DELETE" });
+    await fetch(`/api/tokens?id=${encodeURIComponent(id)}`, { method: "DELETE", headers: identityHeaders() });
     load();
   }
 
@@ -64,9 +71,10 @@ export default function ApiAccessPage() {
 
   return (
     <SiteChrome>
-      <PageHeader title="API ACCESS" subtitle="Programmatic access to the sovereign chat core and multi-model orchestrator. Tokens are hashed with SHA-256 — the full secret is shown only once." />
+      <PageHeader title="API ACCESS" subtitle="Account-scoped tokens for the configured chat gateway. Tokens are hashed with SHA-256 — the full secret is shown only once. Chat responses are produced by the configured core and relay path; this build does not guarantee broad multi-model orchestration." />
 
       <div className="mx-auto max-w-[900px] space-y-5 px-4 py-8">
+        {error && <Panel className="border-amber-400/30 p-4 text-sm text-amber-200">{error}</Panel>}
         <Panel className="p-5">
           <h2 className="font-display text-sm font-black tracking-widest text-white">CREATE A TOKEN</h2>
           <div className="mt-3 flex flex-col gap-2 sm:flex-row">
@@ -111,7 +119,7 @@ export default function ApiAccessPage() {
           )}
           <p className="mt-3 flex items-start gap-2 text-[12px] text-slate-400">
             <ShieldCheck className="mt-0.5 h-4 w-4 flex-none text-emerald-400" />
-            Responses include the model id, measured latency and a <span className="font-mono2 text-amber-300">relay</span> flag indicating whether the answer stayed inside the sovereign boundary.
+            Responses include the model id and a <span className="font-mono2 text-amber-300">brain</span> field identifying the runtime that produced the answer (core, configured relay, or local fallback). Latency is measured on the platform response.
           </p>
         </Panel>
 

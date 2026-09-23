@@ -5,8 +5,9 @@ export const runtime = "nodejs";
 
 const COOKIE = "sg16_auth";
 
-export async function GET() {
-  return NextResponse.json({ authenticated: true });
+export async function GET(req: NextRequest) {
+  const bearer = req.headers.get("authorization")?.replace(/^Bearer\s+/i, "").trim() || "";
+  return NextResponse.json({ authenticated: Boolean(bearer), cookie: false });
 }
 
 export async function POST(req: NextRequest) {

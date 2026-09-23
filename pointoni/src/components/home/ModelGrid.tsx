@@ -173,8 +173,8 @@ export function ModelGrid() {
           </div>
         </div>
         <p className="text-[11px] leading-snug text-amber-200/80 sm:max-w-md">
-          Self-hosted Mistral engine — ownership, not dependency on third-party AI APIs. Apache 2.0,
-          global nodes in six nations.
+          Configured SG16 structural core path — deterministic, limited coverage, not a broad language
+          model. Apache 2.0 reference stack.
         </p>
         <div className="flex items-center gap-x-3 gap-y-1 font-mono2 text-[9px] tracking-wider text-slate-400 sm:ml-auto">
           <span className="inline-flex items-center gap-1.5 font-semibold" style={{ color: SOVEREIGN_ANCHOR.accent }}>

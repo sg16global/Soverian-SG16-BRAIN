@@ -17,7 +17,7 @@ import {
 } from "lucide-react";
 import { Panel, PanelTitle } from "@/components/ui/Panel";
 
-// ── PROJECT VITAL SCAN — free project health scan, zero retention ──
+// ── PROJECT VITAL SCAN — free project health scan, request-memory only ──
 // Drop a ZIP / code files / paste a snippet → expanding medical-style scan
 // → deterministic, evidenced report. Mirrors /api/project-scan.
 
@@ -210,14 +210,14 @@ export function ProjectScan() {
       <div className="relative flex flex-none items-center justify-center border-b border-red-500/25 px-4 py-3">
         <PanelTitle accent="cyan">PROJECT VITAL SCAN</PanelTitle>
         <span className="absolute right-3 inline-flex items-center gap-1.5 rounded border border-emerald-400/40 bg-emerald-500/10 px-2 py-1 font-display text-[8px] font-black tracking-[0.18em] text-emerald-300">
-          <ShieldCheck className="h-3 w-3" /> FREE FOREVER · 24/7 · ZERO STORAGE
+          <ShieldCheck className="h-3 w-3" /> FREE · ANALYZED IN REQUEST MEMORY · APP WRITES NO FILE BODIES
         </span>
       </div>
 
       {/* intro rail */}
       <p className="px-5 pt-3 text-center font-mono2 text-[10px] leading-relaxed tracking-[0.18em] text-slate-400">
-        DROP YOUR PROJECT → MEDICAL-GRADE SCAN → EVIDENCED HEALTH REPORT ·
-        ANALYZED IN MEMORY ONLY · NOTHING IS STORED · SEE THE FINGERPRINT
+        DROP YOUR PROJECT → STRUCTURED SCAN → EVIDENCED HEALTH REPORT ·
+        APP PROCESSES IN REQUEST MEMORY · NO REPORT ROWS PERSISTED · REVERSE PROXY LOGS MAY STILL APPLY
       </p>
 
       {/* ─────────── IDLE / INPUT ─────────── */}

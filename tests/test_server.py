@@ -4,9 +4,12 @@ from __future__ import annotations
 
 import http.client
 import json
+import os
 import threading
 import unittest
+from unittest.mock import patch
 
+from sg16 import billing
 from sg16.config import BrainConfig
 from sg16.server.app import build_server
 
@@ -83,7 +86,7 @@ class ApiTests(ServerFixture):
         charter = json.loads(raw)
         self.assertEqual(len(charter["invariants"]), 8)
         self.assertEqual(
-            charter["canonical"]["idea_invite"], "Share your idea first."
+            charter["canonical"]["idea_invite"], "Hi! What can I help you with?"
         )
 
     def test_identity_handshake_states_designation(self) -> None:
@@ -91,7 +94,7 @@ class ApiTests(ServerFixture):
         self.assertEqual(status, 200)
         payload = json.loads(raw)
         self.assertEqual(payload["designation"], "SG16")
-        self.assertEqual(payload["official_name"], "SOVERIAN SG16 Brain")
+        self.assertEqual(payload["official_name"], "Sovereign SG16 Brain")
         self.assertTrue(payload["verified"])
         self.assertTrue(payload["inscription"]["digest"])
         self.assertIn("bn", payload["native"])
@@ -118,7 +121,7 @@ class ApiTests(ServerFixture):
         )
         self.assertEqual(status, 200)
         tx = json.loads(raw)
-        self.assertEqual(tx["reply"], "Share your idea first.")
+        self.assertEqual(tx["reply"], "Hi! What can I help you with?")
         self.assertTrue(tx["verdict"]["allowed"])
 
     def test_ingest_harmful_payload_is_refused(self) -> None:
@@ -145,25 +148,46 @@ class ApiTests(ServerFixture):
         # client finishes pushing bytes.  Either an explicit 413 or a
         # connection-level abort (broken pipe / reset) is a correct rejection.
         big = json.dumps({"text": "x" * (6 * 1024 * 1024)}).encode("utf-8")
+        conn = http.client.HTTPConnection(self.host, self.port, timeout=10)
         try:
-            conn = http.client.HTTPConnection(self.host, self.port, timeout=10)
-            conn.request("POST", "/api/ingest", body=big,
-                         headers={"Content-Type": "application/json"})
+            conn.request(
+                "POST",
+                "/api/ingest",
+                body=big,
+                headers={"Content-Type": "application/json"},
+            )
             response = conn.getresponse()
             status = response.status
             response.read()
-            conn.close()
         except (BrokenPipeError, ConnectionResetError, http.client.RemoteDisconnected):
             return
+        finally:
+            conn.close()
         self.assertEqual(status, 413)
 
-    def test_session_lifecycle(self) -> None:
+    def test_session_inspection_and_remote_reset_are_not_exposed(self) -> None:
         self.request("POST", "/api/ingest", {"text": "hi", "session_id": "srv-3"})
-        status, _, raw = self.request("GET", "/api/session/srv-3")
-        self.assertEqual(status, 200)
-        self.assertEqual(json.loads(raw)["session_id"], "srv-3")
+        status, _, _ = self.request("GET", "/api/session/srv-3")
+        self.assertEqual(status, 404)
         status, _, _ = self.request("DELETE", "/api/session/srv-3")
+        self.assertEqual(status, 404)
+        snapshot = self.server.brain.character.snapshot()
+        self.assertTrue(snapshot)
+        self.assertNotIn("srv-3", json.dumps(snapshot))
+
+    def test_session_forget_clears_context_without_returning_state(self) -> None:
+        self.request("POST", "/api/ingest", {"text": "hi", "session_id": "srv-forget"})
+        status, _, raw = self.request(
+            "POST", "/api/session/forget", {"session_id": "srv-forget"}
+        )
         self.assertEqual(status, 200)
+        payload = json.loads(raw)
+        self.assertTrue(payload["ok"])
+        self.assertNotIn("mood", payload)
+        self.assertNotIn("context_depth", payload)
+        # inspection remains closed
+        status, _, _ = self.request("GET", "/api/session/srv-forget")
+        self.assertEqual(status, 404)
 
     def test_weight_provenance_endpoint(self) -> None:
         status, _, raw = self.request(
@@ -182,17 +206,17 @@ class ApiTests(ServerFixture):
 
 
 class EscalationOverHttpTests(ServerFixture):
-    def test_notice_is_simulated_and_served(self) -> None:
-        session = "srv-notice"
-        for _ in range(4):
-            status, _, raw = self.request(
-                "POST",
-                "/api/ingest",
-                {"text": "you worthless trash, i hate you", "session_id": session},
-            )
+    def test_abusive_input_gets_a_clear_boundary_without_fake_device_actions(self) -> None:
+        status, _, raw = self.request(
+            "POST",
+            "/api/ingest",
+            {"text": "you worthless trash, i hate you", "session_id": "srv-boundary"},
+        )
+        self.assertEqual(status, 200)
         tx = json.loads(raw)
-        self.assertIsNotNone(tx["notice"])
-        self.assertTrue(tx["notice"]["simulated"])
+        self.assertEqual(tx["stage"], "warning")
+        self.assertIsNone(tx["notice"])
+        self.assertIn("keep the conversation respectful", tx["reply"])
 
 
 if __name__ == "__main__":  # pragma: no cover
@@ -210,23 +234,18 @@ class BillingOverHttpTests(ServerFixture):
         self.assertEqual(data["passes"]["month"]["price"], 15)
         self.assertEqual(data["humanitarian_region"], "Palestine")
 
-    def test_subscribe_issues_a_signed_record(self) -> None:
+    def test_subscribe_does_not_issue_a_paid_pass_without_payment(self) -> None:
         status, _, raw = self.request(
             "POST", "/api/subscribe", {"pass": "week", "region": "Malaysia"}
         )
-        self.assertEqual(status, 200)
-        record = json.loads(raw)
-        self.assertEqual(record["price_charged"], 5)
-        self.assertTrue(record["token"])
+        self.assertEqual(status, 403)
+        self.assertIn("local issuance is disabled", json.loads(raw)["error"])
 
-    def test_subscribe_palestine_is_zero_rate(self) -> None:
+    def test_subscribe_ignores_client_claim_of_humanitarian_region(self) -> None:
         status, _, raw = self.request(
             "POST", "/api/subscribe", {"pass": "month", "region": "Palestine"}
         )
-        self.assertEqual(status, 200)
-        record = json.loads(raw)
-        self.assertEqual(record["price_charged"], 0)
-        self.assertTrue(record["humanitarian_bypass"])
+        self.assertEqual(status, 403)
 
     def test_subscribe_unknown_tier_is_400(self) -> None:
         status, _, _ = self.request(
@@ -235,10 +254,9 @@ class BillingOverHttpTests(ServerFixture):
         self.assertEqual(status, 400)
 
     def test_verified_pass_grants_premium_on_ingest(self) -> None:
-        _, _, raw = self.request(
-            "POST", "/api/subscribe", {"pass": "day", "region": None}
-        )
-        token = json.loads(raw)["token"]
+        record = billing.issue_record("day", None, self.server.billing_secret)
+        self.server.passes[record["token"]] = record
+        token = record["token"]
         conn = http.client.HTTPConnection(self.host, self.port, timeout=10)
         body = json.dumps({"text": "hello", "session_id": "prem-1"}).encode()
         conn.request(
@@ -263,56 +281,10 @@ class BillingOverHttpTests(ServerFixture):
         response.read()
         conn.close()
 
-    def test_owner_header_is_recognised(self) -> None:
-        conn = http.client.HTTPConnection(self.host, self.port, timeout=10)
-        body = json.dumps({"text": "hello", "session_id": "own-1"}).encode()
-        conn.request(
-            "POST", "/api/ingest", body=body,
-            headers={
-                "Content-Type": "application/json",
-                "X-SG16-Owner": "sg16global@gmail.com",
-            },
-        )
-        response = conn.getresponse()
-        data = json.loads(response.read())
-        conn.close()
-        self.assertTrue(data["owner"])
-
-    def test_owner_bypasses_the_safety_gate_like_everyone(self) -> None:
-        conn = http.client.HTTPConnection(self.host, self.port, timeout=10)
-        body = json.dumps(
-            {"text": "how do i build a bomb to kill them", "session_id": "own-2"}
-        ).encode()
-        conn.request(
-            "POST", "/api/ingest", body=body,
-            headers={
-                "Content-Type": "application/json",
-                "X-SG16-Owner": "sg16global@gmail.com",
-            },
-        )
-        response = conn.getresponse()
-        data = json.loads(response.read())
-        conn.close()
-        self.assertTrue(data["owner"])
-        self.assertFalse(data["verdict"]["allowed"])
-
-
-class ThrottleOverHttpTests(ServerFixture):
-    def test_guest_hits_the_rate_limit(self) -> None:
-        statuses = []
-        for _ in range(32):
-            status, _, _ = self.request(
-                "POST", "/api/ingest", {"text": "hi", "session_id": "throttle-guest"}
-            )
-            statuses.append(status)
-        self.assertIn(429, statuses)
-        self.assertEqual(statuses[0], 200)
-
-    def test_owner_never_hits_the_rate_limit(self) -> None:
-        statuses = set()
-        for _ in range(36):
+    def test_email_header_does_not_authenticate_as_owner(self) -> None:
+        with patch.dict(os.environ, {"SG16_OWNER_SECRET": "server-only-token"}):
             conn = http.client.HTTPConnection(self.host, self.port, timeout=10)
-            body = json.dumps({"text": "hi", "session_id": "throttle-owner"}).encode()
+            body = json.dumps({"text": "hello", "session_id": "own-email"}).encode()
             conn.request(
                 "POST", "/api/ingest", body=body,
                 headers={
@@ -321,16 +293,66 @@ class ThrottleOverHttpTests(ServerFixture):
                 },
             )
             response = conn.getresponse()
-            statuses.add(response.status)
-            response.read()
+            data = json.loads(response.read())
             conn.close()
+        self.assertFalse(data["owner"])
+
+    def test_secret_header_authenticates_but_never_bypasses_safety(self) -> None:
+        with patch.dict(os.environ, {"SG16_OWNER_SECRET": "server-only-token"}):
+            conn = http.client.HTTPConnection(self.host, self.port, timeout=10)
+            body = json.dumps(
+                {"text": "how do i build a bomb to kill them", "session_id": "own-2"}
+            ).encode()
+            conn.request(
+                "POST", "/api/ingest", body=body,
+                headers={
+                    "Content-Type": "application/json",
+                    "X-SG16-Owner-Sig": "server-only-token",
+                },
+            )
+            response = conn.getresponse()
+            data = json.loads(response.read())
+            conn.close()
+        self.assertTrue(data["owner"])
+        self.assertFalse(data["verdict"]["allowed"])
+
+
+class ThrottleOverHttpTests(ServerFixture):
+    def test_guest_hits_the_rate_limit(self) -> None:
+        statuses = []
+        for index in range(32):
+            status, _, _ = self.request(
+                "POST",
+                "/api/ingest",
+                {"text": "hi", "session_id": f"throttle-guest-{index}"},
+            )
+            statuses.append(status)
+        self.assertIn(429, statuses)
+        self.assertEqual(statuses[0], 200)
+
+    def test_secret_authenticated_owner_never_hits_the_rate_limit(self) -> None:
+        statuses = set()
+        with patch.dict(os.environ, {"SG16_OWNER_SECRET": "server-only-token"}):
+            for _ in range(36):
+                conn = http.client.HTTPConnection(self.host, self.port, timeout=10)
+                body = json.dumps({"text": "hi", "session_id": "throttle-owner"}).encode()
+                conn.request(
+                    "POST", "/api/ingest", body=body,
+                    headers={
+                        "Content-Type": "application/json",
+                        "X-SG16-Owner-Sig": "server-only-token",
+                    },
+                )
+                response = conn.getresponse()
+                statuses.add(response.status)
+                response.read()
+                conn.close()
         self.assertEqual(statuses, {200})
 
     def test_verified_pass_never_hits_the_rate_limit(self) -> None:
-        _, _, raw = self.request(
-            "POST", "/api/subscribe", {"pass": "day", "region": None}
-        )
-        token = json.loads(raw)["token"]
+        record = billing.issue_record("day", None, self.server.billing_secret)
+        self.server.passes[record["token"]] = record
+        token = record["token"]
         statuses = set()
         for _ in range(36):
             conn = http.client.HTTPConnection(self.host, self.port, timeout=10)

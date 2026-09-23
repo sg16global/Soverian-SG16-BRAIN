@@ -5,6 +5,7 @@ import { UploadCloud, FileText, Download, Trash2, FolderLock } from "lucide-reac
 import { SiteChrome } from "@/components/chrome/SiteChrome";
 import { PageHeader } from "@/components/PageHeader";
 import { Panel } from "@/components/ui/Panel";
+import { identityHeaders } from "@/lib/browser-identity";
 
 type FileRow = {
   id: string;
@@ -28,8 +29,12 @@ export default function FilesPage() {
   const inputRef = useRef<HTMLInputElement>(null);
 
   const load = useCallback(async () => {
-    const res = await fetch("/api/files", { cache: "no-store" });
+    const res = await fetch("/api/files", { headers: identityHeaders(), cache: "no-store" });
     if (res.ok) setFiles((await res.json()).files ?? []);
+    else {
+      const data = await res.json().catch(() => ({}));
+      setError(data.error || "Sign in to manage stored files.");
+    }
   }, []);
 
   useEffect(() => {
@@ -48,7 +53,7 @@ export default function FilesPage() {
         }
         const fd = new FormData();
         fd.append("file", file);
-        const res = await fetch("/api/files", { method: "POST", body: fd });
+        const res = await fetch("/api/files", { method: "POST", headers: identityHeaders(), body: fd });
         if (!res.ok) setError(`Upload failed: ${file.name}`);
       }
       await load();
@@ -60,13 +65,13 @@ export default function FilesPage() {
 
   async function remove(id: string) {
     if (!confirm("Remove this file from your vault?")) return;
-    await fetch(`/api/files?id=${id}`, { method: "DELETE" });
+    await fetch(`/api/files?id=${encodeURIComponent(id)}`, { method: "DELETE", headers: identityHeaders() });
     setFiles((p) => (p ?? []).filter((f) => f.id !== id));
   }
 
   return (
     <SiteChrome>
-      <PageHeader title="MY FILES" subtitle="Encrypted sovereign file vault. Uploads are stored on your deployment — they never train a third-party model.">
+      <PageHeader title="MY FILES" subtitle="Files stored for the signed-in account on this deployment's filesystem. This application does not send uploads to third-party model providers from this route.">
         <button onClick={() => inputRef.current?.click()} className="btn-red inline-flex items-center gap-2 px-4 py-2 text-[11px]">
           <UploadCloud className="h-4 w-4" /> UPLOAD
         </button>
@@ -86,7 +91,7 @@ export default function FilesPage() {
           <p className="font-display text-sm font-bold tracking-widest text-white">
             {uploading ? "SECURELY UPLOADING…" : "DRAG FILES HERE OR USE THE UPLOAD BUTTON"}
           </p>
-          <p className="font-mono2 text-[10px] tracking-widest text-slate-500">10MB PER FILE · STORED INSIDE THE SOVEREIGN PERIMETER</p>
+          <p className="font-mono2 text-[10px] tracking-widest text-slate-500">10MB PER FILE · STORED ON THIS DEPLOYMENT FILESYSTEM</p>
           <input
             type="file"
             multiple
@@ -114,7 +119,7 @@ export default function FilesPage() {
             <Panel className="corner flex flex-col items-center gap-3 p-12 text-center">
               <FolderLock className="h-10 w-10 text-slate-600" />
               <h2 className="font-display text-base font-black tracking-wide text-white">VAULT EMPTY</h2>
-              <p className="max-w-sm text-sm text-slate-400">No files stored yet. Upload documents, code or data to reference them in sovereign conversations.</p>
+              <p className="max-w-sm text-sm text-slate-400">No files stored yet. Uploads are account-scoped metadata plus files on this deployment; this build does not automatically attach them to chat turns.</p>
             </Panel>
           ) : (
             <ul className="space-y-2.5">

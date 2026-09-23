@@ -110,12 +110,13 @@ window) before signing anything. The checkout flow is then:
 2. payer completes the Dodo-hosted checkout and returns to the app;
 3. Dodo → `POST /api/dodo/webhook` (signature-verified) → the host signs a
    duration-locked pass token;
-4. client → `POST /api/dodo/confirm` → commits the token to the on-device
-   `sg16/` storage directory.
+4. client → `POST /api/dodo/confirm` → receives the signed record for local
+   caching and optional account binding after `/api/pass/verify`.
 
-With empty credentials the host runs the sovereign local issuance path
-(`/api/billing` reports `mode: sovereign-local`) — same signed records, no
-gateway, fully air-gap-safe. Palestine is intercepted before the gateway in
-every mode and always receives a valid $0 token natively. The gateway code is
-the only network surface beyond the HTTP host itself, and it lives strictly
-inside `sg16/server/` (enforced by `tests/test_isolation.py`).
+Without gateway credentials, paid checkout fails closed (`/api/billing`
+reports the gateway disabled). A $0 humanitarian record is issued only when an
+operator-trusted proxy authenticates geo headers. Pass, pending-checkout and
+webhook replay state is in-memory in this process and is lost on restart — use
+durable storage before relying on paid checkout in production. Reverse-proxy
+and platform logs remain deployment concerns. The Dodo client lives inside
+`sg16/server/` (enforced by `tests/test_isolation.py`).

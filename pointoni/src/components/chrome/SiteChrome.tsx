@@ -113,7 +113,7 @@ export function SiteChrome({
               {COMPANY.copyright} · {COMPANY.motto}
             </div>
             <div className="border-t border-red-500/15 py-3 text-center font-mono2 text-[9px] tracking-[0.25em] text-slate-500">
-              APACHE 2.0 · SOVEREIGN BRAIN · MISTRAL X INSTRUCT · KNOWLEDGE · DIPLOMACY · A BETTER TOMORROW
+              APACHE 2.0 · CONFIGURED SG16 GATEWAY · LIMITED STRUCTURAL CORE · KNOWLEDGE · DIPLOMACY · A BETTER TOMORROW
             </div>
           </footer>
         )}

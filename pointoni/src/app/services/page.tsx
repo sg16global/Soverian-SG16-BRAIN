@@ -9,7 +9,7 @@ import { SERVICES } from "@/lib/content";
 export default function ServicesPage() {
   return (
     <SiteChrome>
-      <PageHeader title="SERVICES" subtitle="Enterprise-grade sovereign AI services — from self-hosted inference to knowledge diplomacy across six global nodes." />
+      <PageHeader title="SERVICES" subtitle="Deployment assistance for this reference stack. Offerings are informational; production staffing, SLAs and multi-region facilities are not guaranteed by this build." />
       <div className="mx-auto max-w-[1100px] px-4 py-10">
         <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
           {SERVICES.map((s) => (

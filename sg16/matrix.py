@@ -1,19 +1,9 @@
-"""SG16 BRAIN - structural processing matrix.
+"""Deterministic seeded matrices for SG16's structural encoder.
 
-Block 3, rule 1: the structural processing matrix of the engine must be
-compiled into pure, self-contained mathematics inside the brain.  No weight
-file is downloaded, no daemon is started, no remote API is called.
-
-Every matrix in the brain is synthesised from a *named seed* by SHA-256 in
-counter mode.  SHA-256 is standardised (FIPS 180-4) and present in every
-CPython build, so the same seed produces the same Q16.16 matrix on a laptop in
-Kuala Lumpur and on an air-gapped machine in a basement.  That is what makes
-the engine a *fixed mathematical invariant bound to the environment* rather
-than a bundle of files that can drift.
-
-Devstral Small 2 / Voxtral weight sets, when a deployment chooses to supply
-them, are loaded through :func:`from_rows` into exactly the same fixed-point
-containers - the interface below is what they must satisfy.
+Each matrix is generated from a named seed using SHA-256 and represented in
+Q16.16. This provides reproducible initial values; it does not make them
+trained or meaningful model weights. :func:`from_rows` is a low-level tensor
+conversion helper and does not implement model loading or inference.
 """
 
 from __future__ import annotations

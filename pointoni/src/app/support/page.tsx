@@ -6,6 +6,7 @@ import { SiteChrome } from "@/components/chrome/SiteChrome";
 import { PageHeader } from "@/components/PageHeader";
 import { Panel } from "@/components/ui/Panel";
 import { FAQS } from "@/lib/content";
+import { identityHeaders } from "@/lib/browser-identity";
 
 type Ticket = {
   id: string;
@@ -24,8 +25,12 @@ export default function SupportPage() {
   const [error, setError] = useState<string | null>(null);
 
   async function loadTickets() {
-    const res = await fetch("/api/tickets?kind=support", { cache: "no-store" });
+    const res = await fetch("/api/tickets?kind=support", { headers: identityHeaders(), cache: "no-store" });
     if (res.ok) setTickets((await res.json()).tickets ?? []);
+    else {
+      const data = await res.json().catch(() => ({}));
+      setError(data.error || "Sign in to view tickets.");
+    }
   }
   useEffect(() => {
     loadTickets();
@@ -40,7 +45,7 @@ export default function SupportPage() {
     setError(null);
     const res = await fetch("/api/tickets", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: identityHeaders({ "Content-Type": "application/json" }),
       body: JSON.stringify({ kind: "support", subject, bodyText: body }),
     });
     if (res.ok) {
@@ -48,14 +53,15 @@ export default function SupportPage() {
       setBody("");
       loadTickets();
     } else {
-      setError("Could not submit the ticket. Try again.");
+      const data = await res.json().catch(() => ({}));
+      setError(data.error || "Could not submit the ticket. Sign in and try again.");
     }
     setSending(false);
   }
 
   return (
     <SiteChrome>
-      <PageHeader title="HELP & SUPPORT" subtitle="Answers from the SG16 knowledge core, plus a tracked support desk staffed by real human engineers." />
+      <PageHeader title="HELP & SUPPORT" subtitle="Curated FAQ answers plus an account-scoped ticket database. Operator response time is not guaranteed by this application." />
       <div className="mx-auto grid max-w-[1000px] gap-5 px-4 py-8 lg:grid-cols-[1fr_380px]">
         <div className="space-y-3">
           <h2 className="font-display text-sm font-black tracking-widest text-gold-gradient">FREQUENTLY ASKED</h2>

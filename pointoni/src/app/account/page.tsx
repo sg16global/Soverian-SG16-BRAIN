@@ -2,10 +2,11 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { Crown, MessagesSquare, FolderClosed, KeyRound, MonitorSmartphone, ChevronRight } from "lucide-react";
+import { MessagesSquare, FolderClosed, KeyRound, MonitorSmartphone, ChevronRight } from "lucide-react";
 import { SiteChrome } from "@/components/chrome/SiteChrome";
 import { PageHeader } from "@/components/PageHeader";
 import { Panel } from "@/components/ui/Panel";
+import { identityHeaders } from "@/lib/browser-identity";
 
 type Profile = {
   id: string;
@@ -14,11 +15,12 @@ type Profile = {
   email: string;
   role: string;
   createdAt: string;
-  preferences: { plan?: string; defaultModel?: string };
+  preferences: { defaultModel?: string };
 };
 
 export default function AccountPage() {
   const [profile, setProfile] = useState<Profile | null>(null);
+  const [error, setError] = useState<string | null>(null);
   const [counts, setCounts] = useState<{ sessions: number; files: number; tokens: number; devices: number }>({
     sessions: 0,
     files: 0,
@@ -27,12 +29,19 @@ export default function AccountPage() {
   });
 
   useEffect(() => {
-    fetch("/api/profile").then((r) => r.json()).then((d) => setProfile(d.user));
+    const headers = identityHeaders();
+    fetch("/api/profile", { headers, cache: "no-store" })
+      .then(async (response) => {
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || "Sign in to view your account.");
+        setProfile(data.user);
+      })
+      .catch((cause) => setError(cause instanceof Error ? cause.message : "Could not load account."));
     Promise.all([
-      fetch("/api/chat?sessions=1").then((r) => r.json()).catch(() => ({ sessions: [] })),
-      fetch("/api/files").then((r) => r.json()).catch(() => ({ files: [] })),
-      fetch("/api/tokens").then((r) => r.json()).catch(() => ({ tokens: [] })),
-      fetch("/api/devices").then((r) => r.json()).catch(() => ({ devices: [] })),
+      fetch("/api/chat?sessions=1", { headers }).then((r) => r.json()).catch(() => ({ sessions: [] })),
+      fetch("/api/files", { headers }).then((r) => r.json()).catch(() => ({ files: [] })),
+      fetch("/api/tokens", { headers }).then((r) => r.json()).catch(() => ({ tokens: [] })),
+      fetch("/api/devices", { headers }).then((r) => r.json()).catch(() => ({ devices: [] })),
     ]).then(([s, f, t, d]) => {
       setCounts({
         sessions: (s.sessions ?? []).length,
@@ -52,11 +61,12 @@ export default function AccountPage() {
 
   return (
     <SiteChrome>
-      <PageHeader title="ACCOUNT" subtitle="Your sovereign pilot identity and live platform usage." />
+      <PageHeader title="ACCOUNT" subtitle="Your verified account and data stored by this deployment." />
       <div className="mx-auto max-w-[900px] space-y-5 px-4 py-8">
-        {!profile ? (
+        {error && <Panel className="p-5 text-sm text-amber-200">{error} <Link href="/login" className="underline">Sign in</Link></Panel>}
+        {!profile && !error ? (
           <Panel className="p-10 text-center text-sm tracking-widest text-slate-500 pulse-soft">LOADING ACCOUNT…</Panel>
-        ) : (
+        ) : profile ? (
           <Panel className="corner flex flex-col gap-5 p-6 sm:flex-row sm:items-center">
             <span className="grid h-20 w-20 flex-none place-items-center rounded-2xl border border-red-400/50 bg-gradient-to-b from-red-600/40 to-red-900/40 font-display text-3xl font-black text-white shadow-[0_0_28px_rgba(255,31,46,.4)]">
               {profile.displayName.slice(0, 1).toUpperCase()}
@@ -65,9 +75,6 @@ export default function AccountPage() {
               <h2 className="font-display text-xl font-black tracking-wide text-white">{profile.displayName}</h2>
               <p className="font-mono2 text-[11px] tracking-widest text-slate-400">{profile.email}</p>
               <div className="mt-2 flex flex-wrap gap-2">
-                <span className="inline-flex items-center gap-1.5 rounded-full border border-amber-400/40 bg-amber-500/10 px-3 py-1 font-display text-[9px] font-black tracking-widest text-amber-300">
-                  <Crown className="h-3 w-3" /> {profile.preferences.plan ?? "Sovereign Free Pilot"}
-                </span>
                 <span className="rounded-full border border-cyan-400/40 bg-cyan-500/10 px-3 py-1 font-mono2 text-[9px] tracking-widest text-cyan-300">
                   ROLE · {profile.role.toUpperCase()}
                 </span>
@@ -78,7 +85,7 @@ export default function AccountPage() {
             </div>
             <Link href="/settings" className="btn-ghost px-4 py-2 text-[11px]">EDIT PROFILE</Link>
           </Panel>
-        )}
+        ) : null}
 
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
           {cards.map((c) => (

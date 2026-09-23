@@ -15,7 +15,8 @@ export default function SignedOutPage() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ state: "in" }),
     });
-    router.push("/chat");
+    router.push("/login");
+    router.refresh();
   }
 
   return (
