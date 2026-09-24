@@ -1,3 +1,5 @@
+import Link from "next/link";
+import { Shield, MessageSquare } from "lucide-react";
 import { Emblem } from "@/components/chrome/Emblem";
 import { HERO_PILLARS } from "@/lib/content";
 
@@ -41,21 +43,28 @@ function GlobeModule() {
         />
         <div className="absolute inset-3 rounded-full border border-blue-400/30 spin-rev" />
         <div className="absolute inset-7 rounded-full border border-blue-400/20" />
+        {/* sovereign globe imagery — restored in 5d9ac32 */}
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img
           src="/images/globe.png"
           alt="One brain global vision network globe"
           className="absolute inset-4 h-[calc(100%-32px)] w-[calc(100%-32px)] rounded-full object-cover"
           style={{ mixBlendMode: "screen", filter: "drop-shadow(0 0 24px rgba(60,140,255,.55))" }}
+          loading="eager"
+          onError={(e) => {
+            // fallback to emblem if globe asset missing — prevents broken hero
+            (e.currentTarget as HTMLImageElement).style.display = "none";
+          }}
         />
+        {/* fallback inner glow when image fails */}
+        <div className="absolute inset-4 rounded-full bg-gradient-to-br from-blue-600/20 via-cyan-500/10 to-red-600/20 blur-[1px]" />
       </div>
       <div className="absolute inset-x-0 top-[30%] text-center">
         <p className="font-display text-[13px] font-black leading-tight tracking-wide text-white drop-shadow-[0_0_8px_rgba(0,0,0,.9)]">
           ONE BRAIN
           <br />
           GLOBAL VISION
-          <br />
-          A SMARTER WORLD
+          <br />A SMARTER WORLD
         </p>
       </div>
       <div className="absolute inset-x-0 bottom-[2%] text-center">
@@ -74,6 +83,23 @@ function GlobeModule() {
 export function HeroStage() {
   return (
     <section id="home" className="relative mx-auto max-w-[1200px] px-3 pb-20 pt-8 sm:px-5 sm:pt-12">
+      {/* operator strip — visible proof that admin imagery payload landed */}
+      <div className="mb-6 flex flex-wrap items-center justify-center gap-2 lg:justify-start">
+        <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-400/30 bg-emerald-500/10 px-3 py-1 font-mono2 text-[9px] tracking-[0.18em] text-emerald-300">
+          <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 shadow-[0_0_6px_rgba(34,224,140,.8)]" />
+          SOVEREIGN CORE · Q16.16
+        </span>
+        <span className="inline-flex items-center gap-1.5 rounded-full border border-cyan-400/30 bg-cyan-500/10 px-3 py-1 font-mono2 text-[9px] tracking-[0.18em] text-cyan-300">
+          IMAGERY · 5d9ac32 RESTORED
+        </span>
+        <Link
+          href="/admin"
+          className="inline-flex items-center gap-1.5 rounded-full border border-red-400/40 bg-red-500/10 px-3 py-1 font-mono2 text-[9px] tracking-[0.18em] text-red-200 transition hover:border-red-400/70 hover:text-white"
+        >
+          <Shield className="h-3 w-3" /> ADMIN CONSOLE
+        </Link>
+      </div>
+
       <div className="grid items-center gap-8 lg:grid-cols-[1fr_auto_1fr]">
         {/* Left: headline */}
         <div className="order-2 text-center lg:order-1 lg:text-left">
@@ -84,7 +110,10 @@ export function HeroStage() {
             <br />
             FOR A BRIGHTER
             <br />
-            <span className="text-tomorrow-gradient text-[34px] sm:text-[44px] xl:text-[52px]" style={{ filter: "drop-shadow(0 0 18px rgba(255,40,60,.45))" }}>
+            <span
+              className="text-tomorrow-gradient text-[34px] sm:text-[44px] xl:text-[52px]"
+              style={{ filter: "drop-shadow(0 0 18px rgba(255,40,60,.45))" }}
+            >
               TOMORROW
             </span>
           </h1>
@@ -93,6 +122,14 @@ export function HeroStage() {
               <Pillar key={p} label={p} />
             ))}
           </ul>
+          <div className="mt-8 flex flex-wrap justify-center gap-3 lg:justify-start">
+            <Link href="/chat" className="btn-red inline-flex items-center gap-2 px-6 py-2.5 text-[11px]">
+              <MessageSquare className="h-4 w-4" /> START CHAT
+            </Link>
+            <Link href="/admin" className="btn-ghost inline-flex items-center gap-2 px-6 py-2.5 text-[11px]">
+              <Shield className="h-4 w-4" /> OPERATOR CONSOLE
+            </Link>
+          </div>
         </div>
 
         {/* Center: emblem on neon pedestal */}

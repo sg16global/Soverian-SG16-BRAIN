@@ -6,20 +6,31 @@ export function ResponsibleAi() {
   return (
     <Panel className="mx-auto max-w-[1200px] overflow-hidden border-emerald-500/30 shadow-[0_0_26px_rgba(34,224,140,.1),inset_0_0_30px_rgba(34,224,140,.04)]">
       <div className="grid md:grid-cols-[190px_1fr_290px]">
-        {/* shield */}
-        <div className="relative hidden min-h-[220px] items-center justify-center md:flex">
+        {/* shield — restored in 5d9ac32 */}
+        <div className="relative hidden min-h-[220px] items-center justify-center overflow-hidden bg-[#08120f] md:flex">
+          <div className="absolute inset-0 bg-gradient-to-br from-emerald-900/30 via-transparent to-cyan-900/20" />
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
             src="/images/shield.png"
-            alt="Shield protecting united people"
-            className="h-48 w-48 object-contain"
+            alt="Shield protecting united people — responsible AI"
+            className="relative h-48 w-48 object-contain"
             style={{ mixBlendMode: "screen", filter: "drop-shadow(0 0 22px rgba(34,224,140,.55))" }}
+            loading="lazy"
+            onError={(e) => {
+              (e.currentTarget as HTMLImageElement).style.opacity = "0";
+            }}
           />
+          <span className="absolute bottom-1 left-1 rounded-full border border-emerald-400/20 bg-emerald-500/10 px-1.5 py-0.5 font-mono2 text-[7px] tracking-widest text-emerald-300">
+            SHIELD · 5d9ac32
+          </span>
         </div>
 
         {/* message */}
         <div className="border-b border-emerald-500/20 p-5 sm:p-7 md:border-b-0 md:border-r">
-          <h2 className="font-display text-lg font-black tracking-wide text-amber-300 sm:text-xl" style={{ textShadow: "0 0 14px rgba(255,209,102,.35)" }}>
+          <h2
+            className="font-display text-lg font-black tracking-wide text-amber-300 sm:text-xl"
+            style={{ textShadow: "0 0 14px rgba(255,209,102,.35)" }}
+          >
             A MESSAGE TO EVERY AI USER
           </h2>
           <p className="mt-1 font-display text-[10px] font-bold tracking-[0.16em] text-cyan-300 sm:text-[11px]">
@@ -32,7 +43,10 @@ export function ResponsibleAi() {
               direction of an AI interaction depend greatly on the instructions, content, and context
               provided by its user.
             </p>
-            <p className="font-display text-[13px] font-black tracking-wide text-emerald-300" style={{ textShadow: "0 0 12px rgba(34,224,140,.4)" }}>
+            <p
+              className="font-display text-[13px] font-black tracking-wide text-emerald-300"
+              style={{ textShadow: "0 0 12px rgba(34,224,140,.4)" }}
+            >
               Use AI with respect, clarity, responsibility, and purpose.
             </p>
           </div>
@@ -43,7 +57,11 @@ export function ResponsibleAi() {
           <ul className="space-y-2.5">
             {RESPONSIBLE_CHECKLIST.map((item) => (
               <li key={item} className="flex items-start gap-2.5">
-                <CheckCircle2 className="mt-0.5 h-[18px] w-[18px] flex-none text-emerald-400" strokeWidth={2.2} style={{ filter: "drop-shadow(0 0 6px rgba(34,224,140,.7))" }} />
+                <CheckCircle2
+                  className="mt-0.5 h-[18px] w-[18px] flex-none text-emerald-400"
+                  strokeWidth={2.2}
+                  style={{ filter: "drop-shadow(0 0 6px rgba(34,224,140,.7))" }}
+                />
                 <span className="text-[12.5px] font-medium leading-snug text-emerald-100/90">{item}</span>
               </li>
             ))}
