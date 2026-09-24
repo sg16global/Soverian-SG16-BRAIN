@@ -9,6 +9,7 @@ import {
   User,
   CircleHelp,
   Power,
+  Shield,
   type LucideIcon,
 } from "lucide-react";
 
@@ -25,6 +26,7 @@ export const SIDEBAR_LINKS: SidebarLink[] = [
   { label: "Subscription", href: "/subscription", icon: Crown },
   { label: "API Access", href: "/api-access", icon: Globe2 },
   { label: "My Devices", href: "/devices", icon: MonitorSmartphone },
+  { label: "Admin Console", href: "/admin", icon: Shield },
   { label: "Settings", href: "/settings", icon: Settings },
   { label: "Account", href: "/account", icon: User },
   { label: "Help & Support", href: "/support", icon: CircleHelp },
@@ -39,4 +41,5 @@ export const TOP_LINKS = [
   { label: "Our Vision", href: "/vision" },
   { label: "Services", href: "/services" },
   { label: "Contact", href: "/contact" },
+  { label: "Admin", href: "/admin" },
 ];
