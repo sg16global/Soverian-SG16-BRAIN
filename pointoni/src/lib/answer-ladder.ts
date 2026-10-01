@@ -31,13 +31,21 @@ export type LadderDeps = {
   /** local guard engine; never throws */
   local: (text: string, detail: string) => Promise<string>;
   limiter: ConcurrencyGuard;
+  /** longest a request may wait in the queue before it is told "busy" */
+  queueWaitMs?: number;
+  /** hard cap on one Ollama answer, enforced here even if the bridge stalls */
+  ollamaTimeoutMs?: number;
+  /** fires when the client goes away; a queued request then leaves the queue */
+  signal?: AbortSignal;
 };
 
 export type LadderResult = { content: string; engine: Engine };
 
+type Waiter = { wake: () => void };
+
 export class ConcurrencyGuard {
   private active = 0;
-  private waiting: (() => void)[] = [];
+  private waiting: Waiter[] = [];
 
   private maxActive: number;
   private maxQueue: number;
@@ -52,16 +60,44 @@ export class ConcurrencyGuard {
     return this.active >= this.maxActive && this.waiting.length >= this.maxQueue;
   }
 
-  /** Resolves to a release function, or null at once when the queue is full. */
-  async acquire(): Promise<(() => void) | null> {
+  /**
+   * Resolves to a release function, or null when the queue is full, the wait
+   * outlasts `timeoutMs`, or `signal` aborts. A waiter that gives up removes
+   * itself from the queue, so a later release never hands the slot to nobody.
+   */
+  async acquire(opts: { timeoutMs?: number; signal?: AbortSignal } = {}): Promise<(() => void) | null> {
+    if (opts.signal?.aborted) return null;
     if (this.active < this.maxActive) {
       this.active++;
       return this.releaser();
     }
     if (this.waiting.length >= this.maxQueue) return null;
     // the slot is handed over directly by release(), so `active` stays put
-    await new Promise<void>((resolve) => this.waiting.push(resolve));
-    return this.releaser();
+    const granted = await new Promise<boolean>((resolve) => {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const waiter: Waiter = {
+        wake: () => {
+          cleanup();
+          resolve(true);
+        },
+      };
+      // only effective while still queued: release() removes the waiter before waking it
+      const giveUp = () => {
+        const i = this.waiting.indexOf(waiter);
+        if (i === -1) return;
+        this.waiting.splice(i, 1);
+        cleanup();
+        resolve(false);
+      };
+      const cleanup = () => {
+        if (timer) clearTimeout(timer);
+        opts.signal?.removeEventListener("abort", giveUp);
+      };
+      this.waiting.push(waiter);
+      if (opts.timeoutMs !== undefined) timer = setTimeout(giveUp, opts.timeoutMs);
+      opts.signal?.addEventListener("abort", giveUp, { once: true });
+    });
+    return granted ? this.releaser() : null;
   }
 
   private releaser(): () => void {
@@ -70,10 +106,21 @@ export class ConcurrencyGuard {
       if (done) return;
       done = true;
       const next = this.waiting.shift();
-      if (next) next();
+      if (next) next.wake();
       else this.active--;
     };
   }
+}
+
+function withTimeout<T>(work: Promise<T>, ms: number | undefined): Promise<T> {
+  if (ms === undefined) return work;
+  let timer: ReturnType<typeof setTimeout>;
+  const limit = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error("answer timed out")), ms);
+  });
+  // an abandoned `work` must not surface as an unhandled rejection later
+  work.catch(() => undefined);
+  return Promise.race([work, limit]).finally(() => clearTimeout(timer));
 }
 
 export async function runLadder(text: string, deps: LadderDeps): Promise<LadderResult> {
@@ -90,10 +137,10 @@ export async function runLadder(text: string, deps: LadderDeps): Promise<LadderR
   }
 
   if (gateUp && deps.ollama) {
-    const release = await deps.limiter.acquire();
+    const release = await deps.limiter.acquire({ timeoutMs: deps.queueWaitMs, signal: deps.signal });
     if (!release) return { content: BUSY_TEXT, engine: "busy" };
     try {
-      return { content: await deps.ollama(text), engine: "ollama" };
+      return { content: await withTimeout(deps.ollama(text), deps.ollamaTimeoutMs), engine: "ollama" };
     } catch {
       // fall through to the deterministic core
     } finally {
@@ -126,6 +173,12 @@ function shared(): Shared {
     last: null,
   });
 }
+
+/** longest a queued request waits for the single answer slot */
+export const queueWaitMs = (): number => {
+  const n = Number(process.env.SG16_ANSWER_QUEUE_WAIT_MS);
+  return Number.isFinite(n) && n >= 1000 ? n : 60_000;
+};
 
 export const sharedLimiter = (): ConcurrencyGuard => shared().limiter;
 export const recordAnswer = (engine: Engine): void => {

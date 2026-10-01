@@ -15,8 +15,8 @@ import {
   brainHealth,
   brainIntrospect,
 } from "@/lib/brain-gateway";
-import { ollamaChat, ollamaEnabled, ollamaHealth } from "@/lib/ollama-brain";
-import { BUSY_TEXT, lastAnswer, recordAnswer, runLadder, sharedLimiter, type Engine } from "@/lib/answer-ladder";
+import { ollamaChat, ollamaEnabled, ollamaHealth, ollamaTimeoutMs } from "@/lib/ollama-brain";
+import { BUSY_TEXT, lastAnswer, queueWaitMs, recordAnswer, runLadder, sharedLimiter, type Engine } from "@/lib/answer-ladder";
 import { charterDigest, type CharterBody } from "@/lib/charter-prompt";
 import { warmFallbackLine, warmRateLimitLine, tierChip } from "@/lib/warm-alias";
 import { childrenPreflight, isChildrenOrigin, withChildrenCors } from "@/lib/cors-lock";
@@ -263,6 +263,10 @@ export async function POST(req: NextRequest) {
         return [warmFallbackLine("fallback-local", detail), local.content].join("\n\n");
       },
       limiter: sharedLimiter(),
+      queueWaitMs: queueWaitMs(),
+      // the bridge aborts its own fetch at ollamaTimeoutMs; this is the backstop
+      ollamaTimeoutMs: ollamaTimeoutMs() + 5_000,
+      signal: req.signal,
     });
     recordAnswer(result.engine);
     return { content: result.content, brain: result.engine, relay: false };

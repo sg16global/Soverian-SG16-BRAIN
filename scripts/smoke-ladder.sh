@@ -33,23 +33,51 @@ fi
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 WORK="$(mktemp -d)"
-PIDS=()
+port_busy() { (exec 3<>"/dev/tcp/127.0.0.1/$1") 2>/dev/null; }
+
+PIDS=()   # leader pid of each service we start; each leads its own session/process group
+
+# start_service <name> <dir> <command...>
+# Runs the command in a NEW session via `exec`, so the pid we record is the
+# real process and also its process-group id: killing -pid takes the whole tree
+# (npm -> node, python and any children). The pid is written by the service
+# itself ($$ survives exec), never guessed from a subshell.
+start_service() {
+  local name="$1" dir="$2"; shift 2
+  setsid bash -c 'echo $$ >"$0"; cd "$1" && shift && exec "$@"' \
+    "$WORK/$name.pid" "$dir" "$@" >"$WORK/$name.log" 2>&1 &
+  local waited=0
+  while [ ! -s "$WORK/$name.pid" ] && [ "$waited" -lt 50 ]; do sleep 0.1; waited=$((waited + 1)); done
+  [ -s "$WORK/$name.pid" ] || { echo "could not start $name" >&2; exit 1; }
+  PIDS+=("$(cat "$WORK/$name.pid")")
+}
 
 cleanup() {
+  trap - EXIT INT TERM
   echo
   echo "== stopping the test copy =="
-  for pid in "${PIDS[@]}"; do
-    # each service runs in its own session (setsid), so -pid is its whole group
-    kill -TERM -- "-$pid" 2>/dev/null || kill -TERM "$pid" 2>/dev/null
+  # stop any in-flight request jobs first
+  jobs -p 2>/dev/null | xargs -r kill 2>/dev/null || true
+  for pid in ${PIDS[@]:-}; do kill -TERM -- "-$pid" 2>/dev/null || kill -TERM "$pid" 2>/dev/null || true; done
+  for _ in 1 2 3 4 5 6 7 8 9 10; do
+    alive=0
+    for pid in ${PIDS[@]:-}; do kill -0 "$pid" 2>/dev/null && alive=1; done
+    [ "$alive" = 0 ] && break
+    sleep 0.3
   done
-  sleep 1
-  for pid in "${PIDS[@]}"; do kill -KILL -- "-$pid" 2>/dev/null || true; done
+  for pid in ${PIDS[@]:-}; do kill -KILL -- "-$pid" 2>/dev/null || kill -KILL "$pid" 2>/dev/null || true; done
   rm -rf "$ROOT/pointoni/.next-smoke" "$WORK"
-  echo "done (ports $CORE_PORT and $WEB_PORT released; 8080/3000 were never touched)"
+  for p in $CORE_PORT $WEB_PORT; do
+    if port_busy "$p"; then echo "WARNING: port $p is still in use after cleanup" >&2; fi
+  done
+  echo "done (test ports released; 8080/3000 were never touched)"
 }
-trap cleanup EXIT INT TERM
+# Ctrl+C / kill: clean up and stop right here (exit runs the EXIT trap) instead
+# of letting the script carry on into later steps.
+trap cleanup EXIT
+trap 'echo; echo "interrupted"; exit 130' INT
+trap 'echo; echo "terminated"; exit 143' TERM
 
-port_busy() { (exec 3<>"/dev/tcp/127.0.0.1/$1") 2>/dev/null; }
 for p in $CORE_PORT $WEB_PORT; do
   if port_busy "$p"; then echo "port $p is already in use — stop whatever holds it first" >&2; exit 2; fi
 done
@@ -59,7 +87,7 @@ command -v node    >/dev/null || { echo "node not found" >&2; exit 2; }
 command -v curl    >/dev/null || { echo "curl not found" >&2; exit 2; }
 
 echo "== ollama check ($OLLAMA_URL, $MODEL) =="
-if ! tags="$(curl -fsS -m 5 "$OLLAMA_URL/api/tags")"; then
+if ! tags="$(curl -fsS --max-time 5 "$OLLAMA_URL/api/tags")"; then
   echo "Ollama is not answering at $OLLAMA_URL" >&2; exit 2
 fi
 if ! grep -q "\"$MODEL\"" <<<"$tags"; then
@@ -69,8 +97,7 @@ echo "ok"
 
 echo
 echo "== starting core on 127.0.0.1:$CORE_PORT =="
-(cd "$ROOT" && setsid python3 scripts/serve.py 127.0.0.1 "$CORE_PORT" >"$WORK/core.log" 2>&1) &
-PIDS+=("$!")
+start_service core "$ROOT" python3 scripts/serve.py 127.0.0.1 "$CORE_PORT"
 for _ in $(seq 1 40); do
   curl -fsS -m 2 "http://127.0.0.1:$CORE_PORT/api/health" >/dev/null 2>&1 && break
   sleep 0.5
@@ -89,6 +116,7 @@ export SG16_OLLAMA_ENABLED=1
 export SG16_OLLAMA_TIMEOUT_MS="${SG16_OLLAMA_TIMEOUT_MS:-120000}"  # fp16 7B can be slow to load cold
 export SG16_ANSWER_CONCURRENCY=1
 export SG16_ANSWER_QUEUE=2
+export SG16_ANSWER_QUEUE_WAIT_MS=120000   # a queued request waits at most this long
 export SG16_NEXT_DIST_DIR=".next-smoke"
 export NODE_ENV=production
 unset PORT
@@ -102,8 +130,7 @@ fi
 NODE_ENV=production npx next build >"$WORK/build.log" 2>&1 || { tail -30 "$WORK/build.log" >&2; exit 1; }
 
 echo "== starting platform on 127.0.0.1:$WEB_PORT =="
-setsid npx next start -H 127.0.0.1 -p "$WEB_PORT" >"$WORK/web.log" 2>&1 &
-PIDS+=("$!")
+start_service web "$ROOT/pointoni" npx next start -H 127.0.0.1 -p "$WEB_PORT"
 for _ in $(seq 1 60); do
   curl -sS -m 2 "http://127.0.0.1:$WEB_PORT/api/health" >/dev/null 2>&1 && break
   sleep 0.5
@@ -117,14 +144,14 @@ BASE="http://127.0.0.1:$WEB_PORT"
 # warm Ollama once so the first timed request is not a cold model load
 echo
 echo "== warming $MODEL (not timed below) =="
-curl -sS -m 300 "$OLLAMA_URL/api/chat" -d "{\"model\":\"$MODEL\",\"stream\":false,\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}" >/dev/null \
+curl -sS --max-time 150 "$OLLAMA_URL/api/chat" -d "{\"model\":\"$MODEL\",\"stream\":false,\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}" >/dev/null \
   && echo warm || echo "warm-up failed (continuing)"
 
 # ask <label> <message>  -> writes $WORK/<label>.{body,meta}
 ask() {
   local label="$1" msg="$2" payload
   payload="$(python3 -c 'import json,sys; print(json.dumps({"modelId":"sg16-brain","message":sys.argv[1]}))' "$msg")"
-  curl -sS -m 300 -o "$WORK/$label.body" -w '%{http_code} %{time_total}' \
+  curl -sS --max-time 150 -o "$WORK/$label.body" -w '%{http_code} %{time_total}' \
     -H 'Content-Type: application/json' -d "$payload" "$BASE/api/brain" >"$WORK/$label.meta" 2>"$WORK/$label.err" \
     || echo "000 0" >"$WORK/$label.meta"
 }
@@ -134,7 +161,11 @@ report() {
   python3 - "$WORK/$label.body" "$WORK/$label.meta" "$label" <<'PY'
 import json, sys
 body_p, meta_p, label = sys.argv[1:4]
-status, secs = open(meta_p).read().split()[:2]
+try:
+    status, secs = open(meta_p).read().split()[:2]
+except (OSError, ValueError):
+    print(f"{label:<10} no response (request timed out or was abandoned)")
+    sys.exit(0)
 try:
     d = json.load(open(body_p))
 except Exception:
@@ -153,16 +184,34 @@ ask blocked "$BLOCKED_MSG"; report blocked
 
 echo
 echo "== busy guard: 4 simultaneous requests (1 active + 2 queued + 1 over the limit) =="
-for i in 1 2 3 4; do ask "par$i" "Give me a short fact about the number $i." & done
-wait
+# Wait on THESE four jobs only. A bare `wait` would also wait for the core and
+# platform processes this script started, and never return.
+par_pids=()
+for i in 1 2 3 4; do
+  ask "par$i" "Give me a short fact about the number $i." &
+  par_pids+=("$!")
+done
+deadline=$((SECONDS + 160))   # each curl is capped at 150s; this is the step's own ceiling
+while :; do
+  running=0
+  for pid in "${par_pids[@]}"; do kill -0 "$pid" 2>/dev/null && running=1; done
+  [ "$running" = 0 ] && break
+  if [ "$SECONDS" -ge "$deadline" ]; then
+    echo "busy-guard step hit its 160s ceiling; abandoning unfinished requests"
+    for pid in "${par_pids[@]}"; do pkill -P "$pid" 2>/dev/null; kill "$pid" 2>/dev/null; done
+    break
+  fi
+  sleep 0.5
+done
 for i in 1 2 3 4; do report "par$i"; done
 
 echo
 echo "== /api/health: which engine answered last =="
-curl -sS -m 10 "$BASE/api/health" | python3 -c '
+curl -sS --max-time 10 "$BASE/api/health" | python3 -c '
 import json, sys
 d = json.load(sys.stdin)
-print("lastAnswered:", d.get("lastAnswered"), "| next clean message ->", d.get("answering"))'
+print("lastAnswered:", d.get("lastAnswered"), "| next clean message ->", d.get("answering"))' \
+  || echo "(health unavailable)"
 
 echo
 echo "Expect: clean=ollama, blocked=core-gate (core refusal text), and of the four parallel"

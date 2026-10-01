@@ -124,3 +124,69 @@ test("system prompt is identical across calls and stays near the token budget", 
   // ~4 chars/token for English: 3,200 chars is roughly 750 tokens
   assert.ok(a.length < 3200, `prompt grew to ${a.length} chars`);
 });
+
+// ---- hang protection: a stalled Ollama must never strand a request ----------
+
+const never = () => new Promise<string>(() => {});
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+test("stalled Ollama: the ladder's own timeout frees the slot and falls back to the core", async () => {
+  const limiter = new ConcurrencyGuard(1, 1);
+  const r = await runLadder("x", deps({ limiter, ollama: never, ollamaTimeoutMs: 40 }));
+  assert.equal(r.engine, "core");
+  assert.equal(limiter.saturated(), false);
+  assert.equal((await runLadder("y", deps({ limiter }))).engine, "ollama");
+});
+
+test("a queued request stops waiting after queueWaitMs even if the active one never ends", async () => {
+  const limiter = new ConcurrencyGuard(1, 1);
+  void runLadder("holder", deps({ limiter, ollama: never })); // no timeout at all: holds the slot
+  await sleep(5);
+  const t0 = Date.now();
+  const r = await runLadder("waiter", deps({ limiter, queueWaitMs: 50 }));
+  assert.deepEqual(r, { content: BUSY_TEXT, engine: "busy" });
+  assert.ok(Date.now() - t0 < 1000);
+  // the timed-out waiter left the queue, so the queue slot is free again
+  assert.equal(limiter.saturated(), false);
+});
+
+test("a client that aborts while queued leaves the queue; the slot goes to the next live waiter", async () => {
+  const limiter = new ConcurrencyGuard(1, 2);
+  let finish!: (s: string) => void;
+  const holder = runLadder("holder", deps({ limiter, ollama: () => new Promise<string>((r) => (finish = r)) }));
+  await sleep(5);
+  const gone = new AbortController();
+  const abandoned = runLadder("gone", deps({ limiter, signal: gone.signal }));
+  const live = runLadder("live", deps({ limiter }));
+  await sleep(5);
+  gone.abort();
+  assert.equal((await abandoned).engine, "busy");
+  finish("done");
+  assert.equal((await holder).engine, "ollama");
+  assert.equal((await live).engine, "ollama"); // not lost behind the dead waiter
+  assert.equal(limiter.saturated(), false);
+});
+
+test("already-aborted request is turned away without queueing", async () => {
+  const limiter = new ConcurrencyGuard(1, 1);
+  const ac = new AbortController();
+  ac.abort();
+  assert.equal(await limiter.acquire({ signal: ac.signal }), null);
+  assert.equal(limiter.saturated(), false);
+});
+
+test("four parallel requests against a stalled Ollama all settle within a bound", async () => {
+  const limiter = new ConcurrencyGuard(1, 2);
+  const t0 = Date.now();
+  const results = await Promise.all(
+    ["a", "b", "c", "d"].map((t) =>
+      runLadder(t, deps({ limiter, ollama: never, ollamaTimeoutMs: 100, queueWaitMs: 150 })),
+    ),
+  );
+  assert.ok(Date.now() - t0 < 2000, "must not hang");
+  assert.equal(results.length, 4);
+  assert.ok(results.every((r) => r.engine === "core" || r.engine === "busy"));
+  assert.equal(limiter.saturated(), false);
+  // and the guard is fully released afterwards
+  assert.equal((await runLadder("e", deps({ limiter }))).engine, "ollama");
+});

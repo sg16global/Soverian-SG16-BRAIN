@@ -71,7 +71,7 @@ export function ollamaModel(): string {
   return process.env.SG16_OLLAMA_MODEL?.trim() || DEFAULT_OLLAMA_MODEL;
 }
 
-function ollamaTimeoutMs(): number {
+export function ollamaTimeoutMs(): number {
   const parsed = Number(process.env.SG16_OLLAMA_TIMEOUT_MS);
   return Number.isFinite(parsed) && parsed >= 1000 ? parsed : DEFAULT_TIMEOUT_MS;
 }
