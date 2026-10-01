@@ -2,6 +2,7 @@ import { db, persistenceMode } from "@/db";
 import { sql } from "drizzle-orm";
 import { brainHealth } from "@/lib/brain-gateway";
 import { ollamaHealth } from "@/lib/ollama-brain";
+import { lastAnswer } from "@/lib/answer-ladder";
 import { charterDigest } from "@/lib/charter-prompt";
 import { childrenLockSummary } from "@/lib/cors-lock";
 
@@ -31,7 +32,8 @@ export async function GET() {
   }
 
   const heart = await ollamaHealth();
-  const answering = brain === "online" ? "core" : heart.status === "online" ? "ollama" : "fallback-local";
+  // capability, not history: clean messages go to Ollama while it is up
+  const answering = heart.status === "online" ? "ollama" : brain === "online" ? "core" : "fallback-local";
 
   return Response.json(
     {
@@ -41,7 +43,9 @@ export async function GET() {
       persistence: persistenceMode,
       heart,
       answering,
-      engines: ["core", "ollama", "fallback-local"],
+      // what actually answered the most recent request (null until one is served)
+      lastAnswered: lastAnswer(),
+      engines: ["core-gate", "ollama", "core", "fallback-local"],
       charter: charterDigest(),
       children: childrenLockSummary(),
     },

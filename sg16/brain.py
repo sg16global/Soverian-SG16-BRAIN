@@ -24,7 +24,7 @@ import hashlib
 from dataclasses import replace
 
 from . import identity as identity_mod
-from .character import CharacterEngine, Session
+from .character import REFUSAL_TEXT, CharacterEngine, Session
 from .config import BrainConfig
 from .engine.core import DevstralCore
 from .identity import NATIVE_UTTERANCES
@@ -181,6 +181,7 @@ class SG16Brain:
             return {
                 "text_chars": len(text),
                 "verdict": verdict.to_dict(),
+                "refusal": REFUSAL_TEXT,
                 "features": verdict.features.as_floats(),
                 "retrieval": None,
                 "plan": None,

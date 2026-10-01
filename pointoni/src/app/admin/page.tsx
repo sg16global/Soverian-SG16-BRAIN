@@ -34,6 +34,7 @@ type Health = {
   persistence: string;
   heart: { status: string; model?: string; detail?: string };
   answering: string;
+  lastAnswered?: { engine: string; at: string } | null;
   engines: string[];
   charter?: { laws?: number; bodies?: number; digest?: string };
   children?: { allowedOrigins?: number; mode?: string };
@@ -198,7 +199,7 @@ export default function AdminPage() {
                   BUILD · {health?.persistence ?? "checking"}
                 </span>
                 <span className="rounded-full border border-white/10 bg-white/[0.04] px-3 py-1 font-mono2 text-[9px] tracking-widest text-slate-300">
-                  ANSWERING · {(health?.answering ?? "unknown").toUpperCase()}
+                  LAST ANSWER · {(health?.lastAnswered?.engine ?? "none yet").toUpperCase()}
                 </span>
               </div>
             </div>
@@ -282,7 +283,12 @@ export default function AdminPage() {
                     <div className="mt-2 flex items-center gap-2">
                       <StatusPill status={health.brain} />
                       <span className="font-mono2 text-[11px] text-slate-300">
-                        answering: {health.answering} · {health.engines.join(" / ")}
+                        last answered by: {health.lastAnswered
+                          ? `${health.lastAnswered.engine} @ ${new Date(health.lastAnswered.at).toLocaleTimeString()}`
+                          : "none yet"} · next clean message: {health.answering}
+                      </span>
+                      <span className="font-mono2 text-[11px] text-slate-500">
+                        {health.engines.join(" / ")}
                       </span>
                     </div>
                   </div>

@@ -31,6 +31,7 @@ import hashlib
 import hmac
 import ipaddress
 import json
+import logging
 import os
 import posixpath
 import re
@@ -51,6 +52,7 @@ from ..brain import SG16Brain
 from ..charter import CANON, CHARTER, GATE_TITLES, MASTER_CHARTER, FUNDAMENTAL_ATTITUDE, OWNERSHIP_PHILOSOPHY, PERSONALITY_TRAITS
 from ..config import BrainConfig
 from ..engine.voxtral import EnvelopeError
+from .billing_state import BillingStateStore
 from .dodo import DodoClient, DodoError
 from .throttle import Throttle, ThrottleExceeded
 
@@ -61,6 +63,8 @@ __all__ = ["BrainHTTPServer", "BrainRequestHandler", "build_server", "main"]
 # straight off this host, so delivery is a self-contained byte stream.
 WEB_ROOT = Path(__file__).resolve().parent.parent.parent / "web"
 SERVER_VERSION = "SG16BRAIN/1.0"
+DEFAULT_BILLING_STATE = WEB_ROOT.parent / "state" / "billing_state.json"
+log = logging.getLogger("sg16.server")
 
 # Bug #2 boundary: malformed audio surfaces as any member of the container-
 # parser family - our own EnvelopeError, the stdlib wave/chunk errors
@@ -105,7 +109,10 @@ class BrainHTTPServer(ThreadingHTTPServer):
     #: the accept thread headroom under real traffic.
     request_queue_size = 128
 
-    def __init__(self, address, handler, brain: SG16Brain, config: BrainConfig) -> None:
+    def __init__(
+        self, address, handler, brain: SG16Brain, config: BrainConfig,
+        billing_state_path: str | os.PathLike | None = None,
+    ) -> None:
         self.brain = brain
         self.config = config
         self._lock = threading.Lock()
@@ -116,14 +123,27 @@ class BrainHTTPServer(ThreadingHTTPServer):
             raise ValueError("SG16_BILLING_SECRET is required when payment checkout is enabled")
         self.billing_secret_ephemeral = not bool(configured_billing_secret)
         self.billing_secret = configured_billing_secret or secrets.token_urlsafe(48)
-        self.passes: dict[str, dict] = {}
-        #: Dodo checkout sessions and webhook replay markers are process-local.
-        #: Payments must remain disabled in deployments that cannot tolerate
-        #: losing in-flight/issued state on restart; durable storage is a
-        #: deployment requirement not yet implemented here.
-        self.dodo_pending: dict[str, dict] = {}
-        self.dodo_seen_webhooks: set[str] = set()
-        self.dodo_lock = threading.Lock()
+        #: Issued passes, in-flight Dodo checkouts and webhook replay markers
+        #: are written to a durable file after every mutation (see
+        #: :mod:`sg16.server.billing_state`) and reloaded here on start.
+        self.dodo_lock = threading.RLock()
+        self.billing_store = BillingStateStore(
+            billing_state_path
+            or os.environ.get("SG16_BILLING_STATE")
+            or DEFAULT_BILLING_STATE
+        )
+        loaded = self.billing_store.load()
+        self.passes: dict[str, dict] = loaded["passes"]
+        self.dodo_pending: dict[str, dict] = loaded["pending"]
+        #: webhook id -> unix time first seen (the set view below is what the
+        #: handler checks; the timestamps let load() forget old ids)
+        self.dodo_seen_at: dict[str, int] = loaded["seen_webhooks"]
+        self.dodo_seen_webhooks: set[str] = set(self.dodo_seen_at)
+        if self.billing_secret_ephemeral and (self.passes or self.dodo_pending):
+            log.warning(
+                "billing state was restored but SG16_BILLING_SECRET is not set: "
+                "restored passes were signed with a previous ephemeral secret and will fail verification"
+            )
         #: The Dodo MoR client, or None when no API key is configured (the
         #: sovereign local issuance path serves checkout in that state).
         self.dodo = (
@@ -141,6 +161,16 @@ class BrainHTTPServer(ThreadingHTTPServer):
             max_chars=config.throttle_max_chars,
         )
         super().__init__(address, handler)
+
+    def persist_billing(self) -> bool:
+        """Write the billing state.  Call after every mutation, outside or
+        inside ``dodo_lock`` (it is reentrant); the copy is serialised while
+        the lock is held and the file write happens after it is released."""
+        with self.dodo_lock:
+            seq, text = self.billing_store.snapshot(
+                self.passes, self.dodo_pending, self.dodo_seen_at
+            )
+        return self.billing_store.write(seq, text)
 
     def submit_locked(self, *args, **kwargs):
         """Serialise entry to the master door.
@@ -549,7 +579,9 @@ class BrainRequestHandler(BaseHTTPRequestHandler):
         except billing.VerificationError as exc:
             return self._error(400, str(exc))
         record["gateway"] = "verified-humanitarian"
-        self.server.passes[record["token"]] = record
+        with self.server.dodo_lock:
+            self.server.passes[record["token"]] = record
+        self.server.persist_billing()
         self._json(record)
 
     # ------------------------------------------------------------------
@@ -628,11 +660,13 @@ class BrainRequestHandler(BaseHTTPRequestHandler):
         }
         with self.server.dodo_lock:
             self.server.dodo_pending[checkout_ref] = pending
+        self.server.persist_billing()
         try:
             session = self.server.dodo.create_checkout(request_body)
         except DodoError as exc:
             with self.server.dodo_lock:
                 self.server.dodo_pending.pop(checkout_ref, None)
+            self.server.persist_billing()
             return self._error(
                 exc.status if exc.status in (400, 401, 402, 403, 422) else 502,
                 str(exc),
@@ -649,14 +683,15 @@ class BrainRequestHandler(BaseHTTPRequestHandler):
         ):
             with self.server.dodo_lock:
                 self.server.dodo_pending.pop(checkout_ref, None)
+            self.server.persist_billing()
             return self._error(502, "dodo payments returned an unusable checkout session")
-        pending["gateway_session_id"] = checkout_id
-        if checkout_id != checkout_ref:
-            with self.server.dodo_lock:
-                self.server.dodo_pending[checkout_id] = pending
         with self.server.dodo_lock:
+            pending["gateway_session_id"] = checkout_id
+            if checkout_id != checkout_ref:
+                self.server.dodo_pending[checkout_id] = pending
             if pending["status"] == "creating":
                 pending["status"] = "pending"
+        self.server.persist_billing()
         self._json(
             {
                 "mode": "dodo",
@@ -711,29 +746,40 @@ class BrainRequestHandler(BaseHTTPRequestHandler):
         if pending is None:
             return self._error(404, "success event does not match a checkout created by this host")
         if int(time.time()) - int(pending.get("opened_at", 0)) > 24 * 3600:
-            pending["status"] = "expired"
+            with self.server.dodo_lock:
+                pending["status"] = "expired"
+            self.server.persist_billing()
             return self._error(410, "checkout confirmation window has expired")
         if str(metadata.get("sg16_pass") or "") != str(pending.get("pass") or ""):
             return self._error(400, "webhook pass does not match the host checkout")
         if str(metadata.get("sg16_region") or "") != str(pending.get("region") or ""):
             return self._error(400, "webhook region does not match the host checkout")
         try:
-            record = billing.record_from_webhook(event, self.server.billing_secret)
+            record = billing.record_from_webhook(
+                event,
+                self.server.billing_secret,
+                product_ids=self.brain_config.dodo_product_ids,
+            )
         except billing.VerificationError as exc:
             return self._error(400, str(exc))
         record["gateway"] = "dodo"
 
         webhook_id = str(self.headers.get("webhook-id") or "")
+        duplicate = False
         with self.server.dodo_lock:
             if webhook_id in self.server.dodo_seen_webhooks:
                 return self._json({"received": True, "event": event_type, "acted": False, "duplicate": True})
-            if pending.get("status") == "paid" and pending.get("record_token"):
-                self.server.dodo_seen_webhooks.add(webhook_id)
-                return self._json({"received": True, "event": event_type, "acted": False, "duplicate": True})
             self.server.dodo_seen_webhooks.add(webhook_id)
-            self.server.passes[record["token"]] = record
-            pending["status"] = "paid"
-            pending["record_token"] = record["token"]
+            self.server.dodo_seen_at[webhook_id] = int(time.time())
+            if pending.get("status") == "paid" and pending.get("record_token"):
+                duplicate = True
+            else:
+                self.server.passes[record["token"]] = record
+                pending["status"] = "paid"
+                pending["record_token"] = record["token"]
+        self.server.persist_billing()
+        if duplicate:
+            return self._json({"received": True, "event": event_type, "acted": False, "duplicate": True})
 
         self._json(
             {
@@ -789,7 +835,9 @@ class BrainRequestHandler(BaseHTTPRequestHandler):
         try:
             verified = billing.verify_record(record, self.server.billing_secret)
         except billing.VerificationError as exc:
-            self.server.passes.pop(token, None)
+            with self.server.dodo_lock:
+                self.server.passes.pop(token, None)
+            self.server.persist_billing()
             return self._error(403, f"pass token failed verification: {exc}")
         self._json({"valid": True, "record": verified})
 
@@ -819,9 +867,13 @@ class BrainRequestHandler(BaseHTTPRequestHandler):
                     ),
                     "paid_checkout_without_gateway": "disabled; no local paid passes are issued",
                     "storage": (
-                        "Pass verification state is held in this process memory. The browser stores "
-                        "its returned bearer token; deployment logging and retention depend on the host."
+                        "Issued passes, in-flight checkouts and webhook ids are saved to a durable "
+                        "file on this host (atomic writes, owner-only permissions) after every change "
+                        "and reloaded on restart; expired passes are pruned on load. The browser "
+                        "stores its returned bearer token; deployment logging and retention depend "
+                        "on the host."
                     ),
+                    "storage_last_save_ok": self.server.billing_store.last_error is None,
                     "signing_secret": (
                         "configured server-side"
                         if not self.server.billing_secret_ephemeral
@@ -944,6 +996,7 @@ def build_server(
     host: str | None = None,
     port: int | None = None,
     brain: SG16Brain | None = None,
+    billing_state_path: str | os.PathLike | None = None,
 ) -> BrainHTTPServer:
     cfg = config or BrainConfig.default()
     # ``port=0`` is a legitimate request for an ephemeral port; it must not be
@@ -951,7 +1004,10 @@ def build_server(
     resolved_host = host if host is not None else (os.environ.get("SG16_HOST") or cfg.host)
     resolved_port = int(os.environ.get("SG16_PORT") or cfg.port) if port is None else int(port)
     instance = brain or SG16Brain(cfg)
-    return BrainHTTPServer((resolved_host, resolved_port), BrainRequestHandler, instance, cfg)
+    return BrainHTTPServer(
+        (resolved_host, resolved_port), BrainRequestHandler, instance, cfg,
+        billing_state_path=billing_state_path,
+    )
 
 
 def main(argv: list[str] | None = None) -> int:

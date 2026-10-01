@@ -16,6 +16,7 @@ import { Panel, PanelTitle } from "@/components/ui/Panel";
 import { ModelGlyph } from "@/components/ModelGlyph";
 import { SUGGESTION_PROMPTS } from "@/lib/content";
 import { identityHeaders } from "@/lib/browser-identity";
+import { loadPassRecord } from "@/lib/billing";
 import type { ChatMessageDto } from "@/lib/types";
 
 // Chat uses the configured SG16 gateway. The active Python core is a limited
@@ -55,6 +56,12 @@ function renderContent(text: string) {
 
 function timeLabel(iso: string) {
   return new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+}
+
+// device-held pass, verified server-side by the core; absent or expired -> free tier
+function passHeader(): Record<string, string> {
+  const token = loadPassRecord()?.token;
+  return token ? { "X-SG16-Pass": token } : {};
 }
 
 export function ChatPanel({
@@ -166,7 +173,7 @@ export function ChatPanel({
     try {
       const res = await fetch("/api/brain", {
         method: "POST",
-        headers: identityHeaders({ "Content-Type": "application/json" }),
+        headers: identityHeaders({ "Content-Type": "application/json", ...passHeader() }),
         body: JSON.stringify({ sessionId, modelId: SOVEREIGN.id, message }),
       });
       const data = await res.json();
@@ -177,6 +184,8 @@ export function ChatPanel({
             `${data.error || "Fair-use pause active."} You can try again in about ${waitSec}s. Your text was kept in the composer history view.`,
           );
         }
+        // busy is not a failure of the message: give the text back so nothing is lost
+        if (data.busy) setInput(message);
         throw new Error(data.error || "The SG16 core is unreachable. Try again.");
       }
       setSessionId(data.sessionId);

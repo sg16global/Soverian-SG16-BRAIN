@@ -8,3 +8,10 @@ web/node_modules/
 pointoni/.next/
 pointoni/node_modules/
 .DS_Store
+
+# durable billing state (bearer-credential pass records) is host data, never committed
+state/
+.env
+.env.*
+!.env.example
+.venv/

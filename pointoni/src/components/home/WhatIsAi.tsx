@@ -3,6 +3,7 @@ import { ArrowRight } from "lucide-react";
 import { Panel } from "@/components/ui/Panel";
 import { ModelGlyph } from "@/components/ModelGlyph";
 import { AI_CAPABILITIES } from "@/lib/content";
+import { FallbackImg } from "./FallbackImg";
 
 // What-Is-AI brain image fix (1a68f73): the original build referenced
 // /images/ai-brain.jpg but the file was never shipped, causing a 404 and a
@@ -24,17 +25,12 @@ export function WhatIsAi() {
           </div>
 
           {/* restored brain image — now present in public/images */}
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img
+          <FallbackImg
             src="/images/ai-brain.jpg"
             alt="Artificial intelligence brain on a circuit board — neural circuits glowing cyan and blue"
             className="absolute inset-0 h-full w-full object-cover object-center"
             loading="lazy"
             decoding="async"
-            onError={(e) => {
-              // hide broken image but keep gradient fallback — section stays intact
-              (e.currentTarget as HTMLImageElement).style.opacity = "0";
-            }}
           />
 
           {/* overlays to ensure text contrast and depth */}

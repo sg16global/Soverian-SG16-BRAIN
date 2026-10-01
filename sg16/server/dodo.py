@@ -27,9 +27,12 @@ import json
 import urllib.error
 import urllib.request
 
-__all__ = ["DodoError", "DodoClient", "DEFAULT_TIMEOUT"]
+__all__ = ["DodoError", "DodoClient", "DEFAULT_TIMEOUT", "USER_AGENT"]
 
 DEFAULT_TIMEOUT = 10
+
+# Said plainly: this is the SG16 host talking, not a browser.
+USER_AGENT = "SG16-Brain/1.0 (+https://mistralbrain.com)"
 
 # Official Dodo Payments environment URLs (docs.dodopayments.com,
 # "API Reference - Introduction"): Test Mode and Live Mode.
@@ -86,6 +89,7 @@ class DodoClient:
                 "Authorization": f"Bearer {self.api_key}",
                 "Content-Type": "application/json",
                 "Accept": "application/json",
+                "User-Agent": USER_AGENT,
             },
         )
         try:

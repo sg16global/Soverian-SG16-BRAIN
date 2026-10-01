@@ -1,6 +1,7 @@
 import { CheckCircle2 } from "lucide-react";
 import { Panel } from "@/components/ui/Panel";
 import { RESPONSIBLE_CHECKLIST } from "@/lib/content";
+import { FallbackImg } from "./FallbackImg";
 
 export function ResponsibleAi() {
   return (
@@ -9,16 +10,12 @@ export function ResponsibleAi() {
         {/* shield — restored in 5d9ac32 */}
         <div className="relative hidden min-h-[220px] items-center justify-center overflow-hidden bg-[#08120f] md:flex">
           <div className="absolute inset-0 bg-gradient-to-br from-emerald-900/30 via-transparent to-cyan-900/20" />
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img
+          <FallbackImg
             src="/images/shield.png"
             alt="Shield protecting united people — responsible AI"
             className="relative h-48 w-48 object-contain"
             style={{ mixBlendMode: "screen", filter: "drop-shadow(0 0 22px rgba(34,224,140,.55))" }}
             loading="lazy"
-            onError={(e) => {
-              (e.currentTarget as HTMLImageElement).style.opacity = "0";
-            }}
           />
           <span className="absolute bottom-1 left-1 rounded-full border border-emerald-400/20 bg-emerald-500/10 px-1.5 py-0.5 font-mono2 text-[7px] tracking-widest text-emerald-300">
             SHIELD · 5d9ac32

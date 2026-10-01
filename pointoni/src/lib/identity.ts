@@ -12,6 +12,7 @@ import { db } from "@/db";
 import { apiTokens, authCodes, sovereignIdentities, users } from "@/db/schema";
 import { and, eq } from "drizzle-orm";
 import { PASSES, type PassId } from "@/lib/billing";
+import { brainVerifyPass } from "@/lib/brain-gateway";
 
 const CODE_TTL_MS = 10 * 60_000;
 const TOKEN_TTL_MS = 30 * 24 * 3600_000;
@@ -319,6 +320,8 @@ export async function resolveTier(req: Request): Promise<{
   email: string | null;
   bucketKey: string;
   limit: number;
+  /** host-verified pass token when the request proved one via X-SG16-Pass */
+  passToken: string | null;
 }> {
   const authorization = req.headers.get("authorization") ?? "";
   const match = /^Bearer\s+([^\s]+)$/i.exec(authorization);
@@ -343,8 +346,35 @@ export async function resolveTier(req: Request): Promise<{
     if (email) {
       const identity = await getIdentity(email);
       if (planActive(identity)) {
-        return { tier: "work", email, bucketKey: `work:${email}`, limit: WORK_BUCKET };
+        return { tier: "work", email, bucketKey: `work:${email}`, limit: WORK_BUCKET, passToken: null };
       }
+    }
+  }
+
+  // A device-held pass: the 64-hex token is only trusted after the core
+  // confirms it. Any failure (bad shape, core down, unknown or expired pass)
+  // simply falls through to the free tier.
+  const passHeader = req.headers.get("x-sg16-pass")?.trim() ?? "";
+  if (/^[a-f0-9]{64}$/.test(passHeader)) {
+    try {
+      const verified = await brainVerifyPass(passHeader);
+      const record = verified.record;
+      if (
+        verified.valid === true &&
+        record.token === passHeader &&
+        typeof record.expires_at === "number" &&
+        record.expires_at * 1000 > Date.now()
+      ) {
+        return {
+          tier: "work",
+          email: null,
+          bucketKey: `work:pass:${stableKey(passHeader).slice(0, 32)}`,
+          limit: WORK_BUCKET,
+          passToken: passHeader,
+        };
+      }
+    } catch {
+      // unverifiable pass -> free tier
     }
   }
 
@@ -356,5 +386,5 @@ export async function resolveTier(req: Request): Promise<{
     req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
     "anon";
   const ipKey = crypto.createHash("sha256").update(rawIp).digest("hex").slice(0, 16);
-  return { tier: "free", email: null, bucketKey: `free:${ipKey}`, limit: FREE_BUCKET };
+  return { tier: "free", email: null, bucketKey: `free:${ipKey}`, limit: FREE_BUCKET, passToken: null };
 }

@@ -1,6 +1,10 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+  // scripts/smoke-ladder.sh builds its throwaway copy into its own directory so a
+  // test run can never overwrite the live site's .next build.
+  distDir: process.env.SG16_NEXT_DIST_DIR || ".next",
+
   // Allow the sandboxed live-preview hosts (https://<port>-*.e2b.app) to load
   // dev assets and call same-origin API routes without origin rejection.
   allowedDevOrigins: ["*.e2b.app"],

@@ -127,6 +127,24 @@ export async function brainChat(
   });
 }
 
+/** The core's safety-gate verdict for one payload (POST /api/introspect). */
+export async function brainIntrospect(
+  text: string,
+): Promise<{ allowed: boolean; refusal?: string }> {
+  const report = await callBrain<{ verdict?: { allowed?: boolean }; refusal?: string }>(
+    "/api/introspect",
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text }),
+    },
+  );
+  if (typeof report.verdict?.allowed !== "boolean") {
+    throw new BrainGatewayError("bad-payload", "core returned no gate verdict");
+  }
+  return { allowed: report.verdict.allowed, refusal: report.refusal };
+}
+
 /** Readiness probe against the core host (GET /api/health). */
 export async function brainHealth(): Promise<BrainHealth> {
   return callBrain<BrainHealth>("/api/health", { method: "GET" });

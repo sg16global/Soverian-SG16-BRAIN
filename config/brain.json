@@ -125,16 +125,16 @@
       "month": 15
     },
     "dodo": {
-      "test_mode": true,
+      "test_mode": false,
       "api_base_test": "https://test.dodopayments.com",
       "api_base_live": "https://live.dodopayments.com",
       "api_key": "",
       "webhook_secret": "",
       "product_ids": {
-        "day": "",
-        "week": "",
-        "half": "",
-        "month": ""
+        "day": "pdt_0NoUNgIwv3XfCVptVxLaa",
+        "week": "pdt_0NoUNgD5Yjz1cRYOwIixQ",
+        "half": "pdt_0NoUNg8AK64S8TkG2b5tK",
+        "month": "pdt_0NoUNg3MglpZRU2yPvduq"
       },
       "note": "Configure DODO_API_KEY, DODO_WEBHOOK_SECRET, and one product ID per pass. Paid checkout is disabled when the gateway is not configured. SG16_BILLING_SECRET should be a high-entropy server-only value. Zero-rate regional passes require a trusted proxy configured with SG16_PROXY_AUTH_SECRET."
     },

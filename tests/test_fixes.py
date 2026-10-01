@@ -92,7 +92,12 @@ def _sign_webhook(
     }
 
 
-def _success_event(pass_id: str = "week", region: str | None = "Malaysia", amount: int = 500) -> dict:
+def _success_event(
+    pass_id: str = "week",
+    region: str | None = "Malaysia",
+    amount: int = 500,
+    product_id: str | None = "pds_test_week",
+) -> dict:
     return {
         "id": "evt_test_1",
         "type": "payment.succeeded",
@@ -102,6 +107,7 @@ def _success_event(pass_id: str = "week", region: str | None = "Malaysia", amoun
             "session_id": "sess_test_1",
             "amount": amount,
             "currency": "usd",
+            "product_cart": [{"product_id": product_id, "quantity": 1}] if product_id else [],
             "metadata": {
                 "sg16_pass": pass_id,
                 "sg16_region": region or "",
@@ -184,11 +190,49 @@ class WebhookSignatureTests(unittest.TestCase):
         with self.assertRaisesRegex(billing.VerificationError, "amount is missing"):
             billing.record_from_webhook(event, SECRET)
 
-    def test_record_rejects_non_usd_currency(self) -> None:
-        event = _success_event()
-        event["data"]["currency"] = "EUR"
-        with self.assertRaisesRegex(billing.VerificationError, "currency must be USD"):
+    def test_non_usd_charge_uses_usd_settlement_amount(self) -> None:
+        # Dodo charged MYR (RM12.71) for a USD $3 product: settlement is the USD view
+        event = _success_event(pass_id="day", amount=1271, product_id="pdt_day")
+        event["data"].update({"currency": "MYR", "settlement_currency": "USD", "settlement_amount": 281})
+        record = billing.record_from_webhook(event, SECRET, product_ids={"day": "pdt_day"})
+        self.assertEqual(record["pass"], "day")
+
+    def test_non_usd_charge_with_zero_usd_settlement_is_rejected(self) -> None:
+        event = _success_event(pass_id="day", amount=1271)
+        event["data"].update({"currency": "MYR", "settlement_currency": "USD", "settlement_amount": 0})
+        with self.assertRaisesRegex(billing.VerificationError, "settlement"):
             billing.record_from_webhook(event, SECRET)
+
+    def test_non_usd_charge_without_settlement_warns_and_needs_positive_amount(self) -> None:
+        event = _success_event(pass_id="day", amount=1271)
+        event["data"]["currency"] = "MYR"
+        with self.assertLogs("sg16.billing", level="WARNING"):
+            self.assertEqual(billing.record_from_webhook(event, SECRET)["pass"], "day")
+        event["data"]["amount"] = 0
+        with self.assertRaisesRegex(billing.VerificationError, "greater than zero"):
+            billing.record_from_webhook(event, SECRET)
+
+    def test_non_usd_settlement_in_another_currency_falls_back_to_warning_path(self) -> None:
+        event = _success_event(pass_id="day", amount=1271)
+        event["data"].update({"currency": "MYR", "settlement_currency": "MYR", "settlement_amount": 1200})
+        with self.assertLogs("sg16.billing", level="WARNING"):
+            billing.record_from_webhook(event, SECRET)
+
+    def test_usd_requires_exact_amount_even_with_settlement_fields(self) -> None:
+        event = _success_event(pass_id="day", amount=299)
+        event["data"].update({"settlement_currency": "USD", "settlement_amount": 300})
+        with self.assertRaisesRegex(billing.VerificationError, "does not match"):
+            billing.record_from_webhook(event, SECRET)
+
+    def test_product_id_is_the_primary_check(self) -> None:
+        ids = {"week": "pds_test_week"}
+        billing.record_from_webhook(_success_event(), SECRET, product_ids=ids)
+        with self.assertRaisesRegex(billing.VerificationError, "product"):
+            billing.record_from_webhook(_success_event(product_id="pds_other"), SECRET, product_ids=ids)
+        with self.assertRaisesRegex(billing.VerificationError, "product"):
+            billing.record_from_webhook(_success_event(product_id=None), SECRET, product_ids=ids)
+        # a tier with no configured product id is not product-checked
+        billing.record_from_webhook(_success_event(product_id=None), SECRET, product_ids={"week": ""})
 
     def test_record_rejects_unknown_tier(self) -> None:
         with self.assertRaises(billing.VerificationError):

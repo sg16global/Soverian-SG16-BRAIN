@@ -24,7 +24,6 @@
 // ===================================================================
 
 import { distillCharter, type CharterBody } from "./charter-prompt";
-import { warmAlias } from "./warm-alias";
 
 export type OllamaTurn = {
   /** the model that actually answered (daemon-reported) */
@@ -114,7 +113,9 @@ export async function ollamaChat(input: OllamaTurnInput): Promise<OllamaTurn> {
   const system = distillCharter(body, {
     tier: input.tier,
     humanitarianRegion: input.humanitarianRegion,
-    runtime: `the local heart-bridge (Ollama, alias "${warmAlias("ollama")}")`,
+    // constant on purpose: the system prompt must be byte-identical every
+    // request so Ollama can reuse its cached prompt start
+    runtime: "a local Ollama model",
     context: input.context ?? null,
   });
 

@@ -13,8 +13,10 @@ import {
   brainChat,
   brainForgetSession,
   brainHealth,
+  brainIntrospect,
 } from "@/lib/brain-gateway";
-import { OllamaBridgeError, ollamaChat, ollamaEnabled, ollamaHealth } from "@/lib/ollama-brain";
+import { ollamaChat, ollamaEnabled, ollamaHealth } from "@/lib/ollama-brain";
+import { BUSY_TEXT, lastAnswer, recordAnswer, runLadder, sharedLimiter, type Engine } from "@/lib/answer-ladder";
 import { charterDigest, type CharterBody } from "@/lib/charter-prompt";
 import { warmFallbackLine, warmRateLimitLine, tierChip } from "@/lib/warm-alias";
 import { childrenPreflight, isChildrenOrigin, withChildrenCors } from "@/lib/cors-lock";
@@ -32,11 +34,12 @@ export const runtime = "nodejs";
 // is still answered locally and flagged `brain: "fallback-local"` so the
 // interface never strands the pilot.
 
-type BrainSource = "core" | "ollama" | "fallback-local" | "relay";
+type BrainSource = Engine | "relay";
 
-// Fallback order is the doctrine's, top to bottom:
-//   core      → the Q16.16 sovereign runtime on the operator's own host
-//   ollama    → the local heart-bridge (operator's own metal, zero vendor API)
+// The ladder, top to bottom (see lib/answer-ladder.ts):
+//   core gate → screens the message first; blocked gets the core's refusal
+//   ollama    → Mistral on the operator's own metal answers clean messages
+//   core      → the deterministic Q16.16 runtime if Ollama fails or times out
 //   fallback  → the local guard channel so the pilot is never stranded
 // A children shell is a *body*: no identity, and it never hears about money.
 //
@@ -64,6 +67,7 @@ export async function GET(req: NextRequest) {
         persistence: persistenceMode,
         core: health,
         heart,
+        lastAnswered: lastAnswer(),
         charter: charterDigest(),
       });
     } catch (err) {
@@ -202,6 +206,11 @@ export async function POST(req: NextRequest) {
   if (!model) {
     return json({ error: "Unknown model." }, { status: 404 });
   }
+  // Queue full: answer at once instead of hanging, and before anything is stored.
+  if (model.selfHosted && ollamaEnabled() && sharedLimiter().saturated()) {
+    recordAnswer("busy");
+    return json({ error: BUSY_TEXT, busy: true, brain: "busy" }, { status: 503, headers: { "Retry-After": "3" } });
+  }
 
   // ---- the thinking ladder: core → heart-bridge → guard → relay ----------
   // One ladder, used by every body. A turn reports which runtime actually
@@ -229,49 +238,34 @@ export async function POST(req: NextRequest) {
       return { content: local.content, brain: "relay", relay: true };
     }
 
-    try {
-      // Sovereign path: the SG16 core answers through its master door.
-      const passToken = account?.identity && planActive(account.identity)
-        ? account.identity.planToken
-        : null;
-      const transaction = await brainChat(
-        text,
-        sessionId ?? `ephemeral-${randomUUID()}`,
-        passToken,
-      );
-      return { content: transaction.reply, brain: "core", relay: false };
-    } catch (err) {
-      const detail = err instanceof BrainGatewayError ? err.message : "core link down";
-
-      // Second in the order: the operator's own heart-bridge. Same machine,
-      // same law, zero vendor contract — tried before settling for the guard.
-      if (ollamaEnabled()) {
-        try {
-          const turn = await ollamaChat({
-            message: text,
-            body: bodyKind,
-            tier: tierInfo.tier,
-            context: null,
-          });
-          return { content: turn.reply, brain: "ollama", relay: false };
-        } catch (bridgeErr) {
-          if (!(bridgeErr instanceof OllamaBridgeError)) throw bridgeErr;
-        }
-      }
-
-      // The charter guarantees patience and availability: degrade to the local
-      // guard engine instead of failing the pilot, and say so warmly.
-      const local = await generateReply(
-        { id: model.id, name: model.name, vendor: model.vendor, selfHosted: true },
-        [],
-        text,
-      );
-      return {
-        content: [warmFallbackLine("fallback-local", detail), local.content].join("\n\n"),
-        brain: "fallback-local",
-        relay: false,
-      };
-    }
+    const passToken = (account?.identity && planActive(account.identity)
+      ? account.identity.planToken
+      : null) ?? tierInfo.passToken;
+    const result = await runLadder(text, {
+      // 1. the core's gate screens every message before any model sees it
+      gate: brainIntrospect,
+      // 2. Mistral via Ollama answers clean messages. The system prompt is the
+      //    same for every request of a body (no tier, no context) so Ollama
+      //    can reuse the cached prompt start.
+      ollama: ollamaEnabled()
+        ? async (t) => (await ollamaChat({ message: t, body: bodyKind })).reply
+        : null,
+      // 3. deterministic core when Ollama fails or times out
+      core: async (t) =>
+        (await brainChat(t, sessionId ?? `ephemeral-${randomUUID()}`, passToken)).reply,
+      // 4. local guard engine so the pilot is never stranded
+      local: async (t, detail) => {
+        const local = await generateReply(
+          { id: model.id, name: model.name, vendor: model.vendor, selfHosted: true },
+          [],
+          t,
+        );
+        return [warmFallbackLine("fallback-local", detail), local.content].join("\n\n");
+      },
+      limiter: sharedLimiter(),
+    });
+    recordAnswer(result.engine);
+    return { content: result.content, brain: result.engine, relay: false };
   };
 
   // ---- the children's edition: nothing is written down -------------------

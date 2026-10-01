@@ -130,7 +130,7 @@ export default function SubscriptionPage() {
             {record ? (
               <p className="font-mono2 text-[11px] tracking-wider text-emerald-300">
                 STORED PASS · {passLabel(record.pass)} · ${record.price_charged} CHARGED ·
-                EXPIRES {formatExpiry(record.expires_at)} · HOST VALIDATION REQUIRED
+                EXPIRES {formatExpiry(record.expires_at)} · PREMIUM CHAT LIVE ON THIS DEVICE
               </p>
             ) : (
               <p className="font-mono2 text-[11px] tracking-wider text-slate-400">

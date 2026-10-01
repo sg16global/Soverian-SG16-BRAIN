@@ -2,6 +2,7 @@ import Link from "next/link";
 import { Shield, MessageSquare } from "lucide-react";
 import { Emblem } from "@/components/chrome/Emblem";
 import { HERO_PILLARS } from "@/lib/content";
+import { FallbackImg } from "./FallbackImg";
 
 function Pillar({ label }: { label: string }) {
   return (
@@ -44,17 +45,13 @@ function GlobeModule() {
         <div className="absolute inset-3 rounded-full border border-blue-400/30 spin-rev" />
         <div className="absolute inset-7 rounded-full border border-blue-400/20" />
         {/* sovereign globe imagery — restored in 5d9ac32 */}
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img
+        <FallbackImg
+          onMissing="hide"
           src="/images/globe.png"
           alt="One brain global vision network globe"
           className="absolute inset-4 h-[calc(100%-32px)] w-[calc(100%-32px)] rounded-full object-cover"
           style={{ mixBlendMode: "screen", filter: "drop-shadow(0 0 24px rgba(60,140,255,.55))" }}
           loading="eager"
-          onError={(e) => {
-            // fallback to emblem if globe asset missing — prevents broken hero
-            (e.currentTarget as HTMLImageElement).style.display = "none";
-          }}
         />
         {/* fallback inner glow when image fails */}
         <div className="absolute inset-4 rounded-full bg-gradient-to-br from-blue-600/20 via-cyan-500/10 to-red-600/20 blur-[1px]" />

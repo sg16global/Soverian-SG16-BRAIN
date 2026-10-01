@@ -32,10 +32,13 @@ import base64
 import binascii
 import hashlib
 import hmac
+import logging
 import secrets
 import time
 from dataclasses import dataclass
 from typing import Mapping
+
+log = logging.getLogger("sg16.billing")
 
 __all__ = [
     "Pass",
@@ -297,13 +300,23 @@ def record_from_webhook(
     secret: str,
     now: float | None = None,
     provider: str = "dodo",
+    product_ids: Mapping[str, str] | None = None,
 ) -> dict:
     """Turn a *verified* success event into a signed, duration-locked record.
 
     The pass tier and region travel in the checkout metadata (``sg16_pass``,
-    ``sg16_region``).  The charged amount is cross-checked against the host's
-    own price derivation (smallest currency unit, e.g. 500 == $5.00), so a
-    tampered or mismatched webhook cannot mint a pass for another tier.
+    ``sg16_region``).  Checks, in order of authority:
+
+    1. **Product** (primary): when ``product_ids`` maps the tier to a Dodo
+       product id, the payment's ``product_cart`` must contain it.
+    2. **Amount**: a USD payment must equal the host price exactly (smallest
+       unit, 300 == $3.00).  Dodo may charge in the customer's local currency
+       (adaptive pricing), so for any other currency the payment's
+       ``settlement_amount`` is used when ``settlement_currency`` is USD (it is
+       net of conversion and fees, so only ``> 0`` is required); with no USD
+       settlement field the charged amount must be ``> 0`` and a warning is
+       logged.
+
     Humanitarian tiers are structurally impossible through the gateway and
     are rejected outright - the bypass never charges.
     """
@@ -328,6 +341,21 @@ def record_from_webhook(
             "issue them through the local bypass instead"
         )
 
+    expected_product = (product_ids or {}).get(pass_id)
+    if expected_product:
+        cart = payment.get("product_cart")
+        seen = {
+            str(item.get("product_id"))
+            for item in (cart if isinstance(cart, list) else [])
+            if isinstance(item, Mapping)
+        }
+        if payment.get("product_id"):
+            seen.add(str(payment["product_id"]))
+        if expected_product not in seen:
+            raise VerificationError(
+                f"payment does not contain the product configured for {pass_id!r}"
+            )
+
     amount = payment.get("amount", payment.get("total_amount"))
     if amount is None:
         raise VerificationError("payment amount is missing")
@@ -335,13 +363,34 @@ def record_from_webhook(
         paid = int(amount)
     except (TypeError, ValueError) as exc:
         raise VerificationError("payment amount is not an integer") from exc
-    if paid != PASSES[pass_id].price * 100:
-        raise VerificationError(
-            f"paid amount {paid} does not match the host price for {pass_id!r}"
-        )
     currency = str(payment.get("currency") or payment.get("currency_code") or "").upper()
-    if currency != "USD":
-        raise VerificationError("payment currency must be USD")
+    if currency == "USD":
+        if paid != PASSES[pass_id].price * 100:
+            raise VerificationError(
+                f"paid amount {paid} does not match the host price for {pass_id!r}"
+            )
+    else:
+        settle_currency = str(payment.get("settlement_currency") or "").upper()
+        settle_amount = payment.get("settlement_amount")
+        if (
+            settle_currency == "USD"
+            and isinstance(settle_amount, int)
+            and not isinstance(settle_amount, bool)
+        ):
+            if settle_amount <= 0:
+                raise VerificationError("USD settlement amount must be greater than zero")
+            log.info(
+                "accepted %s payment for %r via USD settlement %s (charged %s %s)",
+                currency or "unknown-currency", pass_id, settle_amount, paid, currency,
+            )
+        else:
+            if paid <= 0:
+                raise VerificationError("payment amount must be greater than zero")
+            log.warning(
+                "payment for %r charged in %r with no USD settlement field; "
+                "accepted on product match and amount > 0 only",
+                pass_id, currency or "unknown",
+            )
 
     return issue_record(pass_id, region, secret, provider=provider, now=now)
 
