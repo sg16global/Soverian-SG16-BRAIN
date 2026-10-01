@@ -13,6 +13,7 @@ import { apiTokens, authCodes, sovereignIdentities, users } from "@/db/schema";
 import { and, eq } from "drizzle-orm";
 import { PASSES, type PassId } from "@/lib/billing";
 import { brainVerifyPass } from "@/lib/brain-gateway";
+import { clientIdentity } from "@/lib/rate-limit";
 
 const CODE_TTL_MS = 10 * 60_000;
 const TOKEN_TTL_MS = 30 * 24 * 3600_000;
@@ -380,11 +381,20 @@ export async function resolveTier(req: Request): Promise<{
 
   // Behind a trusted reverse proxy, configure it to overwrite these headers;
   // the framework's generic Request API exposes no reliable socket peer IP.
-  const rawIp =
-    req.headers.get("x-vercel-forwarded-for")?.split(",")[0]?.trim() ||
-    req.headers.get("cf-connecting-ip")?.trim() ||
-    req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
-    "anon";
-  const ipKey = crypto.createHash("sha256").update(rawIp).digest("hex").slice(0, 16);
-  return { tier: "free", email: null, bucketKey: `free:${ipKey}`, limit: FREE_BUCKET, passToken: null };
+  // Forwarding headers are spoofable, so a per-visitor key exists only for a
+  // request that proved it came through our proxy (see rate-limit.ts). Without
+  // that proof every free visitor shares one generous bucket instead - a flood
+  // guard, not a per-person limit - rather than trusting a forged address.
+  const visitor = clientIdentity(req.headers);
+  if (visitor.key) {
+    return { tier: "free", email: null, bucketKey: `free:${visitor.key}`, limit: FREE_BUCKET, passToken: null };
+  }
+  const sharedLimit = Number(process.env.SG16_FREE_SHARED_PER_HOUR);
+  return {
+    tier: "free",
+    email: null,
+    bucketKey: "free:shared",
+    limit: Number.isInteger(sharedLimit) && sharedLimit > 0 ? sharedLimit : 2000,
+    passToken: null,
+  };
 }

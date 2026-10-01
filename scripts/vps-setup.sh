@@ -52,17 +52,29 @@ npm install --ignore-scripts --no-audit --no-fund
 npm run sync-onnx
 npx next build
 
-echo "== (6/7) engines under systemd =="
+echo "== (6/7) engines under systemd (self-healing) =="
+# With a domain, Caddy is the only thing that talks to the platform, so it (and
+# the core, which only the platform talks to) listen on loopback only.
+if [ -n "$DOMAIN" ]; then WEB_BIND=127.0.0.1; else WEB_BIND=0.0.0.0; fi
+
+# Restart=always brings a crashed service back after RestartSec. The start limit
+# (10 starts in 5 minutes) stops a hot crash loop from burning the CPU; the
+# watchdog below clears that state and restarts the unit if it ever trips.
 cat > /etc/systemd/system/sg16-core.service <<UNIT
 [Unit]
 Description=SG16 Core Brain (sg16 python runtime)
 After=network.target
+StartLimitIntervalSec=300
+StartLimitBurst=10
 [Service]
 WorkingDirectory=$APP
-ExecStart=$APP/.venv/bin/python $APP/scripts/serve.py 0.0.0.0 $CORE_PORT
+ExecStart=$APP/.venv/bin/python $APP/scripts/serve.py 127.0.0.1 $CORE_PORT
 Restart=always
 RestartSec=5
+TimeoutStopSec=20
+LimitNOFILE=65535
 Environment=SG16_TRANSPORT=online
+EnvironmentFile=-$APP/.env
 [Install]
 WantedBy=multi-user.target
 UNIT
@@ -71,26 +83,78 @@ cat > /etc/systemd/system/sg16-web.service <<UNIT
 [Unit]
 Description=SG16 Platform (pointoni/next)
 After=network.target sg16-core.service
+StartLimitIntervalSec=300
+StartLimitBurst=10
 [Service]
 WorkingDirectory=$APP/pointoni
-ExecStart=/usr/bin/npx next start -p $WEB_PORT -H 0.0.0.0
+ExecStart=/usr/bin/npx next start -p $WEB_PORT -H $WEB_BIND
 Restart=always
 RestartSec=5
+TimeoutStopSec=20
+LimitNOFILE=65535
+Environment=NODE_ENV=production
 EnvironmentFile=-$APP/.env
 [Install]
 WantedBy=multi-user.target
 UNIT
 
+# Watchdog: every minute, curl the core and the platform (--max-time inside the
+# script); after 3 consecutive failures of one service, restart just that one.
+# Logs go to the journal:  journalctl -u sg16-healthcheck
+# Optional alert: put  SG16_ALERT_CMD=/path/to/your/script  in /etc/sg16/healthcheck.env
+cat > /etc/systemd/system/sg16-healthcheck.service <<UNIT
+[Unit]
+Description=SG16 watchdog (core + platform health)
+[Service]
+Type=oneshot
+ExecStart=$APP/scripts/healthcheck.sh
+RuntimeDirectory=sg16-healthcheck
+RuntimeDirectoryPreserve=yes
+EnvironmentFile=-/etc/sg16/healthcheck.env
+TimeoutStartSec=60
+UNIT
+
+cat > /etc/systemd/system/sg16-healthcheck.timer <<UNIT
+[Unit]
+Description=Run the SG16 watchdog every minute
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=60s
+AccuracySec=5s
+[Install]
+WantedBy=timers.target
+UNIT
+chmod +x "$APP/scripts/healthcheck.sh"
+
 # .env owned by root, never printed; owner fills SG16_IDENTITY_SECRET etc.
-[ -f "$APP/.env" ] || { install -m 600 /dev/null "$APP/.env"; cat > "$APP/.env" <<EOF
+if [ ! -f "$APP/.env" ]; then
+  install -m 600 /dev/null "$APP/.env"
+  cat > "$APP/.env" <<EOF
 # SG16 platform secrets — owner fills these on the VPS (never in chat, never in git)
 SG16_IDENTITY_SECRET=change-me-$(date +%s)
-SG16_CORE_URL=http://127.0.0.1:$CORE_PORT
+SG16_BRAIN_URL=http://127.0.0.1:$CORE_PORT
+# Optional — see docs/OPERATIONS.md:
+# SG16_RATE_PER_MINUTE=8
+# SG16_RATE_PER_HOUR=60
+# SG16_RATE_GLOBAL_PER_MINUTE=300
+# TURNSTILE_SECRET_KEY=
+# TURNSTILE_SITE_KEY=
+# SG16_METRICS_LOG=1
 EOF
-}
+fi
+
+# Shared secret that proves a request came through OUR proxy. Without it the
+# platform ignores forwarding headers (they can be forged) and per-visitor rate
+# limits stay off. Generated here, written to .env and the Caddyfile, never printed.
+if ! grep -q '^SG16_PROXY_AUTH_SECRET=' "$APP/.env"; then
+  PROXY_SECRET="$(head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n')"
+  printf '\nSG16_PROXY_AUTH_SECRET=%s\n' "$PROXY_SECRET" >> "$APP/.env"
+fi
+PROXY_SECRET="$(grep '^SG16_PROXY_AUTH_SECRET=' "$APP/.env" | tail -1 | cut -d= -f2-)"
 
 systemctl daemon-reload
 systemctl enable --now sg16-core sg16-web
+systemctl enable --now sg16-healthcheck.timer
 
 if [ -n "$DOMAIN" ]; then
   echo "== (7/7) Caddy front door + auto-HTTPS for $DOMAIN =="
@@ -100,12 +164,46 @@ if [ -n "$DOMAIN" ]; then
     curl -fsSL https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt > /etc/apt/sources.list.d/caddy-stable.list
     apt-get update -qq && apt-get install -y -qq caddy >/dev/null
   fi
+  # Real client address for per-visitor rate limits. If the site sits behind
+  # Cloudflare, Caddy must trust Cloudflare's ranges so it can read the visitor
+  # from CF-Connecting-IP; otherwise every visitor looks like one Cloudflare
+  # address. The platform only believes the address when the request carries the
+  # shared secret below.
+  CF_RANGES="$(curl -fsS --max-time 10 https://www.cloudflare.com/ips-v4 2>/dev/null; echo; curl -fsS --max-time 10 https://www.cloudflare.com/ips-v6 2>/dev/null || true)"
+  CF_RANGES="$(echo "$CF_RANGES" | tr '\n' ' ' | sed 's/  */ /g;s/^ //;s/ $//')"
+  CADDY_TRUST=""
+  if [ -n "$CF_RANGES" ]; then
+    CADDY_TRUST="{
+    servers {
+        trusted_proxies static $CF_RANGES
+        client_ip_headers CF-Connecting-IP X-Forwarded-For
+    }
+}"
+  fi
+  [ -f /etc/caddy/Caddyfile ] && cp /etc/caddy/Caddyfile /etc/caddy/Caddyfile.sg16-backup
+  umask 027
   cat > /etc/caddy/Caddyfile <<CADDY
+$CADDY_TRUST
+$DOMAIN {
+    encode zstd gzip
+    reverse_proxy 127.0.0.1:$WEB_PORT {
+        # overwrite anything the client sent with the address Caddy resolved
+        header_up CF-Connecting-IP {client_ip}
+        header_up X-SG16-Proxy-Auth $PROXY_SECRET
+    }
+}
+CADDY
+  chgrp caddy /etc/caddy/Caddyfile 2>/dev/null || true
+  # never leave the front door broken: fall back to the plain config if this one does not validate
+  if ! caddy validate --config /etc/caddy/Caddyfile >/dev/null 2>&1; then
+    echo "WARNING: generated Caddyfile did not validate; using the plain config (no per-visitor rate limiting)"
+    cat > /etc/caddy/Caddyfile <<CADDY
 $DOMAIN {
     encode zstd gzip
     reverse_proxy 127.0.0.1:$WEB_PORT
 }
 CADDY
+  fi
   systemctl reload caddy || systemctl restart caddy
 fi
 

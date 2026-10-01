@@ -16,13 +16,26 @@ import {
   brainIntrospect,
 } from "@/lib/brain-gateway";
 import { ollamaChat, ollamaEnabled, ollamaHealth, ollamaTimeoutMs } from "@/lib/ollama-brain";
-import { BUSY_TEXT, lastAnswer, queueWaitMs, recordAnswer, runLadder, sharedLimiter, type Engine } from "@/lib/answer-ladder";
+import { clientIdentity, sharedRateLimiter } from "@/lib/rate-limit";
+import { checkHuman, sharedHumanDeps, turnstileAppliesTo, turnstileEnabled, turnstileSiteKey } from "@/lib/turnstile";
+import { CHILD_MAX_NEW_TOKENS, childHooks } from "@/lib/child-safety";
+import { BUSY_TEXT, answerMetrics, lastAnswer, queueWaitMs, recordAnswer, runLadder, sharedLimiter, type Engine } from "@/lib/answer-ladder";
 import { charterDigest, type CharterBody } from "@/lib/charter-prompt";
 import { warmFallbackLine, warmRateLimitLine, tierChip } from "@/lib/warm-alias";
 import { childrenPreflight, isChildrenOrigin, withChildrenCors } from "@/lib/cors-lock";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
+
+function rateLimitedLine(child: boolean, scope: "visitor" | "global"): string {
+  if (scope === "global") return "I'm very busy right now - please try again in a moment.";
+  return child
+    ? "Wow, that's a lot of questions! Let's take a tiny rest and try again in a moment."
+    : "You're sending messages very quickly - please wait a few seconds and try again.";
+}
+
+// a chat message is at most 8k chars; anything near this size is not a chat
+const MAX_BODY_BYTES = 64 * 1024;
 
 // /api/brain — the sovereign chat routing point.
 //
@@ -55,6 +68,17 @@ export async function OPTIONS(req: NextRequest) {
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
 
+  // whether the page should show the Turnstile widget (the site key is public by design)
+  if (searchParams.get("probe") === "turnstile") {
+    return withChildrenCors(
+      req,
+      NextResponse.json({
+        enabled: turnstileEnabled() && turnstileAppliesTo(isChildrenOrigin(req)),
+        siteKey: turnstileAppliesTo(isChildrenOrigin(req)) ? turnstileSiteKey() : null,
+      }),
+    );
+  }
+
   if (searchParams.get("probe") === "health") {
     // The pilot deserves the whole honest picture: the core first, then the
     // heart-bridge, plus which law the answer would be spoken under.
@@ -68,6 +92,7 @@ export async function GET(req: NextRequest) {
         core: health,
         heart,
         lastAnswered: lastAnswer(),
+        metrics: answerMetrics(),
         charter: charterDigest(),
       });
     } catch (err) {
@@ -137,8 +162,48 @@ export async function GET(req: NextRequest) {
 // wider process-local bucket, same configured core path.
 export async function POST(req: NextRequest) {
   // A body's shape is decided by its origin, never by its request body:
-  // a children shell cannot ask to be treated as the flagship.
-  const children = isChildrenOrigin(req);
+  // a children shell cannot ask to be treated as the flagship. The body may
+  // only ever tighten that: audience "child" from ANY origin selects the
+  // children's path (stricter prompt, checks, no storage); no field loosens it.
+  const originChildren = isChildrenOrigin(req);
+
+  // Refuse oversized bodies before reading them (messages are capped at 8k chars).
+  if (Number(req.headers.get("content-length") ?? 0) > MAX_BODY_BYTES) {
+    return withChildrenCors(
+      req,
+      NextResponse.json({ error: "That message is too big to send." }, { status: 413 }),
+    );
+  }
+
+  // Per-visitor limit, before any body parsing or database work. The visitor key
+  // is a salted hash held in memory only; nothing about the visitor is stored or
+  // logged. Over the limit is a friendly 429, never an error page.
+  const decision = sharedRateLimiter().check(clientIdentity(req.headers));
+  if (!decision.ok) {
+    recordAnswer("rate-limited");
+    return withChildrenCors(
+      req,
+      NextResponse.json(
+        {
+          error: rateLimitedLine(originChildren, decision.scope),
+          rateLimited: true,
+          friend: originChildren,
+          retryAt: Date.now() + decision.retryAfterSec * 1000,
+        },
+        { status: 429, headers: { "Retry-After": String(decision.retryAfterSec) } },
+      ),
+    );
+  }
+  const body = (await req.json().catch(() => null)) as {
+    sessionId?: unknown;
+    modelId?: unknown;
+    message?: unknown;
+    forgetSessionId?: unknown;
+    audience?: unknown;
+    turnstileToken?: unknown;
+    humanToken?: unknown;
+  } | null;
+  const children = originChildren || body?.audience === "child";
   const bodyKind: CharterBody = children ? "children" : "flagship";
 
   const tierInfo = await resolveTier(req);
@@ -173,13 +238,6 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const body = (await req.json().catch(() => null)) as {
-    sessionId?: unknown;
-    modelId?: unknown;
-    message?: unknown;
-    forgetSessionId?: unknown;
-  } | null;
-
   if (typeof body?.forgetSessionId === "string") {
     const forgetId = body.forgetSessionId;
     if (forgetId.length > 64) return json({ error: "Session id is invalid." }, { status: 400 });
@@ -188,7 +246,8 @@ export async function POST(req: NextRequest) {
   }
 
   const message = typeof body?.message === "string" ? body.message.trim() : "";
-  const modelId = typeof body?.modelId === "string" ? body.modelId : "sg16-brain";
+  // a child is always answered by the sovereign model, whatever the client asked for
+  const modelId = !children && typeof body?.modelId === "string" ? body.modelId : "sg16-brain";
   if (!message) {
     return json({ error: "Message is required." }, { status: 400 });
   }
@@ -198,6 +257,24 @@ export async function POST(req: NextRequest) {
       { status: 413 },
     );
   }
+
+  // Optional Cloudflare Turnstile (off unless both keys are set). Fails open to
+  // the rate limiter if Cloudflare cannot be reached.
+  // The children's edition promises no third-party scripts, so it is only
+  // challenged if the operator opts in with TURNSTILE_ON_CHILDREN=1.
+  const human = turnstileAppliesTo(children)
+    ? await checkHuman(
+        { turnstileToken: body?.turnstileToken, humanToken: body?.humanToken },
+        sharedHumanDeps(),
+      )
+    : ({ ok: true } as const);
+  if (!human.ok) {
+    return json(
+      { error: "Please complete the quick check below, then send your message again.", turnstileRequired: true },
+      { status: 403 },
+    );
+  }
+  const humanExtra = "humanToken" in human && human.humanToken ? { humanToken: human.humanToken } : {};
 
   await ensureSeeded();
   const account = children ? null : await resolveAccount(req);
@@ -241,6 +318,7 @@ export async function POST(req: NextRequest) {
     const passToken = (account?.identity && planActive(account.identity)
       ? account.identity.planToken
       : null) ?? tierInfo.passToken;
+    const startedAt = performance.now();
     const result = await runLadder(text, {
       // 1. the core's gate screens every message before any model sees it
       gate: brainIntrospect,
@@ -248,7 +326,14 @@ export async function POST(req: NextRequest) {
       //    same for every request of a body (no tier, no context) so Ollama
       //    can reuse the cached prompt start.
       ollama: ollamaEnabled()
-        ? async (t) => (await ollamaChat({ message: t, body: bodyKind })).reply
+        ? async (t) =>
+            (
+              await ollamaChat({
+                message: t,
+                body: bodyKind,
+                maxTokens: children ? CHILD_MAX_NEW_TOKENS : undefined,
+              })
+            ).reply
         : null,
       // 3. deterministic core when Ollama fails or times out
       core: async (t) =>
@@ -263,12 +348,13 @@ export async function POST(req: NextRequest) {
         return [warmFallbackLine("fallback-local", detail), local.content].join("\n\n");
       },
       limiter: sharedLimiter(),
+      child: children ? childHooks(brainIntrospect) : undefined,
       queueWaitMs: queueWaitMs(),
       // the bridge aborts its own fetch at ollamaTimeoutMs; this is the backstop
       ollamaTimeoutMs: ollamaTimeoutMs() + 5_000,
       signal: req.signal,
     });
-    recordAnswer(result.engine);
+    recordAnswer(result.engine, result.engine === "busy" ? undefined : performance.now() - startedAt);
     return { content: result.content, brain: result.engine, relay: false };
   };
 
@@ -294,6 +380,7 @@ export async function POST(req: NextRequest) {
       friend: true,
       tierChip: tierChip(bodyKind, tierInfo.tier),
       stored: false,
+      ...humanExtra,
     });
   }
 
@@ -359,6 +446,7 @@ export async function POST(req: NextRequest) {
       friend: false,
       stored: true,
       tierChip: tierChip(bodyKind, tierInfo.tier),
+      ...humanExtra,
     });
   }
 
@@ -387,6 +475,7 @@ export async function POST(req: NextRequest) {
     friend: false,
     stored: false,
     tierChip: tierChip(bodyKind, tierInfo.tier),
+    ...humanExtra,
   });
 }
 // DELETE /api/brain?session=<id>

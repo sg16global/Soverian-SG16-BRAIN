@@ -1,0 +1,40 @@
+# SG16 operations notes
+
+Written for the person running the VPS. Nothing here is applied automatically to a live server;
+`scripts/vps-setup.sh` applies it on a fresh install, and you can copy the pieces by hand.
+
+## Environment variables
+
+| Variable | Where | Meaning | Default |
+|---|---|---|---|
+| `SG16_PROXY_AUTH_SECRET` | core **and** platform (`.env`) | Shared secret that proves a request came through your proxy. Without it forwarding headers are ignored and per-visitor limits are off. | unset |
+| `SG16_RATE_PER_MINUTE` | platform | Messages per visitor per minute | 8 |
+| `SG16_RATE_PER_HOUR` | platform | Messages per visitor per hour | 60 |
+| `SG16_RATE_GLOBAL_PER_MINUTE` | platform | Flood guard across everyone | 300 |
+| `SG16_FREE_SHARED_PER_HOUR` | platform | Shared free-tier hourly cap used only when no per-visitor identity exists | 2000 |
+| `SG16_ANSWER_CONCURRENCY` / `SG16_ANSWER_QUEUE` / `SG16_ANSWER_QUEUE_WAIT_MS` | platform | Answers at once / queue length / longest queue wait | 1 / 2 / 60000 |
+| `TURNSTILE_SECRET_KEY` + `TURNSTILE_SITE_KEY` | platform | Both set = Cloudflare Turnstile on. Either missing = off. | off |
+| `TURNSTILE_ON_CHILDREN=1` | platform | Also challenge the children's edition (loads a Cloudflare script there) | off |
+| `SG16_METRICS_LOG=1` | platform | Write one numbers-only line per hour to `state/metrics.jsonl` (0600, 30 days) | off |
+| `SG16_ALERT_CMD` | `/etc/sg16/healthcheck.env` | Command the watchdog runs with one message argument after a restart | unset |
+
+## What the proxy chain must do
+
+The platform sees every request as coming from `127.0.0.1`, and forwarding headers can be forged by anyone who
+reaches the server directly. So per-visitor limits work only when the proxy **proves** itself:
+
+1. Caddy adds `X-SG16-Proxy-Auth: <SG16_PROXY_AUTH_SECRET>` to every proxied request (`header_up`).
+2. Caddy puts the real visitor address in `CF-Connecting-IP`, overwriting whatever the client sent
+   (`header_up CF-Connecting-IP {client_ip}`).
+3. Behind Cloudflare, Caddy must trust Cloudflare's address ranges (`trusted_proxies static ...` with
+   `client_ip_headers CF-Connecting-IP X-Forwarded-For`), otherwise every visitor looks like one Cloudflare address.
+4. The platform should listen on `127.0.0.1` only (port 3000 must not be reachable from outside).
+
+`vps-setup.sh` does 1-4 for a fresh install. If you edit the Caddyfile by hand, keep those lines.
+
+## Alerts
+
+The watchdog (`scripts/healthcheck.sh`, run by `sg16-healthcheck.timer` every minute) logs to the journal:
+`journalctl -u sg16-healthcheck`. It restarts a service after 3 consecutive failed checks. To be told about it, create
+`/etc/sg16/healthcheck.env` containing `SG16_ALERT_CMD=/path/to/your/script` - any executable that takes one
+argument (the message). Nothing is sent anywhere unless you set that.

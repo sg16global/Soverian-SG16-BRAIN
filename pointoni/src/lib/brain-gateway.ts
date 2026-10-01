@@ -135,7 +135,14 @@ export async function brainIntrospect(
     "/api/introspect",
     {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        // lets the core exempt the platform from its per-client throttle (which
+        // would otherwise be one bucket for every visitor, all seen as 127.0.0.1)
+        ...(process.env.SG16_PROXY_AUTH_SECRET
+          ? { "X-SG16-Proxy-Auth": process.env.SG16_PROXY_AUTH_SECRET }
+          : {}),
+      },
       body: JSON.stringify({ text }),
     },
   );

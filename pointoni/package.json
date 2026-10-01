@@ -7,7 +7,7 @@
     "start": "next start",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
-    "test": "node --test src/lib/answer-ladder.test.ts",
+    "test": "node --test \"src/lib/*.test.ts\"",
     "sync-onnx": "node ../scripts/sync-onnx.js",
     "postinstall": "node ../scripts/sync-onnx.js",
     "brain": "python3 ../scripts/serve.py"

@@ -188,6 +188,7 @@
         <button type="button">Teach me a new word</button>
       </div>
 
+      <div id="check" hidden></div>
       <form id="ask" autocomplete="off">
         <input
           id="text"
@@ -247,6 +248,32 @@
       // sent — every turn is a fresh, stateless call.
       var log = [];
 
+      // Optional human check. The server turns it on only if the operator set the
+      // Turnstile keys AND TURNSTILE_ON_CHILDREN=1 (it loads a Cloudflare script,
+      // which the children's charter would otherwise not allow). Tokens stay in
+      // these variables - nothing is stored.
+      var check = { cf: null, human: null, widget: null };
+      fetch(BRAIN_URL + "?probe=turnstile")
+        .then(function (r) { return r.ok ? r.json() : null; })
+        .then(function (cfg) {
+          if (!cfg || !cfg.enabled || !cfg.siteKey) return;
+          var box = document.getElementById("check");
+          box.hidden = false;
+          var s = document.createElement("script");
+          s.src = "https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit";
+          s.async = true;
+          s.onload = function () {
+            check.widget = window.turnstile.render(box, {
+              sitekey: cfg.siteKey,
+              callback: function (t) { check.cf = t; },
+              "expired-callback": function () { check.cf = null; },
+              "error-callback": function () { check.cf = null; },
+            });
+          };
+          document.head.appendChild(s);
+        })
+        .catch(function () {});
+
       function bubble(role, text) {
         var el = document.createElement("div");
         el.className = "turn " + (role === "me" ? "me" : "friend");
@@ -278,13 +305,30 @@
             headers: { "Content-Type": "application/json" },
             // Deliberately no sessionId: the brain keeps nothing for us, so
             // there is nothing to continue and nothing to leak.
-            body: JSON.stringify({ message: text, modelId: "sg16-brain" }),
+            // audience:"child" can only make the server stricter, never looser.
+            body: JSON.stringify({
+              message: text,
+              modelId: "sg16-brain",
+              audience: "child",
+              humanToken: check.human || undefined,
+              turnstileToken: check.human ? undefined : check.cf || undefined,
+            }),
           });
           var data = await res.json().catch(function () {
             return null;
           });
 
           pending.remove();
+
+          if (data && data.turnstileRequired) {
+            check.human = null;
+            check.cf = null;
+            if (window.turnstile && check.widget !== null) window.turnstile.reset(check.widget);
+          }
+          if (data && data.humanToken) {
+            check.human = data.humanToken;
+            check.cf = null;
+          }
 
           if (!res.ok) {
             // 429 is fair use, not an error — say it kindly (charter §5).

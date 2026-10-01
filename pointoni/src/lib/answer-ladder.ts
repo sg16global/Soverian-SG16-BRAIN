@@ -9,7 +9,17 @@
 // If the gate itself cannot be reached, nothing is screened, so Ollama is
 // skipped and the deterministic paths (which carry their own gate) answer.
 
-export type Engine = "core-gate" | "ollama" | "core" | "fallback-local" | "busy";
+import { sharedMetrics } from "./metrics.ts";
+
+export type Engine =
+  | "core-gate"
+  | "ollama"
+  | "core"
+  | "fallback-local"
+  | "busy"
+  | "rate-limited"
+  | "child-fallback"
+  | "child-crisis";
 
 export const BUSY_TEXT = "I'm helping someone else right now, please try again in a moment";
 
@@ -37,6 +47,18 @@ export type LadderDeps = {
   ollamaTimeoutMs?: number;
   /** fires when the client goes away; a queued request then leaves the queue */
   signal?: AbortSignal;
+  /** children's edition: only ever makes the ladder stricter (see child-safety.ts) */
+  child?: ChildHooks;
+};
+
+export type ChildHooks = {
+  /** a fixed reply for crisis / personal-data messages; the model is never asked */
+  preCheck: (text: string) => LadderResult | null;
+  /** shown instead of the core's adult-worded refusal */
+  refusal: string;
+  /** what a child may see, or null to replace it with `fallback` */
+  checkOutput: (text: string, source: "ollama" | "core" | "local") => Promise<string | null>;
+  fallback: string;
 };
 
 export type LadderResult = { content: string; engine: Engine };
@@ -53,6 +75,11 @@ export class ConcurrencyGuard {
   constructor(maxActive = 1, maxQueue = 2) {
     this.maxActive = maxActive;
     this.maxQueue = maxQueue;
+  }
+
+  /** current load, for the anonymous counters */
+  stats(): { active: number; queued: number } {
+    return { active: this.active, queued: this.waiting.length };
   }
 
   /** true when a new request would be turned away immediately */
@@ -123,13 +150,34 @@ function withTimeout<T>(work: Promise<T>, ms: number | undefined): Promise<T> {
   return Promise.race([work, limit]).finally(() => clearTimeout(timer));
 }
 
+/** For children, every answer passes checkOutput; null means "use the safe fallback". */
+async function vet(
+  deps: LadderDeps,
+  content: string,
+  engine: Engine,
+  source: "ollama" | "core" | "local",
+): Promise<LadderResult> {
+  if (!deps.child) return { content, engine };
+  const checked = await deps.child.checkOutput(content, source);
+  return checked === null
+    ? { content: deps.child.fallback, engine: "child-fallback" }
+    : { content: checked, engine };
+}
+
 export async function runLadder(text: string, deps: LadderDeps): Promise<LadderResult> {
+  if (deps.child) {
+    const fixed = deps.child.preCheck(text);
+    if (fixed) return fixed;
+  }
   let gateDetail = "";
   let gateUp = true;
   try {
     const verdict = await deps.gate(text);
     if (!verdict.allowed) {
-      return { content: verdict.refusal || DEFAULT_REFUSAL, engine: "core-gate" };
+      return {
+        content: deps.child ? deps.child.refusal : verdict.refusal || DEFAULT_REFUSAL,
+        engine: "core-gate",
+      };
     }
   } catch (err) {
     gateUp = false;
@@ -140,7 +188,8 @@ export async function runLadder(text: string, deps: LadderDeps): Promise<LadderR
     const release = await deps.limiter.acquire({ timeoutMs: deps.queueWaitMs, signal: deps.signal });
     if (!release) return { content: BUSY_TEXT, engine: "busy" };
     try {
-      return { content: await withTimeout(deps.ollama(text), deps.ollamaTimeoutMs), engine: "ollama" };
+      const answer = await withTimeout(deps.ollama(text), deps.ollamaTimeoutMs);
+      return await vet(deps, answer, "ollama", "ollama");
     } catch {
       // fall through to the deterministic core
     } finally {
@@ -149,10 +198,10 @@ export async function runLadder(text: string, deps: LadderDeps): Promise<LadderR
   }
 
   try {
-    return { content: await deps.core(text), engine: "core" };
+    return await vet(deps, await deps.core(text), "core", "core");
   } catch (err) {
     const detail = gateDetail || (err instanceof Error ? err.message : "core link down");
-    return { content: await deps.local(text, detail), engine: "fallback-local" };
+    return await vet(deps, await deps.local(text, detail), "fallback-local", "local");
   }
 }
 
@@ -181,7 +230,11 @@ export const queueWaitMs = (): number => {
 };
 
 export const sharedLimiter = (): ConcurrencyGuard => shared().limiter;
-export const recordAnswer = (engine: Engine): void => {
-  shared().last = { engine, at: new Date().toISOString() };
+/** `ms` only when the request spent real time being answered. */
+export const recordAnswer = (engine: Engine, ms?: number): void => {
+  sharedMetrics().record(engine, ms);
+  // a rate-limited request was not answered by anything
+  if (engine !== "rate-limited") shared().last = { engine, at: new Date().toISOString() };
 };
+export const answerMetrics = () => sharedMetrics().snapshot(shared().limiter.stats());
 export const lastAnswer = (): { engine: Engine; at: string } | null => shared().last;

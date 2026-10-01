@@ -17,6 +17,7 @@ import { ModelGlyph } from "@/components/ModelGlyph";
 import { SUGGESTION_PROMPTS } from "@/lib/content";
 import { identityHeaders } from "@/lib/browser-identity";
 import { loadPassRecord } from "@/lib/billing";
+import { useTurnstile } from "./useTurnstile";
 import type { ChatMessageDto } from "@/lib/types";
 
 // Chat uses the configured SG16 gateway. The active Python core is a limited
@@ -80,6 +81,7 @@ export function ChatPanel({
   const [listening, setListening] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const recognitionRef = useRef<{ stop: () => void } | null>(null);
+  const turnstile = useTurnstile();
   // sovereign identity from THIS device (email-only token, user-held)
   const [identity, setIdentity] = useState<{ token: string; email: string; plan: string | null } | null>(null);
 
@@ -174,7 +176,7 @@ export function ChatPanel({
       const res = await fetch("/api/brain", {
         method: "POST",
         headers: identityHeaders({ "Content-Type": "application/json", ...passHeader() }),
-        body: JSON.stringify({ sessionId, modelId: SOVEREIGN.id, message }),
+        body: JSON.stringify({ sessionId, modelId: SOVEREIGN.id, message, ...turnstile.control.fields() }),
       });
       const data = await res.json();
       if (!res.ok) {
@@ -185,9 +187,11 @@ export function ChatPanel({
           );
         }
         // busy is not a failure of the message: give the text back so nothing is lost
-        if (data.busy) setInput(message);
+        if (data.busy || data.turnstileRequired || data.rateLimited) setInput(message);
+        if (data.turnstileRequired) turnstile.control.reject();
         throw new Error(data.error || "The SG16 core is unreachable. Try again.");
       }
+      turnstile.control.accept(data);
       setSessionId(data.sessionId);
       setMessages((prev) => [
         ...prev.filter((m) => m.id !== tempId),
@@ -373,6 +377,8 @@ export function ChatPanel({
         </div>
         <span className="scanline" aria-hidden />
       </div>
+
+      {turnstile.widget}
 
       {/* ── error + suggestions dock ── */}
       {error && (

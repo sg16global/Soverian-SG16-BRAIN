@@ -2,7 +2,7 @@ import { db, persistenceMode } from "@/db";
 import { sql } from "drizzle-orm";
 import { brainHealth } from "@/lib/brain-gateway";
 import { ollamaHealth } from "@/lib/ollama-brain";
-import { lastAnswer } from "@/lib/answer-ladder";
+import { answerMetrics, lastAnswer } from "@/lib/answer-ladder";
 import { charterDigest } from "@/lib/charter-prompt";
 import { childrenLockSummary } from "@/lib/cors-lock";
 
@@ -45,6 +45,8 @@ export async function GET() {
       answering,
       // what actually answered the most recent request (null until one is served)
       lastAnswered: lastAnswer(),
+      // anonymous aggregate counters: numbers only, no identifiers or message text
+      metrics: answerMetrics(),
       engines: ["core-gate", "ollama", "core", "fallback-local"],
       charter: charterDigest(),
       children: childrenLockSummary(),

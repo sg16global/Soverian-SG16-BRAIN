@@ -35,6 +35,15 @@ type Health = {
   heart: { status: string; model?: string; detail?: string };
   answering: string;
   lastAnswered?: { engine: string; at: string } | null;
+  metrics?: {
+    since: string;
+    answered: Record<string, number>;
+    total: number;
+    avgMs: number | null;
+    p95Ms: number | null;
+    samples: number;
+    queue: { active: number; queued: number };
+  };
   engines: string[];
   charter?: { laws?: number; bodies?: number; digest?: string };
   children?: { allowedOrigins?: number; mode?: string };
@@ -232,6 +241,26 @@ export default function AdminPage() {
         {/* health grid */}
         {health && (
           <>
+            {health.metrics && (
+              <Panel className="p-4">
+                <p className="font-mono2 text-[10px] tracking-widest text-slate-400">
+                  TRAFFIC · ANONYMOUS COUNTERS SINCE {new Date(health.metrics.since).toLocaleString()}
+                </p>
+                <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+                  {Object.entries(health.metrics.answered).map(([engine, n]) => (
+                    <div key={engine} className="rounded-lg border border-white/10 bg-white/[0.03] p-3">
+                      <p className="font-mono2 text-[10px] tracking-widest text-slate-400">{engine.toUpperCase()}</p>
+                      <p className="mt-1 font-display text-lg font-black text-white">{n}</p>
+                    </div>
+                  ))}
+                </div>
+                <p className="mt-3 font-mono2 text-[11px] text-slate-300">
+                  answer time avg {health.metrics.avgMs ?? "—"} ms · p95 {health.metrics.p95Ms ?? "—"} ms (last{" "}
+                  {health.metrics.samples}) · queue {health.metrics.queue.queued} waiting,{" "}
+                  {health.metrics.queue.active} answering · numbers only: no visitor, address or message is recorded
+                </p>
+              </Panel>
+            )}
             <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
               <StatCard
                 icon={Database}

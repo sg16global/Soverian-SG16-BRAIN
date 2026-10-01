@@ -90,6 +90,8 @@ export type OllamaTurnInput = {
   humanitarianRegion?: string | null;
   /** extra context injected into the system preamble (e.g. a tape snapshot) */
   context?: string | null;
+  /** hard cap on generated tokens (children's edition keeps answers short) */
+  maxTokens?: number;
 };
 
 type OllamaChatChunk = {
@@ -135,7 +137,10 @@ export async function ollamaChat(input: OllamaTurnInput): Promise<OllamaTurn> {
         model: ollamaModel(),
         messages,
         stream: false,
-        options: { temperature: body === "children" ? 0.4 : 0.7 },
+        options: {
+          temperature: body === "children" ? 0.4 : 0.7,
+          ...(input.maxTokens ? { num_predict: input.maxTokens } : {}),
+        },
       }),
       signal: controller.signal,
       cache: "no-store",

@@ -983,8 +983,16 @@ class BrainRequestHandler(BaseHTTPRequestHandler):
         if len(text) > 8192:
             return self._error(413, "text exceeds the 8192 character limit")
         is_owner = self.brain.panel.is_owner(self.headers.get("X-SG16-Owner-Sig"))
+        # The platform calls this once or twice per visitor message, always from
+        # 127.0.0.1, so a per-client throttle here would be ONE shared bucket for
+        # the whole site. A proxy-authenticated caller (the platform, which holds
+        # SG16_PROXY_AUTH_SECRET) is exempt; the platform rate-limits visitors
+        # itself. The gate verdict is still computed for every call.
         try:
-            self.server.throttle.check(self._client_rate_key(), len(text), exempt=is_owner)
+            self.server.throttle.check(
+                self._client_rate_key(), len(text),
+                exempt=is_owner or self._proxy_headers_trusted(),
+            )
         except ThrottleExceeded as exc:
             return self._error(429, str(exc))
         self._json(self.brain.introspect(text))
