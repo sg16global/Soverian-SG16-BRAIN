@@ -1,155 +1,65 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { KeyRound, Copy, Trash2, Eye, EyeOff, Terminal, ShieldCheck } from "lucide-react";
+import { useState } from "react";
+import { Copy, KeyRound, ShieldCheck, Terminal } from "lucide-react";
+import Link from "next/link";
 import { SiteChrome } from "@/components/chrome/SiteChrome";
 import { PageHeader } from "@/components/PageHeader";
 import { Panel } from "@/components/ui/Panel";
-import { identityHeaders } from "@/lib/browser-identity";
 
-type Token = {
-  id: string;
-  label: string;
-  prefix: string;
-  revoked: boolean;
-  createdAt: string;
-  lastUsedAt: string | null;
-};
+// API access without accounts: the public endpoint works for anyone within the fair-use limits;
+// the operator's own projects use signed project keys that are created in the admin console and
+// never stored. There is nothing to sign up for here, and nothing about callers is kept.
 
 export default function ApiAccessPage() {
-  const [tokens, setTokens] = useState<Token[] | null>(null);
-  const [label, setLabel] = useState("");
-  const [creating, setCreating] = useState(false);
-  const [secret, setSecret] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
-  const [showCurl, setShowCurl] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-
-  async function load() {
-    const res = await fetch("/api/tokens", { headers: identityHeaders(), cache: "no-store" });
-    if (res.ok) setTokens((await res.json()).tokens ?? []);
-    else {
-      const data = await res.json().catch(() => ({}));
-      setError(data.error || "Sign in to manage API tokens.");
-    }
-  }
-  useEffect(() => {
-    load();
-  }, []);
-
-  async function create() {
-    setCreating(true);
-    const res = await fetch("/api/tokens", {
-      method: "POST",
-      headers: identityHeaders({ "Content-Type": "application/json" }),
-      body: JSON.stringify({ label: label.trim() || "Developer Pilot Token" }),
-    });
-    const data = await res.json();
-    if (res.ok) {
-      setSecret(data.secret);
-      setLabel("");
-      setError(null);
-      load();
-    } else setError(data.error || "Could not create a token.");
-    setCreating(false);
-  }
-
-  async function revoke(id: string) {
-    if (!confirm("Revoke this token? Applications using it will stop working immediately.")) return;
-    await fetch(`/api/tokens?id=${encodeURIComponent(id)}`, { method: "DELETE", headers: identityHeaders() });
-    load();
-  }
-
-  function copy(text: string) {
-    navigator.clipboard.writeText(text).then(() => {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1800);
-    });
-  }
-
-  const curl = `curl -X POST ${typeof window !== "undefined" ? window.location.origin : "https://your-deployment"}/api/chat \\\n  -H "Authorization: Bearer ${secret ?? "sg16_your_token_here"}" \\\n  -H "Content-Type: application/json" \\\n  -d '{"modelId":"sg16-brain","message":"Hello SG16"}'`;
+  const origin = typeof window === "undefined" ? "https://mistralbrain.com" : window.location.origin;
+  const curl = `curl -X POST ${origin}/api/brain \\
+  -H "Content-Type: application/json" \\
+  -d '{"message":"Hello SG16"}'`;
 
   return (
     <SiteChrome>
-      <PageHeader title="API ACCESS" subtitle="Account-scoped tokens for the configured chat gateway. Tokens are hashed with SHA-256 — the full secret is shown only once. Chat responses are produced by the configured core and relay path; this build does not guarantee broad multi-model orchestration." />
-
+      <PageHeader
+        title="API ACCESS"
+        subtitle="Call the Brain from your own code. No sign-up, and nothing about callers is stored."
+      />
       <div className="mx-auto max-w-[900px] space-y-5 px-4 py-8">
-        {error && <Panel className="border-amber-400/30 p-4 text-sm text-amber-200">{error}</Panel>}
         <Panel className="p-5">
-          <h2 className="font-display text-sm font-black tracking-widest text-white">CREATE A TOKEN</h2>
-          <div className="mt-3 flex flex-col gap-2 sm:flex-row">
-            <input
-              value={label}
-              onChange={(e) => setLabel(e.target.value)}
-              placeholder="Token label (e.g. production-web)"
-              className="input-dark h-11 flex-1 px-3 text-sm"
-            />
-            <button onClick={create} disabled={creating} className="btn-red inline-flex items-center justify-center gap-2 px-5 py-2.5 text-[11px] disabled:opacity-50">
-              <KeyRound className="h-4 w-4" /> {creating ? "GENERATING…" : "GENERATE TOKEN"}
-            </button>
-          </div>
-
-          {secret && (
-            <div className="mt-4 rounded-lg border border-amber-400/40 bg-amber-500/10 p-4">
-              <p className="flex items-center gap-2 font-display text-[10px] font-black tracking-widest text-amber-300">
-                <Eye className="h-4 w-4" /> COPY THIS TOKEN NOW — IT WILL NOT BE SHOWN AGAIN
-              </p>
-              <div className="mt-2 flex items-center gap-2">
-                <code className="flex-1 truncate rounded-md border border-white/15 bg-black/70 px-3 py-2 font-mono2 text-[12px] text-emerald-300">{secret}</code>
-                <button onClick={() => copy(secret)} className="btn-gold px-3 py-2 text-[10px]">
-                  <Copy className="h-4 w-4" />
-                </button>
-              </div>
-              {copied && <p className="mt-1 font-mono2 text-[10px] text-emerald-400">Copied to clipboard.</p>}
-            </div>
-          )}
+          <h2 className="flex items-center gap-2 font-display text-[13px] font-black tracking-widest text-white">
+            <Terminal className="h-4 w-4 text-cyan-300" /> PUBLIC ENDPOINT
+          </h2>
+          <p className="mt-2 text-[12.5px] leading-relaxed text-slate-300">
+            <code className="font-mono2">POST /api/brain</code> with a JSON body <code className="font-mono2">{"{ \"message\": \"...\" }"}</code>.
+            Free use is rate-limited per visitor. A subscription pass lifts the limits for the device that holds it:
+            send it in the <code className="font-mono2">X-SG16-Pass</code> header.
+          </p>
+          <pre className="mt-3 overflow-x-auto rounded-lg border border-cyan-500/25 bg-black/60 p-3 font-mono2 text-[11px] text-cyan-100">{curl}</pre>
+          <button
+            onClick={() => navigator.clipboard?.writeText(curl).then(() => setCopied(true))}
+            className="btn-ghost mt-2 inline-flex items-center gap-2 px-3 py-1.5 text-[10px]"
+          >
+            <Copy className="h-3.5 w-3.5" /> {copied ? "COPIED" : "COPY"}
+          </button>
         </Panel>
 
         <Panel className="p-5">
-          <button onClick={() => setShowCurl((v) => !v)} className="flex w-full items-center justify-between">
-            <h2 className="flex items-center gap-2 font-display text-sm font-black tracking-widest text-white">
-              <Terminal className="h-4 w-4 text-cyan-300" /> QUICK START
-            </h2>
-            {showCurl ? <EyeOff className="h-4 w-4 text-slate-400" /> : <Eye className="h-4 w-4 text-slate-400" />}
-          </button>
-          {showCurl && (
-            <pre className="mt-3 overflow-x-auto rounded-lg border border-cyan-500/25 bg-black/75 p-4 font-mono2 text-[11px] leading-relaxed text-cyan-100">
-              {curl}
-            </pre>
-          )}
-          <p className="mt-3 flex items-start gap-2 text-[12px] text-slate-400">
-            <ShieldCheck className="mt-0.5 h-4 w-4 flex-none text-emerald-400" />
-            Responses include the model id and a <span className="font-mono2 text-amber-300">brain</span> field identifying the runtime that produced the answer (core, configured relay, or local fallback). Latency is measured on the platform response.
+          <h2 className="flex items-center gap-2 font-display text-[13px] font-black tracking-widest text-white">
+            <KeyRound className="h-4 w-4 text-amber-300" /> PROJECT KEYS
+          </h2>
+          <p className="mt-2 text-[12.5px] leading-relaxed text-slate-300">
+            Projects run by the operator connect with a project key: free, no limits per visitor, no subscription. Keys are
+            created in the <Link href="/admin" className="underline">admin console</Link> (operator sign-in) and are shown
+            once. The server stores no key list; it only checks each key&apos;s signature, so keys keep working across
+            restarts. Send the key as <code className="font-mono2">Authorization: Bearer &lt;key&gt;</code>.
           </p>
         </Panel>
 
-        <Panel className="p-5">
-          <h2 className="font-display text-sm font-black tracking-widest text-white">ACTIVE TOKENS</h2>
-          <div className="mt-3">
-            {tokens === null ? (
-              <p className="py-8 text-center text-sm tracking-widest text-slate-500 pulse-soft">LOADING TOKENS…</p>
-            ) : tokens.filter((t) => !t.revoked).length === 0 ? (
-              <p className="py-8 text-center text-sm text-slate-500">No active tokens. Generate one above to begin integrating.</p>
-            ) : (
-              <ul className="space-y-2">
-                {tokens.filter((t) => !t.revoked).map((t) => (
-                  <li key={t.id} className="flex items-center gap-3 rounded-lg border border-white/10 bg-white/[0.03] px-4 py-3">
-                    <KeyRound className="h-4 w-4 flex-none text-amber-300" />
-                    <div className="min-w-0 flex-1">
-                      <p className="truncate text-[13px] font-semibold text-slate-100">{t.label}</p>
-                      <p className="font-mono2 text-[10px] tracking-widest text-slate-500">
-                        {t.prefix} · CREATED {new Date(t.createdAt).toLocaleDateString()}
-                        {t.lastUsedAt ? ` · LAST USED ${new Date(t.lastUsedAt).toLocaleString()}` : " · NEVER USED"}
-                      </p>
-                    </div>
-                    <button onClick={() => revoke(t.id)} className="grid h-9 w-9 place-items-center rounded-lg border border-red-400/30 text-red-400 transition hover:bg-red-500/20" title="Revoke">
-                      <Trash2 className="h-4 w-4" />
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </div>
+        <Panel soft corners={false} className="flex items-start gap-2 p-4">
+          <ShieldCheck className="mt-0.5 h-4 w-4 flex-none text-emerald-300" />
+          <p className="text-[12px] leading-relaxed text-slate-400">
+            Nothing is stored about you or your project here: no accounts, no logs of messages, no history on the server.
+          </p>
         </Panel>
       </div>
     </SiteChrome>

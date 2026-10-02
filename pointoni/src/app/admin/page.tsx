@@ -13,7 +13,6 @@ import {
   FileStack,
   Users,
   Crown,
-  Settings,
   CheckCircle2,
   AlertTriangle,
   Server,
@@ -256,13 +255,9 @@ function AdminConsole() {
               </div>
             </div>
             <div className="flex flex-wrap gap-2 sm:flex-col">
-              <Link href="/account" className="btn-ghost px-4 py-2 text-[11px]">
+              <Link href="/login" className="btn-ghost px-4 py-2 text-[11px]">
                 <Users className="mr-2 inline h-4 w-4" />
-                ACCOUNT
-              </Link>
-              <Link href="/settings" className="btn-ghost px-4 py-2 text-[11px]">
-                <Settings className="mr-2 inline h-4 w-4" />
-                SETTINGS
+                OPERATOR SESSION
               </Link>
             </div>
           </div>

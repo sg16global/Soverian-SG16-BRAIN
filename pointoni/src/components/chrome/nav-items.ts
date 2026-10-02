@@ -4,9 +4,6 @@ import {
   FolderClosed,
   Crown,
   Globe2,
-  MonitorSmartphone,
-  Settings,
-  User,
   CircleHelp,
   Power,
   Shield,
@@ -25,10 +22,7 @@ export const SIDEBAR_LINKS: SidebarLink[] = [
   { label: "My Files", href: "/files", icon: FolderClosed },
   { label: "Subscription", href: "/subscription", icon: Crown },
   { label: "API Access", href: "/api-access", icon: Globe2 },
-  { label: "My Devices", href: "/devices", icon: MonitorSmartphone },
   { label: "Admin Console", href: "/admin", icon: Shield },
-  { label: "Settings", href: "/settings", icon: Settings },
-  { label: "Account", href: "/account", icon: User },
   { label: "Help & Support", href: "/support", icon: CircleHelp },
 ];
 

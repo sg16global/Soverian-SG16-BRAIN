@@ -4,9 +4,8 @@ import { db, persistenceMode } from "@/db";
 import { aiModels } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import { ensureSeeded } from "@/lib/seed";
-import { resolveAccount } from "@/lib/account-auth";
 import { generateReply } from "@/lib/ai-engine";
-import { consumeBucket, planActive, resolveTier } from "@/lib/identity";
+import { consumeBucket, resolveTier } from "@/lib/identity";
 import {
   BrainGatewayError,
   MAX_BRAIN_MESSAGE_CHARS,
@@ -272,7 +271,6 @@ export async function POST(req: NextRequest) {
   const humanExtra = "humanToken" in human && human.humanToken ? { humanToken: human.humanToken } : {};
 
   await ensureSeeded();
-  const account = children ? null : await resolveAccount(req);
   const modelRows = await db.select().from(aiModels).where(eq(aiModels.id, modelId)).limit(1);
   const model = modelRows[0];
   if (!model) {
@@ -292,9 +290,7 @@ export async function POST(req: NextRequest) {
     text: string,
     sessionId: string | null,
   ): Promise<{ content: string; brain: BrainSource; relay: boolean }> => {
-    const passToken = (account?.identity && planActive(account.identity)
-      ? account.identity.planToken
-      : null) ?? tierInfo.passToken;
+    const passToken = tierInfo.passToken;
     const startedAt = performance.now();
     const result = await runLadder(text, {
       // 1. the core's gate screens every message before any model sees it

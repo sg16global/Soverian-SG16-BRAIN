@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import {
   BrainCircuit,
   Mic,
@@ -110,8 +110,15 @@ export function ChatPanel({
   const scrollRef = useRef<HTMLDivElement>(null);
   const recognitionRef = useRef<{ stop: () => void } | null>(null);
   const turnstile = useTurnstile();
-  // sovereign identity from THIS device (email-only token, user-held)
-  const [identity, setIdentity] = useState<{ token: string; email: string; plan: string | null } | null>(null);
+  // A subscription is the signed pass held on THIS device (no account): read it live from storage.
+  const passPlan = useSyncExternalStore(
+    (onChange) => {
+      window.addEventListener("storage", onChange);
+      return () => window.removeEventListener("storage", onChange);
+    },
+    () => loadPassRecord()?.pass ?? null,
+    () => null,
+  );
 
   // History is read from THIS device (see lib/device-vault.ts); the server keeps none.
   const loadSession = useCallback(async (id: string) => {
@@ -134,34 +141,6 @@ export function ChatPanel({
     } catch {
       // device storage unavailable: nothing to restore
     }
-  }, []);
-
-  useEffect(() => {
-    const t = setTimeout(() => {
-      try {
-        const raw = localStorage.getItem("sg16/identity");
-        if (raw) {
-          const s = JSON.parse(raw) as { token?: string; email?: string };
-          const token = s.token;
-          if (token && s.email) {
-            fetch("/api/identity", {
-              method: "POST",
-              headers: identityHeaders({ "Content-Type": "application/json" }),
-              body: JSON.stringify({ action: "me" }),
-              cache: "no-store",
-            }).then(async (response) => {
-              const current = await response.json();
-              if (response.ok && current.ok) {
-                setIdentity({ token, email: current.email, plan: current.plan ?? null });
-              } else if (response.status === 401) {
-                localStorage.removeItem("sg16/identity");
-              }
-            }).catch(() => undefined);
-          }
-        }
-      } catch { /* device storage unavailable */ }
-    }, 0);
-    return () => clearTimeout(t);
   }, []);
 
   useEffect(() => {
@@ -326,21 +305,21 @@ export function ChatPanel({
             LIMITED
           </span>
           <span className="hidden flex-none font-mono2 text-[9px] text-slate-400 sm:block">8K CHAR LIMIT · HOST GATEWAY</span>
-          {identity?.plan ? (
+          {passPlan ? (
             <Link
-              href="/login"
+              href="/subscription"
               className="flex-none rounded border border-amber-400/50 bg-amber-400/15 px-1.5 py-0.5 font-mono2 text-[8px] font-black tracking-[0.14em] text-amber-300"
-              title="Work mode active — bound subscription"
+              title="Your pass is active on this device"
             >
-              WORK MODE
+              PREMIUM · {passPlan.toUpperCase()}
             </Link>
           ) : (
             <Link
-              href="/login"
+              href="/subscription"
               className="flex-none rounded border border-cyan-400/40 bg-cyan-500/10 px-1.5 py-0.5 font-mono2 text-[8px] font-black tracking-[0.14em] text-cyan-300 transition hover:bg-cyan-500/20"
-              title="Sign in with your email to vault passes and lift fair-use limits"
+              title="Subscribe for a pass: no account needed"
             >
-              {identity ? "SIGN-IN ✓" : "FREE · SIGN IN"}
+              FREE · GET A PASS
             </Link>
           )}
         </div>

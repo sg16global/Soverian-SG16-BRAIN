@@ -6,13 +6,12 @@ import { Send, Globe2, CheckCircle2 } from "lucide-react";
 import { SiteChrome } from "@/components/chrome/SiteChrome";
 import { PageHeader } from "@/components/PageHeader";
 import { Panel } from "@/components/ui/Panel";
-import { identityHeaders } from "@/lib/browser-identity";
+import { COMPANY } from "@/lib/company";
 
 function ContactForm() {
   const params = useSearchParams();
   const [subject, setSubject] = useState("");
   const [body, setBody] = useState("");
-  const [sending, setSending] = useState(false);
   const [sent, setSent] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -26,22 +25,11 @@ function ContactForm() {
       setError("Subject and message are required.");
       return;
     }
-    setSending(true);
     setError(null);
-    const res = await fetch("/api/tickets", {
-      method: "POST",
-      headers: identityHeaders({ "Content-Type": "application/json" }),
-      body: JSON.stringify({ kind: "contact", subject, bodyText: body }),
-    });
-    if (res.ok) {
-      setSent(true);
-      setSubject("");
-      setBody("");
-    } else {
-      const data = await res.json().catch(() => ({}));
-      setError(data.error || "Could not send your message. Sign in and try again.");
-    }
-    setSending(false);
+    // The message is written in YOUR mail program and sent from your own address. This site
+    // receives and stores nothing.
+    window.location.href = `mailto:${COMPANY.ownerEmail}?subject=${encodeURIComponent(subject.slice(0, 200))}&body=${encodeURIComponent(body.slice(0, 1800))}`;
+    setSent(true);
   }
 
   return (
@@ -49,10 +37,9 @@ function ContactForm() {
       {sent ? (
         <div className="flex flex-col items-center gap-4 py-10 text-center">
           <CheckCircle2 className="h-14 w-14 text-emerald-400" style={{ filter: "drop-shadow(0 0 16px rgba(34,224,140,.6))" }} />
-          <h2 className="font-display text-lg font-black tracking-wide text-white">MESSAGE RECEIVED</h2>
+          <h2 className="font-display text-lg font-black tracking-wide text-white">YOUR MAIL PROGRAM OPENED</h2>
           <p className="max-w-md text-[13px] text-slate-300">
-            Your message has been stored in this deployment&rsquo;s ticket database. Response time depends
-            on operator staffing; no email notification is configured by this route. Your reference is tracked in Help &amp; Support.
+            Send the message from there. This site does not receive or keep it. If nothing opened, write to {COMPANY.ownerEmail}.
           </p>
           <button onClick={() => setSent(false)} className="btn-ghost px-5 py-2 text-[11px]">SEND ANOTHER</button>
         </div>
@@ -74,8 +61,8 @@ function ContactForm() {
               className="input-dark w-full resize-none p-3 text-sm"
             />
             {error && <p className="text-[12px] text-red-300">{error}</p>}
-            <button onClick={submit} disabled={sending} className="btn-red flex w-full items-center justify-center gap-2 py-3 text-[11px] disabled:opacity-50">
-              <Send className="h-4 w-4" /> {sending ? "TRANSMITTING…" : "TRANSMIT MESSAGE"}
+            <button onClick={submit} className="btn-red flex w-full items-center justify-center gap-2 py-3 text-[11px]">
+              <Send className="h-4 w-4" /> OPEN IN MY MAIL PROGRAM
             </button>
           </div>
         </>

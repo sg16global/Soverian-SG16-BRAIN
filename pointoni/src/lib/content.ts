@@ -162,7 +162,7 @@ export const PLANS: Plan[] = [
       "Configured SG16 gateway",
       "Process-local free-use bucket",
       "Structural core · 8K char message limit",
-      "Signed-in account history",
+      "History kept on your own device",
       "No host pass required",
     ],
     cta: "Current Pilot",
@@ -178,8 +178,8 @@ export const PLANS: Plan[] = [
       "Host-verified time-limited pass",
       "Higher process-local work bucket",
       "Same configured gateway path",
-      "Account-scoped API tokens",
-      "Storage still depends on deployment",
+      "Pass kept on your own device",
+      "No account needed",
       "Provider reliability not guaranteed",
     ],
     cta: "Upgrade to Pro",
@@ -212,7 +212,7 @@ export const FAQS = [
   },
   {
     q: "Is my data used to train models?",
-    a: "This application does not train models on your conversations. Account conversations, files, tickets and tokens may be stored in the deployment database/filesystem, and logs or backups depend on that deployment. If an operator configures an external relay, that provider may process the request under its own terms.",
+    a: "No. This platform keeps no user data on its server: no accounts, no conversation history, no files. Your history and files stay on your own device, and a subscription is a signed pass you hold. Messages pass through the model to be answered and are not kept.",
   },
   {
     q: "What license does SG16 Brain use?",
@@ -220,7 +220,7 @@ export const FAQS = [
   },
   {
     q: "How do I get API access?",
-    a: "Open API Access in the sidebar, generate an SG16 token, and call the /api/chat endpoint with that bearer token. Availability depends on this deployment being online.",
+    a: "Call POST /api/brain with a JSON message; see API Access in the sidebar. Free use is rate-limited per visitor. The operator's own projects use project keys created in the admin console.",
   },
 ] as const;
 
@@ -243,7 +243,7 @@ export const SERVICES = [
   {
     title: "Developer Pilot Program",
     glyph: "code",
-    body: "REST routes for chat, account data, tickets, tokens and files. Availability and retention depend on the deployment configuration.",
+    body: "A simple REST route for chat, plus signed project keys for the operator's own projects. No accounts and no stored user data.",
   },
   {
     title: "AI Ethics \u0027 Governance",

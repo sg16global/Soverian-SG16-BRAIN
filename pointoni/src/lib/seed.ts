@@ -1,8 +1,6 @@
 import { db } from "@/db";
-import { aiModels, newsItems, users } from "@/db/schema";
+import { aiModels, newsItems } from "@/db/schema";
 import { eq } from "drizzle-orm";
-
-export const DEFAULT_USER_HANDLE = "pilot@sovereign.sg16";
 
 // The only model on this platform. Status and latency are NOT stored here: they are
 // measured live (see /api/models), so nothing in this row can go stale or be invented.
@@ -85,20 +83,6 @@ let seedingPromise: Promise<void> | null = null;
 export async function ensureSeeded(): Promise<void> {
   if (seedingPromise) return seedingPromise;
   seedingPromise = (async () => {
-    const existingUsers = await db
-      .select({ id: users.id })
-      .from(users)
-      .where(eq(users.handle, DEFAULT_USER_HANDLE))
-      .limit(1);
-    if (existingUsers.length === 0) {
-      await db.insert(users).values({
-        handle: DEFAULT_USER_HANDLE,
-        displayName: "SG16 Pilot",
-        email: DEFAULT_USER_HANDLE,
-        role: "developer-pilot",
-      });
-    }
-
     // Chat sessions reference this row, so it must exist. Older databases may still hold
     // rows for other models; they are left alone but never offered or used (see /api/models).
     const sg16 = await db.select({ id: aiModels.id }).from(aiModels).where(eq(aiModels.id, SG16_MODEL.id)).limit(1);

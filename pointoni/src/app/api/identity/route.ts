@@ -1,36 +1,19 @@
+import { NextRequest, NextResponse } from "next/server";
 import { adminLogin } from "@/lib/admin-login";
 import { isAdminEmail } from "@/lib/admin-auth";
-import { NextRequest, NextResponse } from "next/server";
-import {
-  bindVerifiedPlan,
-  getIdentity,
-  planActive,
-  requestMagicCode,
-  signToken,
-  verifyMagicCode,
-  verifyToken,
-} from "@/lib/identity";
-import { PASSES, type PassId } from "@/lib/billing";
-import { brainVerifyPass, BrainGatewayError } from "@/lib/brain-gateway";
+import { signToken, verifyToken } from "@/lib/identity";
+import { clientIdentity } from "@/lib/rate-limit";
 import { childrenIdentityBlock, childrenPreflight, withChildrenCors } from "@/lib/cors-lock";
-import crypto from "node:crypto";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
+// There are NO user accounts on this platform. Visitors chat and subscribe without signing in, and
+// the server keeps nothing about them (history and files live on their device; a subscription is
+// the signed pass they hold). The only sign-in is the operator's: official email + password.
+
 export async function OPTIONS(req: NextRequest) {
   return childrenPreflight(req);
-}
-
-function networkKey(req: NextRequest): string {
-  // This must be overwritten by the deployment's trusted edge proxy. The
-  // application API does not expose the underlying socket peer address.
-  const raw =
-    req.headers.get("x-vercel-forwarded-for")?.split(",")[0]?.trim() ||
-    req.headers.get("cf-connecting-ip")?.trim() ||
-    req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
-    "unknown-network";
-  return crypto.createHash("sha256").update(raw).digest("hex");
 }
 
 function bearer(req: NextRequest): string | null {
@@ -42,15 +25,17 @@ export async function GET(req: NextRequest) {
   const blocked = childrenIdentityBlock(req);
   if (blocked) return blocked;
   return NextResponse.json({
-    service: "SG16 email identity",
-    contract: "A verified email and plan binding are stored by the configured database. A bearer token is held by this browser.",
-    storage: "Chat history is stored for signed-in accounts; deployment logs, backups, email delivery and database retention depend on configuration.",
-    recovery: "A valid email magic code can restore access on another device.",
-    passes: PASSES.map((pass) => ({ id: pass.id, label: pass.label, price: pass.price, hours: pass.hours })),
-    mailer: process.env.MAILER_URL ? "configured" : process.env.NODE_ENV === "production" ? "unavailable: MAILER_URL required" : "development code echo",
-    signing: process.env.SG16_IDENTITY_SECRET ? "persistent secret configured" : process.env.NODE_ENV === "production" ? "unavailable: SG16_IDENTITY_SECRET required" : "ephemeral per process",
+    service: "SG16 operator sign-in",
+    accounts: "none",
+    storage: "Nothing about visitors is stored on the server. History and files stay on the visitor's device; a subscription is a signed pass held on the device.",
+    operatorLogin: Boolean(process.env.SG16_ADMIN_PASSWORD_HASH && process.env.SG16_ADMIN_EMAILS),
   });
 }
+
+const NO_ACCOUNTS = {
+  ok: false,
+  error: "This platform has no user accounts. You can chat and subscribe without signing in; nothing about you is stored here.",
+};
 
 export async function POST(req: NextRequest) {
   const blocked = childrenIdentityBlock(req);
@@ -62,90 +47,32 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: false, error: "JSON object required" }, { status: 400 });
     }
     const action = String(body.action ?? "");
-    const rateKey = networkKey(req);
 
-    // The operator signs in with email + password (no mail service, nothing stored).
+    // The operator signs in with email + password (no mail service, nothing stored). The lockout key
+    // is the visitor's address only when our own proxy vouches for it; a forged header cannot dodge it.
     if (action === "admin-login") {
-      const result = adminLogin({ email: body.email, password: body.password, networkKey: rateKey }, signToken);
+      const networkKey = clientIdentity(req.headers).key ?? "unverified-network";
+      const result = adminLogin({ email: body.email, password: body.password, networkKey }, signToken);
       if (!result.ok) return NextResponse.json({ ok: false, error: result.error }, { status: result.status });
       return NextResponse.json({ ok: true, token: result.token, email: result.email, admin: true });
     }
 
-    if (action === "request") {
-      const result = await requestMagicCode(String(body.email ?? ""), rateKey);
-      return NextResponse.json({ ok: true, sent: true, ...(result.devCode ? { devCode: result.devCode } : {}) });
-    }
-
-    if (action === "verify") {
-      const result = await verifyMagicCode(String(body.email ?? ""), String(body.code ?? ""), rateKey);
-      return NextResponse.json({
-        ok: true,
-        token: result.token,
-        email: result.identity.email,
-        plan: planActive(result.identity) ? result.identity.plan : null,
-        planExpiresAt: planActive(result.identity) ? result.identity.planExpiresAt : null,
-      });
-    }
-
-    if (action === "bind") {
-      const token = bearer(req);
-      const payload = token ? verifyToken(token) : null;
-      if (!payload) return NextResponse.json({ ok: false, error: "verified sign-in required" }, { status: 401 });
-      const identity = await getIdentity(payload.email);
-      if (!identity) return NextResponse.json({ ok: false, error: "identity not found" }, { status: 401 });
-      const passToken = typeof body.pass_token === "string" ? body.pass_token : "";
-      if (!/^[a-f0-9]{64}$/.test(passToken)) {
-        return NextResponse.json({ ok: false, error: "A host-issued pass token is required." }, { status: 400 });
-      }
-      let verified;
-      try {
-        verified = await brainVerifyPass(passToken);
-      } catch (error) {
-        const status = error instanceof BrainGatewayError && error.status === 403 ? 403 : 503;
-        return NextResponse.json({ ok: false, error: "The SG16 host could not verify this pass." }, { status });
-      }
-      const record = verified.record;
-      if (
-        verified.valid !== true ||
-        record.token !== passToken ||
-        typeof record.pass !== "string" ||
-        !PASSES.some((pass) => pass.id === record.pass) ||
-        typeof record.expires_at !== "number"
-      ) {
-        return NextResponse.json({ ok: false, error: "The SG16 host returned an invalid pass record." }, { status: 403 });
-      }
-      const updated = await bindVerifiedPlan(
-        identity.email,
-        record.pass as PassId,
-        passToken,
-        record.expires_at,
-      );
-      return NextResponse.json({
-        ok: true,
-        email: updated.email,
-        plan: updated.plan,
-        planExpiresAt: updated.planExpiresAt,
-      });
-    }
-
+    // Is this signed token the operator's? (stateless: the signature and the operator list decide)
     if (action === "me") {
       const payload = verifyToken(bearer(req) ?? "");
       if (!payload) return NextResponse.json({ ok: false, error: "invalid token" }, { status: 401 });
-      // an operator is recognised from the signed token alone; no database row is needed
-      if (isAdminEmail(payload.email)) {
-        return NextResponse.json({ ok: true, email: payload.email.toLowerCase(), plan: null, tier: "work", admin: true });
-      }
-      const identity = await getIdentity(payload.email);
-      if (!identity) return NextResponse.json({ ok: false, error: "identity not found" }, { status: 401 });
       return NextResponse.json({
         ok: true,
-        email: identity.email,
-        plan: planActive(identity) ? identity.plan : null,
-        planExpiresAt: identity.planExpiresAt,
-        tier: planActive(identity) ? "work" : "free",
-        // lets the page show or hide operator links; the server re-checks on every admin call
-        admin: isAdminEmail(identity.email),
+        email: payload.email.toLowerCase(),
+        plan: null,
+        tier: "work",
+        admin: isAdminEmail(payload.email),
       });
+    }
+
+    // the old email-code sign-up, pass-linking and recovery flows are gone
+    if (action === "request" || action === "verify" || action === "bind") {
+      return withChildrenCors(req, NextResponse.json(NO_ACCOUNTS, { status: 410 }));
     }
 
     return withChildrenCors(req, NextResponse.json({ ok: false, error: "unknown action" }, { status: 400 }));
