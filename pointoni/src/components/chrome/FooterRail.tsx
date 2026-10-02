@@ -2,15 +2,10 @@
 // SG16 FOOTER RAIL — the sovereign tape that runs under every page.
 //
 // One continuous rail carrying the doctrine that must never be buried in a
-// legal paragraph: account-storage honesty, one brain, the children's pledge line and
+// legal paragraph: account-storage honesty, one brain and
 // the frozen corporate footprint. It is the same "one mind, one planet"
 // statement the footer already makes, but it moves — so the visitor reads it
 // without being asked to.
-//
-// Legal guardrail (children charter §3): the UNICEF/UNESCO line is a *pledge
-// of funds*, never an implication of endorsement or partnership. The wording
-// below is the frozen public sentence; the interface must never suggest
-// affiliation, so no logos and no "partner/supported by" phrasing ever.
 //
 // Presentation only: no state, no fetch, no analytics. The rail pauses on
 // hover and stops entirely under `prefers-reduced-motion`.
@@ -22,9 +17,6 @@ const RAIL_ITEMS: readonly string[] = [
   "NO USER DATA STORED · SG16 POWERED · mistralbrain.com",
   "ONE MIND · ONE PLANET · ONE SOVEREIGN BRAIN",
   "APACHE 2.0 · OPEN INTELLIGENCE · NO VENDOR LOCK-IN",
-  "CHILDREN'S FRIEND · FREE IN VERIFIED HUMANITARIAN REGIONS · CHILD SHELL KEEPS NO SERVER PROFILE",
-  "All proceeds collected from paying regions are pledged to children's causes through UNICEF- and UNESCO-aligned programmes.",
-  "supporting children's education via UNICEF & UNESCO programmes",
   "YOUR HISTORY AND FILES STAY ON YOUR DEVICE · NOTHING ABOUT YOU IS STORED HERE",
   COMPANY.legalLine,
 ];

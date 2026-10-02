@@ -17,17 +17,13 @@ test("counts per engine, average and p95", () => {
   m.record("core-gate", 5, T0 + 1);
   m.record("busy", undefined, T0 + 1);
   m.record("rate-limited", undefined, T0 + 1);
-  m.record("child-fallback", 50, T0 + 1);
-  m.record("child-crisis", 1, T0 + 1);
   const s = m.snapshot({ active: 1, queued: 2 }, T0 + 2);
   assert.equal(s.answered.ollama, 5);
   assert.equal(s.answered["core-gate"], 1);
   assert.equal(s.answered.busy, 1);
   assert.equal(s.answered["rate-limited"], 1);
-  assert.equal(s.answered["child-fallback"], 1);
-  assert.equal(s.answered["child-crisis"], 1);
-  assert.equal(s.total, 10);
-  assert.equal(s.samples, 8); // busy / rate-limited carry no timing
+  assert.equal(s.total, 8);
+  assert.equal(s.samples, 6); // busy / rate-limited carry no timing
   assert.equal(s.p95Ms, 1000);
   assert.deepEqual(s.queue, { active: 1, queued: 2 });
   assert.equal(typeof s.avgMs, "number");
@@ -75,7 +71,7 @@ test("a failing sink never breaks recording", () => {
 test("snapshots and log lines contain only counts and timings - no identifiers or text", () => {
   const lines: HourLine[] = [];
   const m = new Metrics((l) => lines.push(l), T0);
-  m.record("child-crisis", 1, T0);
+  m.record("core-gate", 1, T0);
   m.record("ollama", 1, T0 + HOUR);
   const allowed = new Set(["hour", "counts", "avgMs", "p95Ms", "samples"]);
   assert.deepEqual(Object.keys(lines[0]).filter((k) => !allowed.has(k)), []);

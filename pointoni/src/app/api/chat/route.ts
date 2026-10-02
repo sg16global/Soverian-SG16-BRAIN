@@ -5,7 +5,6 @@ import {
   GET as brainGET,
   POST as brainPOST,
   DELETE as brainDELETE,
-  OPTIONS as brainOPTIONS,
 } from "../brain/route";
 
 export const dynamic = "force-dynamic";
@@ -14,4 +13,3 @@ export const runtime = "nodejs";
 export function GET(req: NextRequest) { return brainGET(req); }
 export function POST(req: NextRequest) { return brainPOST(req); }
 export function DELETE(req: NextRequest) { return brainDELETE(req); }
-export function OPTIONS(req: NextRequest) { return brainOPTIONS(req); }

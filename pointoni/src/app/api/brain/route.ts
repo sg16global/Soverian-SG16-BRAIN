@@ -21,12 +21,10 @@ import { isAdminRequest } from "@/lib/admin-gate";
 import { projectFromHeaders } from "@/lib/project-keys";
 import { gateTextFor, sanitizeHistory } from "@/lib/chat-history";
 import { ENGLISH_FALLBACK_HINT, WEAK_LANGUAGE_NOTE, weakLanguage } from "@/lib/language";
-import { checkHuman, sharedHumanDeps, turnstileAppliesTo, turnstileEnabled, turnstileSiteKey } from "@/lib/turnstile";
-import { CHILD_MAX_NEW_TOKENS, childHooks } from "@/lib/child-safety";
+import { checkHuman, sharedHumanDeps, turnstileEnabled, turnstileSiteKey } from "@/lib/turnstile";
 import { BUSY_TEXT, answerDeadlineMs, answerMetrics, lastAnswer, queueWaitMs, recordAnswer, runLadder, sharedLimiter, type Engine } from "@/lib/answer-ladder";
 import { charterDigest, type CharterBody } from "@/lib/charter-prompt";
 import { warmFallbackLine, warmRateLimitLine, tierChip } from "@/lib/warm-alias";
-import { childrenPreflight, isChildrenOrigin, withChildrenCors } from "@/lib/cors-lock";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -34,13 +32,10 @@ export const runtime = "nodejs";
 const SG16_MODEL_ID = "sg16-brain";
 // shown when an answer had to be cut at the time limit (the history on the device makes "continue" work)
 const CUT_NOTE = '\n\n(I ran out of time for this answer. Say "continue" and I will go on.)';
-const CHILD_CUT_NOTE = "\n\n(I ran out of time. Ask me to keep going!)";
 
-function rateLimitedLine(child: boolean, scope: "visitor" | "global"): string {
+function rateLimitedLine(scope: "visitor" | "global"): string {
   if (scope === "global") return "I'm very busy right now - please try again in a moment.";
-  return child
-    ? "Wow, that's a lot of questions! Let's take a tiny rest and try again in a moment."
-    : "You're sending messages very quickly - please wait a few seconds and try again.";
+  return "You're sending messages very quickly - please wait a few seconds and try again.";
 }
 
 // a chat message is at most 8k chars; anything near this size is not a chat
@@ -63,13 +58,6 @@ type BrainSource = Engine;
 //   ollama    → Mistral on the operator's own metal answers clean messages
 //   core      → the deterministic Q16.16 runtime if Ollama fails or times out
 //   fallback  → the local guard channel so the pilot is never stranded
-// A children shell is a *body*: no identity, and it never hears about money.
-//
-// OPTIONS — children shells are cross-origin by design, so preflight is
-// answered explicitly and only for origins on the allow-list.
-export async function OPTIONS(req: NextRequest) {
-  return childrenPreflight(req);
-}
 
 // GET /api/brain?probe=health        -> core reachability + stack status
 // GET /api/brain?sessions=1          -> session list
@@ -79,13 +67,7 @@ export async function GET(req: NextRequest) {
 
   // whether the page should show the Turnstile widget (the site key is public by design)
   if (searchParams.get("probe") === "turnstile") {
-    return withChildrenCors(
-      req,
-      NextResponse.json({
-        enabled: turnstileEnabled() && turnstileAppliesTo(isChildrenOrigin(req)),
-        siteKey: turnstileAppliesTo(isChildrenOrigin(req)) ? turnstileSiteKey() : null,
-      }),
-    );
+    return NextResponse.json({ enabled: turnstileEnabled(), siteKey: turnstileSiteKey() });
   }
 
   if (searchParams.get("probe") === "health") {
@@ -129,18 +111,6 @@ export async function GET(req: NextRequest) {
 
   const sessionId = searchParams.get("session");
 
-  // A children shell never reads the flagship's archive. The children edition
-  // keeps its history on its own device and is never handed an account archive.
-  if (isChildrenOrigin(req)) {
-    if (sessionId) {
-      return withChildrenCors(
-        req,
-        NextResponse.json({ error: "No server-side child archive is available.", friend: true, stored: false }, { status: 403 }),
-      );
-    }
-    return withChildrenCors(req, NextResponse.json({ sessions: [], friend: true, stored: false }));
-  }
-
   // This server keeps no conversation history for anyone: it lives on the visitor's own device
   // (see lib/device-vault.ts). These endpoints stay so older clients get a clear, harmless answer.
   if (sessionId) {
@@ -157,18 +127,9 @@ export async function GET(req: NextRequest) {
 // bound subscriber (Bearer identity/API token) enters WORK mode —
 // wider process-local bucket, same configured core path.
 export async function POST(req: NextRequest) {
-  // A body's shape is decided by its origin, never by its request body:
-  // a children shell cannot ask to be treated as the flagship. The body may
-  // only ever tighten that: audience "child" from ANY origin selects the
-  // children's path (stricter prompt, checks, no storage); no field loosens it.
-  const originChildren = isChildrenOrigin(req);
-
   // Refuse oversized bodies before reading them (messages are capped at 8k chars).
   if (Number(req.headers.get("content-length") ?? 0) > MAX_BODY_BYTES) {
-    return withChildrenCors(
-      req,
-      NextResponse.json({ error: "That message is too big to send." }, { status: 413 }),
-    );
+    return NextResponse.json({ error: "That message is too big to send." }, { status: 413 });
   }
 
   // Per-visitor limit, before any body parsing or database work. The visitor key
@@ -192,17 +153,13 @@ export async function POST(req: NextRequest) {
   const decision = fromProject ? ({ ok: true } as const) : sharedRateLimiter().check(clientIdentity(req.headers));
   if (!decision.ok) {
     recordAnswer("rate-limited");
-    return withChildrenCors(
-      req,
-      NextResponse.json(
-        {
-          error: rateLimitedLine(originChildren, decision.scope),
-          rateLimited: true,
-          friend: originChildren,
-          retryAt: Date.now() + decision.retryAfterSec * 1000,
-        },
-        { status: 429, headers: { "Retry-After": String(decision.retryAfterSec) } },
-      ),
+    return NextResponse.json(
+      {
+        error: rateLimitedLine(decision.scope),
+        rateLimited: true,
+        retryAt: Date.now() + decision.retryAfterSec * 1000,
+      },
+      { status: 429, headers: { "Retry-After": String(decision.retryAfterSec) } },
     );
   }
   const body = (await req.json().catch(() => null)) as {
@@ -210,40 +167,31 @@ export async function POST(req: NextRequest) {
     modelId?: unknown;
     message?: unknown;
     forgetSessionId?: unknown;
-    audience?: unknown;
     history?: unknown;
     stream?: unknown;
     turnstileToken?: unknown;
     humanToken?: unknown;
   } | null;
-  const children = originChildren || body?.audience === "child";
-  const bodyKind: CharterBody = children ? "children" : "flagship";
+  const bodyKind: CharterBody = "flagship";
 
   const tierInfo = await resolveTier(req);
   const bucket = consumeBucket(tierInfo.bucketKey, tierInfo.limit);
   const rateHeaders = {
-    "X-Chat-Tier": children ? "friend" : tierInfo.tier,
+    "X-Chat-Tier": tierInfo.tier,
     "X-RateLimit-Limit": String(tierInfo.limit),
     "X-RateLimit-Remaining": String(bucket.remaining),
   };
-  // every response from here on carries the children lock when applicable
   const json = (payload: unknown, init?: { status?: number; headers?: Record<string, string> }) =>
-    withChildrenCors(
-      req,
-      NextResponse.json(payload, {
-        status: init?.status,
-        headers: { ...rateHeaders, ...(init?.headers ?? {}) },
-      }),
-    );
+    NextResponse.json(payload, {
+      status: init?.status,
+      headers: { ...rateHeaders, ...(init?.headers ?? {}) },
+    });
 
   if (!bucket.ok) {
-    // Charter §5: no work-mode pressure in the children edition — the pause is
-    // warm, never a sales pitch.
     return json(
       {
         error: warmRateLimitLine(bodyKind, tierInfo.tier),
         tier: tierInfo.tier,
-        friend: children,
         tierChip: tierChip(bodyKind, tierInfo.tier),
         retryAt: bucket.resetAt,
       },
@@ -274,9 +222,7 @@ export async function POST(req: NextRequest) {
 
   // Optional Cloudflare Turnstile (off unless both keys are set). Fails open to
   // the rate limiter if Cloudflare cannot be reached.
-  // The children's edition promises no third-party scripts, so it is only
-  // challenged if the operator opts in with TURNSTILE_ON_CHILDREN=1.
-  const human = turnstileAppliesTo(children) && !fromProject
+  const human = !fromProject
     ? await checkHuman(
         { turnstileToken: body?.turnstileToken, humanToken: body?.humanToken },
         sharedHumanDeps(),
@@ -333,11 +279,10 @@ export async function POST(req: NextRequest) {
               message: weak ? t + ENGLISH_FALLBACK_HINT : t,
               history,
               body: bodyKind,
-              maxTokens: children ? CHILD_MAX_NEW_TOKENS : undefined,
               onDelta: live?.onDelta,
               signal: live?.signal,
             });
-            const cut = turn.truncated ? (children ? CHILD_CUT_NOTE : CUT_NOTE) : "";
+            const cut = turn.truncated ? CUT_NOTE : "";
             return `${weak ? WEAK_LANGUAGE_NOTE[weak] + "\n\n" : ""}${turn.reply}${cut}`;
           }
         : null,
@@ -350,7 +295,6 @@ export async function POST(req: NextRequest) {
         return [warmFallbackLine("fallback-local", detail), local.content].join("\n\n");
       },
       limiter: sharedLimiter(),
-      child: children ? childHooks(brainIntrospect) : undefined,
       queueWaitMs: queueWaitMs(),
       deadlineMs: answerDeadlineMs(),
       // fair share of the single model: a project may have a couple of answers going, a visitor one
@@ -362,32 +306,6 @@ export async function POST(req: NextRequest) {
     recordAnswer(result.engine, result.engine === "busy" ? undefined : performance.now() - startedAt);
     return { content: result.content, brain: result.engine, relay: false };
   };
-
-  // ---- the children's edition: nothing is written down -------------------
-  // Charter §4: no login, no email, no capsule, no vault. That "no vault" is
-  // enforced here — no session row, no message row, no stored transcript. The
-  // core session id is fresh per turn, so no two children ever share context
-  // and no conversation can be continued server-side. The child's device
-  // holds its own memory, exactly as the charter promises.
-  if (children) {
-    const started = performance.now();
-    const turn = await think(message, null);
-    return json({
-      sessionId: null,
-      userMessage: { role: "user", content: message },
-      assistantMessage: {
-        role: "assistant",
-        content: turn.content,
-        latencyMs: Math.round(performance.now() - started),
-      },
-      brain: shown(turn.brain),
-      tier: tierInfo.tier,
-      friend: true,
-      tierChip: tierChip(bodyKind, tierInfo.tier),
-      stored: false,
-      ...humanExtra,
-    });
-  }
 
   const requestedSession = typeof body?.sessionId === "string" ? body.sessionId : null;
   if (requestedSession && requestedSession.length > 64) {
@@ -417,7 +335,6 @@ export async function POST(req: NextRequest) {
       },
       brain: shown(turn.brain),
       tier: tierInfo.tier,
-      friend: false,
       stored: false,
       tierChip: tierChip(bodyKind, tierInfo.tier),
       ...humanExtra,
@@ -460,20 +377,17 @@ export async function POST(req: NextRequest) {
         leave.abort();
       },
     });
-    return withChildrenCors(
-      req,
-      new NextResponse(stream, {
-        status: 200,
-        headers: {
-          ...rateHeaders,
-          "Content-Type": "application/x-ndjson; charset=utf-8",
-          // tell every proxy: send each line as it is written, do not hold or compress it
-          "Cache-Control": "no-store, no-transform",
-          "Content-Encoding": "identity",
-          "X-Accel-Buffering": "no",
-        },
-      }),
-    );
+    return new NextResponse(stream, {
+      status: 200,
+      headers: {
+        ...rateHeaders,
+        "Content-Type": "application/x-ndjson; charset=utf-8",
+        // tell every proxy: send each line as it is written, do not hold or compress it
+        "Cache-Control": "no-store, no-transform",
+        "Content-Encoding": "identity",
+        "X-Accel-Buffering": "no",
+      },
+    });
   }
 
   const turn = await think(message, guestSessionId);
@@ -485,8 +399,8 @@ export async function DELETE(req: NextRequest) {
   const { searchParams } = new URL(req.url);
   const sessionId = searchParams.get("session");
   if (!sessionId || sessionId.length > 64) {
-    return withChildrenCors(req, NextResponse.json({ error: "session id required" }, { status: 400 }));
+    return NextResponse.json({ error: "session id required" }, { status: 400 });
   }
   await brainForgetSession(sessionId);
-  return withChildrenCors(req, NextResponse.json({ ok: true, storedOn: "device", coreContextMayRemain: true }));
+  return NextResponse.json({ ok: true, storedOn: "device", coreContextMayRemain: true });
 }

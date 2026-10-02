@@ -32,7 +32,7 @@ export function gateTextFor(history: HistoryTurn[], message: string): string {
   return [...history.map((h) => h.content), message].join("\n").slice(-MAX_GATE_CHARS);
 }
 
-const NOT_AN_ANSWER = new Set(["core-gate", "busy", "rate-limited", "child-fallback", "child-crisis"]);
+const NOT_AN_ANSWER = new Set(["core-gate", "busy", "rate-limited"]);
 
 /**
  * Pick the turns worth remembering from the visible conversation: finished question/answer pairs only.

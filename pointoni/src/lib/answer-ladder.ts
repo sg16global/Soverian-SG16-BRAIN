@@ -17,9 +17,7 @@ export type Engine =
   | "core"
   | "fallback-local"
   | "busy"
-  | "rate-limited"
-  | "child-fallback"
-  | "child-crisis";
+  | "rate-limited";
 
 export const BUSY_TEXT = "I'm helping someone else right now, please try again in a moment";
 export const OWN_BUSY_TEXT = "I'm still answering your previous message, please wait for it to finish.";
@@ -61,18 +59,6 @@ export type LadderDeps = {
    */
   owner?: string;
   ownerLimit?: number;
-  /** children's edition: only ever makes the ladder stricter (see child-safety.ts) */
-  child?: ChildHooks;
-};
-
-export type ChildHooks = {
-  /** a fixed reply for crisis / personal-data messages; the model is never asked */
-  preCheck: (text: string) => LadderResult | null;
-  /** shown instead of the core's adult-worded refusal */
-  refusal: string;
-  /** what a child may see, or null to replace it with `fallback` */
-  checkOutput: (text: string, source: "ollama" | "core" | "local") => Promise<string | null>;
-  fallback: string;
 };
 
 export type LadderResult = { content: string; engine: Engine };
@@ -182,20 +168,6 @@ function withTimeout<T>(work: Promise<T>, ms: number | undefined): Promise<T> {
   return Promise.race([work, limit]).finally(() => clearTimeout(timer));
 }
 
-/** For children, every answer passes checkOutput; null means "use the safe fallback". */
-async function vet(
-  deps: LadderDeps,
-  content: string,
-  engine: Engine,
-  source: "ollama" | "core" | "local",
-): Promise<LadderResult> {
-  if (!deps.child) return { content, engine };
-  const checked = await deps.child.checkOutput(content, source);
-  return checked === null
-    ? { content: deps.child.fallback, engine: "child-fallback" }
-    : { content: checked, engine };
-}
-
 export async function runLadder(text: string, deps: LadderDeps): Promise<LadderResult> {
   const startedAt = Date.now();
   const remaining = () => (deps.deadlineMs === undefined ? Infinity : deps.deadlineMs - (Date.now() - startedAt));
@@ -203,17 +175,13 @@ export async function runLadder(text: string, deps: LadderDeps): Promise<LadderR
     const left = remaining();
     return limit === undefined ? (left === Infinity ? undefined : left) : Math.min(limit, left);
   };
-  if (deps.child) {
-    const fixed = deps.child.preCheck(text);
-    if (fixed) return fixed;
-  }
   let gateDetail = "";
   let gateUp = true;
   try {
     const verdict = await deps.gate(text);
     if (!verdict.allowed) {
       return {
-        content: deps.child ? deps.child.refusal : verdict.refusal || DEFAULT_REFUSAL,
+        content: verdict.refusal || DEFAULT_REFUSAL,
         engine: "core-gate",
       };
     }
@@ -231,7 +199,7 @@ export async function runLadder(text: string, deps: LadderDeps): Promise<LadderR
     if (!release) return { content: BUSY_TEXT, engine: "busy" };
     try {
       const answer = await withTimeout(deps.ollama(text), within(deps.ollamaTimeoutMs));
-      return await vet(deps, answer, "ollama", "ollama");
+      return { content: answer, engine: "ollama" };
     } catch {
       // fall through to the deterministic core
     } finally {
@@ -240,10 +208,10 @@ export async function runLadder(text: string, deps: LadderDeps): Promise<LadderR
   }
 
   try {
-    return await vet(deps, await deps.core(text), "core", "core");
+    return { content: await deps.core(text), engine: "core" };
   } catch (err) {
     const detail = gateDetail || (err instanceof Error ? err.message : "core link down");
-    return await vet(deps, await deps.local(text, detail), "fallback-local", "local");
+    return { content: await deps.local(text, detail), engine: "fallback-local" };
   }
 }
 

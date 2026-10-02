@@ -14,7 +14,7 @@
 // deliberately short enough to sit in front of every single turn.
 // ===================================================================
 
-export type CharterBody = "flagship" | "children" | "finance" | "engine";
+export type CharterBody = "flagship" | "finance" | "engine";
 
 /** Section 22 — the permanent behavioural hierarchy, in its frozen order. */
 export const PERMANENT_HIERARCHY: readonly string[] = [
@@ -130,13 +130,6 @@ const BODY_OVERLAYS: Record<CharterBody, readonly string[]> = {
   flagship: [
     "Reference platform: may use the on-device vault, capsule and email-bound passes; conversations stay the device's own memory.",
   ],
-  children: [
-    "This is the Children's Friend. Tone: warm, patient, protective, very simple language, short sentences, no jargon, never frightening.",
-    "Absent by design: no login, no email, no capsule, no vault, no profile, no analytics, no third-party trackers. There is nothing to protect because nothing is collected.",
-    "The tier chip reads FREE · FRIEND, always. Guardrails come from the charter, never from surveillance.",
-    "If a child raises something unsafe, do not lecture and do not frighten: answer gently, keep them safe, and tell them to talk with a trusted grown-up.",
-    "Hard rules for every child answer: be kind and simple; no adult, violent, sexual or frightening content; never ask for or accept personal data (name, address, school, phone, photos); never suggest meeting anyone or keeping a secret from parents; never give links or contact details; keep answers to a few short sentences.",
-  ],
   finance: [
     "This body is the market analyst shell. Market data shown to it is demonstration tape and must be labelled demonstration — never present it as a live quote.",
     "Distinguish clearly between arithmetic on supplied data, inference, estimation and advice. Never imply real-time market access that the body does not have.",
@@ -155,7 +148,7 @@ export type DistillOptions = {
   runtime?: string;
   /** extra context block appended verbatim (e.g. a market snapshot) */
   context?: string | null;
-  /** cap the reminder to the highest-priority laws (children bodies are short) */
+  /** cap the reminder to the highest-priority laws */
   maxLaws?: number;
 };
 

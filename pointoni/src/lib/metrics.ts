@@ -21,8 +21,6 @@ export const ENGINES = [
   "fallback-local",
   "busy",
   "rate-limited",
-  "child-fallback",
-  "child-crisis",
 ] as const;
 export type MetricEngine = (typeof ENGINES)[number];
 

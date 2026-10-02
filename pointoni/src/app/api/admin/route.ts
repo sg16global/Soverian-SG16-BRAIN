@@ -5,7 +5,6 @@ import { isAdminRequest } from "@/lib/admin-gate";
 import { brainHealth } from "@/lib/brain-gateway";
 import { ollamaHealth } from "@/lib/ollama-brain";
 import { charterDigest } from "@/lib/charter-prompt";
-import { childrenLockSummary } from "@/lib/cors-lock";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -61,7 +60,6 @@ export async function GET(req: NextRequest) {
         answering,
         engines: ["core", "ollama", "fallback-local"],
         charter: charterDigest(),
-        children: childrenLockSummary(),
       },
       imagery: {
         globe: "/images/globe.png",

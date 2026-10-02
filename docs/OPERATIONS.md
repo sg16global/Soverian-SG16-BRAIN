@@ -21,7 +21,6 @@ Written for the person running the VPS. Nothing here is applied automatically to
 | `SG16_PROJECT_HOURLY` | platform | Per-project hourly ceiling (a runaway-loop guard, not a quota). | 100000 |
 | `SG16_ADMIN_EMAILS` | platform | Comma-separated verified emails allowed to open the admin console and see operator detail in `/api/health`, `/api/models`, `/api/admin`. Unset = nobody (fails closed). | unset |
 | `TURNSTILE_SECRET_KEY` + `TURNSTILE_SITE_KEY` | platform | Both set = Cloudflare Turnstile on. Either missing = off. | off |
-| `TURNSTILE_ON_CHILDREN=1` | platform | Also challenge the children's edition (loads a Cloudflare script there) | off |
 | `SG16_METRICS_LOG=1` | platform | Write one numbers-only line per hour to `state/metrics.jsonl` (0600, 30 days) | off |
 | `SG16_ALERT_CMD` | `/etc/sg16/healthcheck.env` | Command the watchdog runs with one message argument after a restart | unset |
 

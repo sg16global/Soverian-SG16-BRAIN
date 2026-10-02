@@ -1,8 +1,7 @@
 // ===================================================================
 // SG16 WARM ALIAS
 //
-// Doctrine: "The brain already speaks warmly; the child's voice is a
-// presentation choice, not a new engine."
+// Doctrine: "The brain already speaks warmly."
 //
 // Every runtime that can answer a turn gets ONE warm human alias, and every
 // system-authored line the platform emits (degraded-engine notices, fair-use
@@ -47,11 +46,8 @@ export function warmFallbackLine(voice: BrainVoice, detail: string): string {
   return `Answered by the local guard while the sovereign core is out of reach (${detail}). Warm and honest, but not the full core — reconnect the host when you can.`;
 }
 
-/** Fair-use pause, per body. Children never hear about money (charter §5). */
-export function warmRateLimitLine(body: CharterBody, tier: string): string {
-  if (body === "children") {
-    return "I need a short rest — we can talk again in a little while. I will be right here, and I never left anything behind. 🌙";
-  }
+/** Fair-use pause. */
+export function warmRateLimitLine(_body: CharterBody, tier: string): string {
   if (tier === "work") {
     return "Work-mode ceiling reached for this hour. Nothing is lost — the window opens again on its own.";
   }
@@ -61,8 +57,6 @@ export function warmRateLimitLine(body: CharterBody, tier: string): string {
 /** A warm, honest opening for a body. */
 export function warmGreeting(body: CharterBody): string {
   switch (body) {
-    case "children":
-      return "Hello! I am your friend. Ask me anything at all — I love questions.";
     case "finance":
       return "Market desk open. Prices you see are demonstration tape — tell me what you want examined.";
     case "engine":
@@ -72,8 +66,7 @@ export function warmGreeting(body: CharterBody): string {
   }
 }
 
-/** Tier chip copy — frozen for children bodies ("FREE · FRIEND always", charter §5). */
-export function tierChip(body: CharterBody, tier: string): string {
-  if (body === "children") return "FREE · FRIEND";
+/** Tier chip copy. */
+export function tierChip(_body: CharterBody, tier: string): string {
   return tier === "work" ? "WORK" : "FREE";
 }

@@ -49,8 +49,8 @@ test("only finished question/answer pairs are remembered; a refused pair is left
   assert.deepEqual(historyFromMessages(messages).map((t) => t.content), ["hello", "hi!", "tell me about cats", "Cats purr."]);
 });
 
-test("busy, rate-limited and child-fallback answers are not remembered either", () => {
-  for (const engine of ["busy", "rate-limited", "child-fallback", "child-crisis"]) {
+test("busy and rate-limited answers are not remembered either", () => {
+  for (const engine of ["busy", "rate-limited"]) {
     assert.deepEqual(historyFromMessages([{ role: "user", content: "q" }, { role: "assistant", content: "a", engine }]), [], engine);
   }
 });

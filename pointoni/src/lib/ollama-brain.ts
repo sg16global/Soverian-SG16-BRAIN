@@ -80,7 +80,7 @@ export function ollamaModel(): string {
   return process.env.SG16_OLLAMA_MODEL?.trim() || DEFAULT_OLLAMA_MODEL;
 }
 
-/** Hard cap on generated tokens per answer (children get a smaller one from the caller). */
+/** Hard cap on generated tokens per answer. */
 export function ollamaMaxTokens(): number {
   const parsed = Number(process.env.SG16_OLLAMA_MAX_TOKENS);
   return Number.isInteger(parsed) && parsed >= 50 && parsed <= 4000 ? parsed : DEFAULT_MAX_TOKENS;
@@ -105,7 +105,7 @@ export type OllamaTurnInput = {
   humanitarianRegion?: string | null;
   /** extra context injected into the system preamble (e.g. a tape snapshot) */
   context?: string | null;
-  /** hard cap on generated tokens (children's edition keeps answers short) */
+  /** hard cap on generated tokens for this turn */
   maxTokens?: number;
   /** called with each piece of the answer as it is written, so the person can read along */
   onDelta?: (text: string) => void;
@@ -179,7 +179,7 @@ export async function ollamaChat(input: OllamaTurnInput): Promise<OllamaTurn> {
         messages,
         stream: true,
         options: {
-          temperature: body === "children" ? 0.4 : 0.7,
+          temperature: 0.7,
           num_predict: input.maxTokens ?? ollamaMaxTokens(),
         },
       }),

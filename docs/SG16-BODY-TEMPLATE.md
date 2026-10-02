@@ -10,7 +10,7 @@ starter skeleton: copy it into the new domain's repo, reskin the face, launch.
 ## 1. The only code a body ever needs
 
 ```tsx
-// app/page.tsx — a full sovereign body, children-friendly by default
+// app/page.tsx — a full sovereign body
 "use client";
 
 import { useState } from "react";
@@ -69,7 +69,6 @@ export default function Home() {
 
 | Body | Delta against this template | Never add |
 |---|---|---|
-| **children** | bigger input font, word-bank suggestions, *no* identity fetches of any kind, no analytics | login/email fields, trackers, ads |
 | **finance** | inject latest demo-tape JSON into each message as context (`MARKET SNAPSHOT: …`) | real-time market claims — keep DEMO TAPE badge |
 | **corporate/about** | static branding + embedded same chat | anything dark-pattern |
 | **any body** | skin, fonts, tone of copy | a second model, a second storage backend, a forking of the core |
@@ -88,7 +87,7 @@ export default function Home() {
 
 A body's monthly run-rate = its static hosting (≈$0 on any tier) because 100%
 of thinking is paid by the power plant's own fair-use architecture and
-visitors' devices. Transactions, licenses, and children hope-pledges live
+visitors' devices. Transactions and licenses live
 only on the flagship—bodies never ever bill.
 
 ---

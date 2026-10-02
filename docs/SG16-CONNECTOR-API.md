@@ -38,7 +38,6 @@ Response:
 | Body | Flavor | Same call, different costume |
 |---|---|---|
 | mistralbrain.com | full sovereign platform (today's build — reference body) | ChatPanel UI, vaults & capsule |
-| sg16children.com | guarded kid edition — no login, no vault, simplified prompts, parent-safe | thin shell, one fetch, *no* identity |
 | sg16finance.com | market analyst — inject ticker snapshot into `message`, read `assistantMessage` | chain with the demo-tape source |
 | sg16engine.com | weights/engine CDN + docs + this API | host-only, calls nothing |
 | corporate domains | projector/window into the brain | embedded mini-chat |
@@ -60,7 +59,6 @@ Bodies don't implement licenses. They forward Bearer. The brain enforces.
 
 - Showroom brain holds sessions in volatile memory only; the copy-of-record always moves to the user's own device/capsule.
 - Identity = one email column, ever. Pass vaulting ready now (`/api/identity`) on every domain.
-- Children's shape: shells skip identity entirely (no fetch of `/api/identity`) — no data exists to protect, anywhere.
 
 ## 5. Frozen invariants (bodies must NOT break)
 

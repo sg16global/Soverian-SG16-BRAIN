@@ -8,7 +8,6 @@ import {
   Database,
   Cpu,
   Heart,
-  Globe,
   KeyRound,
   FileStack,
   Users,
@@ -45,7 +44,6 @@ type Health = {
   };
   engines: string[];
   charter?: { laws?: number; bodies?: number; digest?: string };
-  children?: { allowedOrigins?: number; mode?: string };
 };
 
 type Model = {
@@ -321,13 +319,6 @@ function AdminConsole() {
                 sub={health.heart.model ?? health.heart.detail ?? "ollama bridge"}
                 accent={health.heart.status === "online" ? "#ff8a3d" : "#8aa0bd"}
               />
-              <StatCard
-                icon={Globe}
-                label="GLOBAL PRESENCE"
-                value={`${health.children?.allowedOrigins ?? 0} ORIGINS`}
-                sub={health.children?.mode ?? "children lock"}
-                accent="#ffd166"
-              />
             </div>
 
             <div className="grid gap-4 lg:grid-cols-[1.2fr_0.8fr]">
@@ -364,12 +355,6 @@ function AdminConsole() {
                     <p className="mt-1 font-display text-[11px] font-bold tracking-widest text-cyan-200">
                       {health.charter?.laws ?? 16} LAWS · {health.charter?.bodies ?? 3} BODIES ·{" "}
                       <span className="font-mono2 text-[10px] text-slate-400">{health.charter?.digest?.slice(0, 12) ?? "—"}</span>
-                    </p>
-                  </div>
-                  <div className="rounded-lg border border-white/10 bg-white/[0.03] p-3">
-                    <p className="font-mono2 text-[10px] tracking-widest text-slate-400">CHILDREN LOCK</p>
-                    <p className="mt-1 font-mono2 text-[11px] text-slate-300">
-                      CORS allow-list: {health.children?.allowedOrigins ?? 0} origins · mode: {health.children?.mode ?? "enforced"}
                     </p>
                   </div>
                 </div>
@@ -436,10 +421,6 @@ function AdminConsole() {
               <p className="flex gap-2">
                 <CheckCircle2 className="mt-0.5 h-4 w-4 flex-none text-emerald-400" />
                 <span>One brain, one charter, one operator — every body speaks under the same 16 laws.</span>
-              </p>
-              <p className="flex gap-2">
-                <CheckCircle2 className="mt-0.5 h-4 w-4 flex-none text-emerald-400" />
-                <span>Identity is absent by design for children; flagship archive is never exposed to children origins (CORS lock enforced).</span>
               </p>
               <p className="flex gap-2">
                 <CheckCircle2 className="mt-0.5 h-4 w-4 flex-none text-emerald-400" />

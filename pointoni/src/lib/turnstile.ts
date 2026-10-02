@@ -28,11 +28,6 @@ export function turnstileSiteKey(env: NodeJS.ProcessEnv = process.env): string |
   return turnstileEnabled(env) ? (env.TURNSTILE_SITE_KEY as string).trim() : null;
 }
 
-/** Children are only challenged when the operator opts in (it loads a Cloudflare script). */
-export function turnstileAppliesTo(child: boolean, env: NodeJS.ProcessEnv = process.env): boolean {
-  return !child || env.TURNSTILE_ON_CHILDREN === "1";
-}
-
 export type VerifyOutcome = "pass" | "fail" | "error";
 type FetchLike = (url: string, init: RequestInit) => Promise<Response>;
 

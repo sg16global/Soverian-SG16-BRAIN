@@ -38,7 +38,7 @@ test("the public health answer carries no engine, model or counter detail", () =
   const src = read("app/api/health/route.ts");
   const publicReply = src.slice(src.indexOf("if (!(await isAdminRequest(req)))"), src.indexOf("return Response.json(\n    {\n      ok: database,\n      admin: true"));
   assert.match(publicReply, /ok: database, database, brain/);
-  assert.doesNotMatch(publicReply, /metrics|heart|lastAnswered|engines|charter|children|persistence/);
+  assert.doesNotMatch(publicReply, /metrics|heart|lastAnswered|engines|charter|persistence/);
 });
 
 test("there is no fake session cookie any more", () => {

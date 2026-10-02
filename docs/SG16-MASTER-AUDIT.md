@@ -10,7 +10,7 @@ repository and the running platform on this date. Nothing inferred.*
 | Check | Result |
 |---|---|
 | Branch | `arena/01a0c140-soverian-sg16-brain` (session-fixed) |
-| Commit spine | `eb53df6` (platform import) → `f161586` (FRIEND engine + doctrine v2) → `341a5ec` (CDN posture) → `a4904ed` (Connector API) → `222ca41` (Children Charter) → `498492f` (Body Template) |
+| Commit spine | `eb53df6` (platform import) → `f161586` (FRIEND engine + doctrine v2) → `341a5ec` (CDN posture) → `a4904ed` (Connector API) → `498492f` (Body Template) |
 | Working tree | **0 dirty files** |
 | Tracked files | 176 — lean, no binary bloat |
 
@@ -59,13 +59,12 @@ repository and the running platform on this date. Nothing inferred.*
 
 ## 7. Doctrine canon (6 documents, all committed)
 
-`architecture.md` · `deployment.md` · **MODEL-WEIGHT-SYSTEM** (v2 doctrine) · **CONNECTOR-API** (one cable) · **BODY-TEMPLATE** (1-hour births) · **CHILDREN-CHARTER** (ME free · Europe $3/mo · UNICEF/UNESCO pledge-line with legal guardrails) · this audit.
+`architecture.md` · `deployment.md` · **MODEL-WEIGHT-SYSTEM** (v2 doctrine) · **CONNECTOR-API** (one cable) · **BODY-TEMPLATE** (1-hour births) · this audit.
 
 ## 8. Flags that stay BY LAW
 
 - **Chat exclusivity across all bodies**: the world talks to `sg16-brain` only.
-- **Children domain**: no login, no email, no capsule, no analytics — clean by physics.
-- **Humanitarian bypass**: Palestine regions + children regions — code, not policy.
+- **Humanitarian bypass**: Palestine regions — code, not policy.
 - **Money posture**: subscriptions are gratitude buttons; two months ran 22 GB, 267k humans, 109 countries at $0 revenue and nothing broke. Missing a next.push() to GitHub to make spine visible remotely — DO at Owner's word.
 
 ## 9. Amber list (honest, exactly one)

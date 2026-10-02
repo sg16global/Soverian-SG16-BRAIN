@@ -5,7 +5,6 @@ import { ollamaHealth } from "@/lib/ollama-brain";
 import { answerMetrics, lastAnswer } from "@/lib/answer-ladder";
 import { charterSummary } from "@/lib/charter-prompt";
 import { isAdminRequest } from "@/lib/admin-gate";
-import { childrenLockSummary } from "@/lib/cors-lock";
 
 export const dynamic = "force-dynamic";
 
@@ -57,7 +56,6 @@ export async function GET(req: Request) {
       metrics: answerMetrics(),
       engines: ["core-gate", "ollama", "core", "fallback-local"],
       charter: charterSummary(),
-      children: childrenLockSummary(),
     },
     { status: database ? 200 : 500 },
   );

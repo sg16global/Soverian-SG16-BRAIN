@@ -3,38 +3,31 @@
 # SG16 VPS CANNON — fire the whole platform onto a fresh host
 #
 # scripts/vps-setup.sh builds the *brain* (core + platform under systemd,
-# Caddy in front). The cannon wraps it and adds the two pieces that make a
-# host feel like home rather than a demo:
-#
-#   1. the Ollama heart-bridge — the platform keeps answering even when the
-#      Q16.16 core is down, from the operator's own metal;
-#   2. the children's body — the static Children's Friend, served from
-#      /srv/sg16children, ready for its own domain.
+# Caddy in front). The cannon wraps it and adds the Ollama heart-bridge — the
+# platform keeps answering even when the Q16.16 core is down, from the
+# operator's own metal.
 #
 # Nothing here asks for, echoes or stores a secret. .env is created empty.
 #
 # Usage (on the VPS, as a sudo user):
-#   sudo bash scripts/vps-cannon.sh mistralbrain.com [sg16children.com]
+#   sudo bash scripts/vps-cannon.sh mistralbrain.com
 #   SG16_BRANCH=main sudo bash scripts/vps-cannon.sh mistralbrain.com
 #   SKIP_OLLAMA=1 sudo bash scripts/vps-cannon.sh mistralbrain.com
 # ============================================================
 set -euo pipefail
 
 DOMAIN="${1:-}"
-CHILD_DOMAIN="${2:-}"
-CHILD_ROOT=/srv/sg16children
 OLLAMA_MODEL="${SG16_OLLAMA_MODEL:-mistral}"
 
 echo "=============================================="
 echo " SG16 VPS CANNON"
 echo " flagship : ${DOMAIN:-<none — local only>}"
-echo " children : ${CHILD_DOMAIN:-<not configured>}"
 echo " heart    : ${SKIP_OLLAMA:+disabled}${SKIP_OLLAMA:-ollama ${OLLAMA_MODEL}}"
 echo "=============================================="
 
-# ── 1/4 the brain itself (existing kit, unchanged) ───────────────────────────
+# ── 1/3 the brain itself (existing kit, unchanged) ───────────────────────────
 echo
-echo "== (1/4) brain kit =="
+echo "== (1/3) brain kit =="
 KIT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/vps-setup.sh"
 if [ -f "$KIT" ]; then
   bash "$KIT" "$DOMAIN"
@@ -46,9 +39,9 @@ fi
 APP=/opt/sg16
 [ -d "$APP" ] || { echo "!! expected the kit to land in $APP"; exit 1; }
 
-# ── 2/4 the heart-bridge (local Ollama) ──────────────────────────────────────
+# ── 2/3 the heart-bridge (local Ollama) ──────────────────────────────────────
 echo
-echo "== (2/4) heart-bridge =="
+echo "== (2/3) heart-bridge =="
 if [ -n "${SKIP_OLLAMA:-}" ]; then
   echo "   skipped (SKIP_OLLAMA set)"
 elif command -v ollama >/dev/null; then
@@ -84,30 +77,9 @@ else
   echo "   bridge already configured in $ENV_FILE"
 fi
 
-# ── 3/4 the children's body (static, no build) ───────────────────────────────
+# ── 3/3 restart + report honestly ────────────────────────────────────────────
 echo
-echo "== (3/4) children's body =="
-if [ -f "$APP/children/index.html" ]; then
-  mkdir -p "$CHILD_ROOT"
-  cp -r "$APP/children/." "$CHILD_ROOT/"
-  echo "   deployed to $CHILD_ROOT ($(du -sh "$CHILD_ROOT" | cut -f1))"
-  if [ -n "$CHILD_DOMAIN" ]; then
-    # the body must be allowed to call the power plant cross-origin
-    if ! grep -q '^SG16_CHILDREN_ORIGINS=' "$ENV_FILE" 2>/dev/null; then
-      echo "SG16_CHILDREN_ORIGINS=https://${CHILD_DOMAIN},https://www.${CHILD_DOMAIN}" >> "$ENV_FILE"
-      echo "   CORS children lock allows https://${CHILD_DOMAIN}"
-    fi
-    echo "   point ${CHILD_DOMAIN} at ${CHILD_ROOT} in your Caddy block, then reload caddy"
-  else
-    echo "   no children domain passed — body staged only"
-  fi
-else
-  echo "   children/ not present in this checkout — skipped"
-fi
-
-# ── 4/4 restart + report honestly ────────────────────────────────────────────
-echo
-echo "== (4/4) restart + verdict =="
+echo "== (3/3) restart + verdict =="
 systemctl restart sg16-core sg16-platform >/dev/null 2>&1 || \
   systemctl restart sg16-core >/dev/null 2>&1 || true
 

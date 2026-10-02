@@ -26,7 +26,7 @@ const INTERNAL = [
   /[\\/]app[\\/]api[\\/]/,
   /[\\/]app[\\/]admin[\\/]/,
   /\.test\.ts$/,
-  /lib[\\/](ollama-brain|answer-ladder|metrics|language|child-safety|turnstile|warm-alias|public-engine|charter-prompt)\.ts$/,
+  /lib[\\/](ollama-brain|answer-ladder|metrics|language|turnstile|warm-alias|public-engine|charter-prompt)\.ts$/,
 ];
 
 test("no page, component or visitor-facing text names the inner model or its engine", () => {
@@ -41,7 +41,7 @@ test("no page, component or visitor-facing text names the inner model or its eng
 });
 
 test("the system prompt never names the model, and tells the brain to keep it private yet never lie", () => {
-  for (const body of ["flagship", "children"] as const) {
+  for (const body of ["flagship"] as const) {
     // exactly what the bridge sends: the runtime line is RUNTIME_LABEL, nothing else names an engine
     const prompt = distillCharter(body, { runtime: RUNTIME_LABEL });
     assert.doesNotMatch(prompt, /mistral|ollama|7b|llama/i, body);
@@ -79,7 +79,7 @@ test("there is no invented multi-model grid or model registry any more", () => {
 
 test("the public engine label: inner engines all read 'sg16'; outcomes about the request keep their names", () => {
   for (const inner of ["ollama", "core", "fallback-local"]) assert.equal(publicEngine(inner), "sg16", inner);
-  for (const outcome of ["core-gate", "busy", "rate-limited", "child-fallback", "child-crisis"]) assert.equal(publicEngine(outcome), outcome, outcome);
+  for (const outcome of ["core-gate", "busy", "rate-limited"]) assert.equal(publicEngine(outcome), outcome, outcome);
 });
 
 test("a visitor is never a direct probe, even though the public proxy adds the proxy secret to every request", () => {
@@ -100,6 +100,6 @@ test("a visitor is never a direct probe, even though the public proxy adds the p
 test("the chat route shows the exact engine only to direct probes and project keys", () => {
   const route = fs.readFileSync(path.join(SRC, "app/api/brain/route.ts"), "utf8");
   assert.match(route, /exactEngine = fromProject \|\| directProbe\(req\.headers\)/);
-  assert.equal((route.match(/brain: shown\(turn\.brain\)/g) ?? []).length, 2);
+  assert.equal((route.match(/brain: shown\(turn\.brain\)/g) ?? []).length, 1);
   assert.doesNotMatch(route, /brain: turn\.brain/);
 });

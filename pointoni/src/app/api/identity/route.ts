@@ -3,7 +3,6 @@ import { adminLogin } from "@/lib/admin-login";
 import { isAdminEmail } from "@/lib/admin-auth";
 import { signToken, verifyToken } from "@/lib/identity";
 import { clientIdentity } from "@/lib/rate-limit";
-import { childrenIdentityBlock, childrenPreflight, withChildrenCors } from "@/lib/cors-lock";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -12,18 +11,12 @@ export const runtime = "nodejs";
 // the server keeps nothing about them (history and files live on their device; a subscription is
 // the signed pass they hold). The only sign-in is the operator's: official email + password.
 
-export async function OPTIONS(req: NextRequest) {
-  return childrenPreflight(req);
-}
-
 function bearer(req: NextRequest): string | null {
   const match = /^Bearer\s+([^\s]+)$/i.exec(req.headers.get("authorization") ?? "");
   return match?.[1] ?? null;
 }
 
-export async function GET(req: NextRequest) {
-  const blocked = childrenIdentityBlock(req);
-  if (blocked) return blocked;
+export async function GET() {
   return NextResponse.json({
     service: "SG16 operator sign-in",
     accounts: "none",
@@ -38,9 +31,6 @@ const NO_ACCOUNTS = {
 };
 
 export async function POST(req: NextRequest) {
-  const blocked = childrenIdentityBlock(req);
-  if (blocked) return blocked;
-
   try {
     const body = (await req.json().catch(() => null)) as Record<string, unknown> | null;
     if (!body || typeof body !== "object") {
@@ -72,17 +62,14 @@ export async function POST(req: NextRequest) {
 
     // the old email-code sign-up, pass-linking and recovery flows are gone
     if (action === "request" || action === "verify" || action === "bind") {
-      return withChildrenCors(req, NextResponse.json(NO_ACCOUNTS, { status: 410 }));
+      return NextResponse.json(NO_ACCOUNTS, { status: 410 });
     }
 
-    return withChildrenCors(req, NextResponse.json({ ok: false, error: "unknown action" }, { status: 400 }));
+    return NextResponse.json({ ok: false, error: "unknown action" }, { status: 400 });
   } catch (error) {
-    return withChildrenCors(
-      req,
-      NextResponse.json(
-        { ok: false, error: error instanceof Error ? error.message : "identity operation failed" },
-        { status: 400 },
-      ),
+    return NextResponse.json(
+      { ok: false, error: error instanceof Error ? error.message : "identity operation failed" },
+      { status: 400 },
     );
   }
 }
