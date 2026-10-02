@@ -35,13 +35,15 @@ export function proxyTrusted(headers: Headers, env: NodeJS.ProcessEnv = process.
 }
 
 /**
- * True only for our own scripts talking straight to the web port (deploy checks, smoke tests, health probes):
- * they carry the proxy secret but no visitor address. Everything that came through the public proxy carries
- * the secret AND a forwarded address, so it is a visitor - and a visitor never sees the inner engine's name.
+ * True only for our own scripts (deploy checks, smoke tests): they send the server secret in a header of their
+ * own, X-SG16-Probe-Auth. The public proxy adds X-SG16-Proxy-Auth to EVERY visitor request, so that header
+ * proves nothing about who is asking; the probe header is one the proxy never adds and a visitor cannot guess.
+ * (Do not infer "local" from missing forwarded-address headers: the web server fills those in itself.)
  */
 export function directProbe(headers: Headers, env: NodeJS.ProcessEnv = process.env): boolean {
-  if (!proxyTrusted(headers, env)) return false;
-  return !headers.get("x-forwarded-for") && !headers.get("cf-connecting-ip") && !headers.get("x-real-ip");
+  const expected = env.SG16_PROXY_AUTH_SECRET;
+  const supplied = headers.get("x-sg16-probe-auth");
+  return Boolean(expected && supplied && sameSecret(supplied, expected));
 }
 
 export function clientIdentity(headers: Headers, env: NodeJS.ProcessEnv = process.env): ClientIdentity {

@@ -192,7 +192,7 @@ check "next build gets a raised heap limit" 'grep -q "npx next build \[NODE_OPTI
 check "npm ci --include=dev and next build ran" 'grep -q "npm ci --include=dev" "$T/npm.log" && grep -q "npx next build" "$T/npm.log"'
 check "units: operator-added Environment lines and bind address are kept" 'grep -q "SG16_CUSTOM_CORE=keepme" "$UNITS/sg16-core.service" && grep -q "serve.py 0.0.0.0 8080" "$UNITS/sg16-core.service" && grep -q "SG16_CUSTOM_WEB=keepme" "$UNITS/sg16-web.service" && grep -q -- "-H 0.0.0.0" "$UNITS/sg16-web.service" && grep -q "Restart=always" "$UNITS/sg16-core.service" && [ -f "$UNITS/sg16-healthcheck.timer" ]'
 check "core restarted before web, timer enabled last" 'c=$(grep -n "^restart sg16-core" "$T/systemctl.log" | head -1 | cut -d: -f1); w=$(grep -n "^restart sg16-web" "$T/systemctl.log" | head -1 | cut -d: -f1); t=$(grep -n "enable --now sg16-healthcheck.timer" "$T/systemctl.log" | cut -d: -f1); [ -n "$c" ] && [ "$c" -lt "$w" ] && [ "$w" -lt "$t" ]'
-check "the chat checks send the server's proxy secret as a header, and never print it" 'grep -q "X-SG16-Proxy-Auth: $MARKER" "$T/curl.log" && ! secret_in_output'
+check "the chat checks send the server's secret as proxy AND probe headers (the probe one shows the exact engine), and never print it" 'grep -q "X-SG16-Proxy-Auth: $MARKER" "$T/curl.log" && grep -q "X-SG16-Probe-Auth: $MARKER" "$T/curl.log" && ! secret_in_output'
 check "clean and blocked chats were exercised" 'grep -q "clean chat: http=200 engine=ollama" "$T/out" && grep -q "blocked chat: http=200 engine=core-gate" "$T/out"'
 check "no reset --hard / clean / forced checkout / stash -u was ever run" '! forbidden_git'
 

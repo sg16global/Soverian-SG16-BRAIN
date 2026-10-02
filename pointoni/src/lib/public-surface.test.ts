@@ -78,19 +78,19 @@ test("the public engine label: inner engines all read 'sg16'; outcomes about the
   for (const outcome of ["core-gate", "busy", "rate-limited", "child-fallback", "child-crisis"]) assert.equal(publicEngine(outcome), outcome, outcome);
 });
 
-test("a visitor coming through the public proxy is never a direct probe, even though the proxy adds the secret", () => {
+test("a visitor is never a direct probe, even though the public proxy adds the proxy secret to every request", () => {
   const env = { SG16_PROXY_AUTH_SECRET: "s".repeat(40) } as unknown as NodeJS.ProcessEnv;
-  const secret = { "x-sg16-proxy-auth": "s".repeat(40) };
-  // our own script talking straight to the web port: secret, no visitor address
-  assert.equal(directProbe(new Headers(secret), env), true);
-  // a visitor: the proxy adds the secret AND the visitor address
-  assert.equal(directProbe(new Headers({ ...secret, "x-forwarded-for": "203.0.113.9" }), env), false);
-  assert.equal(directProbe(new Headers({ ...secret, "cf-connecting-ip": "203.0.113.9" }), env), false);
-  assert.equal(directProbe(new Headers({ ...secret, "x-real-ip": "203.0.113.9" }), env), false);
-  // no secret at all, or the wrong one: never
+  const secret = "s".repeat(40);
+  // our own scripts send the server secret in the probe header
+  assert.equal(directProbe(new Headers({ "x-sg16-probe-auth": secret }), env), true);
+  // a visitor through the proxy: the proxy adds the PROXY header and the visitor address - not a probe, whatever else is set
+  assert.equal(directProbe(new Headers({ "x-sg16-proxy-auth": secret, "x-forwarded-for": "203.0.113.9", "cf-connecting-ip": "203.0.113.9" }), env), false);
+  // the same secret in the wrong header is not enough, and neither is a guess in the right one
+  assert.equal(directProbe(new Headers({ "x-sg16-proxy-auth": secret }), env), false);
+  assert.equal(directProbe(new Headers({ "x-sg16-probe-auth": "guess" }), env), false);
   assert.equal(directProbe(new Headers(), env), false);
-  assert.equal(directProbe(new Headers({ "x-sg16-proxy-auth": "wrong" }), env), false);
-  assert.equal(directProbe(new Headers(secret), {} as unknown as NodeJS.ProcessEnv), false);
+  // with no secret configured nothing is ever a probe
+  assert.equal(directProbe(new Headers({ "x-sg16-probe-auth": secret }), {} as unknown as NodeJS.ProcessEnv), false);
 });
 
 test("the chat route shows the exact engine only to direct probes and project keys", () => {

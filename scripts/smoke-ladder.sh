@@ -156,14 +156,14 @@ ask() {
   local label="$1" msg="$2" payload
   payload="$(python3 -c 'import json,sys; print(json.dumps({"modelId":"sg16-brain","message":sys.argv[1]}))' "$msg")"
   curl -sS --max-time 150 -o "$WORK/$label.body" -w '%{http_code} %{time_total}' \
-    -H 'Content-Type: application/json' -H "X-SG16-Proxy-Auth: $SG16_PROXY_AUTH_SECRET" -d "$payload" "$BASE/api/brain" >"$WORK/$label.meta" 2>"$WORK/$label.err" \
+    -H 'Content-Type: application/json' -H "X-SG16-Proxy-Auth: $SG16_PROXY_AUTH_SECRET" -H "X-SG16-Probe-Auth: $SG16_PROXY_AUTH_SECRET" -d "$payload" "$BASE/api/brain" >"$WORK/$label.meta" 2>"$WORK/$label.err" \
     || echo "000 0" >"$WORK/$label.meta"
 }
 
 # ask_json <label> <json body> -> same as ask, for requests with extra fields
 ask_json() {
   local label="$1"
-  curl -sS --max-time 150 -o "$WORK/$label.body" -w '%{http_code} %{time_total}'     -H 'Content-Type: application/json' -H "X-SG16-Proxy-Auth: $SG16_PROXY_AUTH_SECRET" -d "$2" "$BASE/api/brain" >"$WORK/$label.meta" 2>"$WORK/$label.err"     || echo "000 0" >"$WORK/$label.meta"
+  curl -sS --max-time 150 -o "$WORK/$label.body" -w '%{http_code} %{time_total}'     -H 'Content-Type: application/json' -H "X-SG16-Proxy-Auth: $SG16_PROXY_AUTH_SECRET" -H "X-SG16-Probe-Auth: $SG16_PROXY_AUTH_SECRET" -d "$2" "$BASE/api/brain" >"$WORK/$label.meta" 2>"$WORK/$label.err"     || echo "000 0" >"$WORK/$label.meta"
 }
 
 report() {
@@ -195,7 +195,7 @@ ask blocked "$BLOCKED_MSG"; report blocked
 # follow-up memory (the device sends the earlier turns) and a language the model writes badly (Bengali)
 ask_json followup '{"modelId":"sg16-brain","message":"And can you say that again in five words?","history":[{"role":"user","content":"In one sentence, what is a sovereign AI?"},{"role":"assistant","content":"A sovereign AI is an assistant that runs on infrastructure its operator owns."}]}'; report followup
 # streaming: the first line of the answer should arrive almost at once, long before the whole answer
-curl -sS -N --max-time 150 -o "$WORK/stream.body" -w '%{http_code} %{time_starttransfer} %{time_total}'   -H 'Content-Type: application/json' -H "X-SG16-Proxy-Auth: $SG16_PROXY_AUTH_SECRET"   -d '{"modelId":"sg16-brain","message":"In two short sentences, why is the sky blue?","stream":true}' "$BASE/api/brain" >"$WORK/stream.meta" 2>/dev/null || echo "000 0 0" >"$WORK/stream.meta"
+curl -sS -N --max-time 150 -o "$WORK/stream.body" -w '%{http_code} %{time_starttransfer} %{time_total}'   -H 'Content-Type: application/json' -H "X-SG16-Proxy-Auth: $SG16_PROXY_AUTH_SECRET" -H "X-SG16-Probe-Auth: $SG16_PROXY_AUTH_SECRET"   -d '{"modelId":"sg16-brain","message":"In two short sentences, why is the sky blue?","stream":true}' "$BASE/api/brain" >"$WORK/stream.meta" 2>/dev/null || echo "000 0 0" >"$WORK/stream.meta"
 python3 - "$WORK/stream.meta" "$WORK/stream.body" <<'PY'
 import json, sys
 code, first, total = open(sys.argv[1]).read().split()[:3]
