@@ -19,7 +19,7 @@ import { ollamaChat, ollamaEnabled, ollamaHealth, ollamaTimeoutMs } from "@/lib/
 import { clientIdentity, sharedRateLimiter } from "@/lib/rate-limit";
 import { checkHuman, sharedHumanDeps, turnstileAppliesTo, turnstileEnabled, turnstileSiteKey } from "@/lib/turnstile";
 import { CHILD_MAX_NEW_TOKENS, childHooks } from "@/lib/child-safety";
-import { BUSY_TEXT, answerMetrics, lastAnswer, queueWaitMs, recordAnswer, runLadder, sharedLimiter, type Engine } from "@/lib/answer-ladder";
+import { BUSY_TEXT, answerDeadlineMs, answerMetrics, lastAnswer, queueWaitMs, recordAnswer, runLadder, sharedLimiter, type Engine } from "@/lib/answer-ladder";
 import { charterDigest, type CharterBody } from "@/lib/charter-prompt";
 import { warmFallbackLine, warmRateLimitLine, tierChip } from "@/lib/warm-alias";
 import { childrenPreflight, isChildrenOrigin, withChildrenCors } from "@/lib/cors-lock";
@@ -331,6 +331,7 @@ export async function POST(req: NextRequest) {
       limiter: sharedLimiter(),
       child: children ? childHooks(brainIntrospect) : undefined,
       queueWaitMs: queueWaitMs(),
+      deadlineMs: answerDeadlineMs(),
       // the bridge aborts its own fetch at ollamaTimeoutMs; this is the backstop
       ollamaTimeoutMs: ollamaTimeoutMs() + 5_000,
       signal: req.signal,

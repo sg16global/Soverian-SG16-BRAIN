@@ -190,3 +190,43 @@ test("four parallel requests against a stalled Ollama all settle within a bound"
   // and the guard is fully released afterwards
   assert.equal((await runLadder("e", deps({ limiter }))).engine, "ollama");
 });
+
+// ---- total time budget (Cloudflare 524 protection) ---------------------------------
+test("deadline: a stalled Ollama is abandoned at the deadline and the core answers", async () => {
+  const t0 = Date.now();
+  const r = await runLadder("x", deps({ ollama: () => new Promise<string>(() => {}), ollamaTimeoutMs: 60_000, deadlineMs: 150 }));
+  assert.equal(r.engine, "core");
+  assert.ok(Date.now() - t0 < 1500, "must not wait for the 60s Ollama timeout");
+});
+
+test("deadline: queue wait counts against the same budget", async () => {
+  const limiter = new ConcurrencyGuard(1, 1);
+  void runLadder("holder", deps({ limiter, ollama: () => new Promise<string>(() => {}) }));
+  await new Promise((r) => setTimeout(r, 5));
+  const t0 = Date.now();
+  const r = await runLadder("waiter", deps({ limiter, queueWaitMs: 60_000, deadlineMs: 150 }));
+  assert.equal(r.engine, "busy");
+  assert.ok(Date.now() - t0 < 1500);
+});
+
+test("deadline: a slow gate that used up the budget skips straight to the core", async () => {
+  const d = deps({
+    gate: async () => {
+      await new Promise((r) => setTimeout(r, 60));
+      return { allowed: true };
+    },
+    deadlineMs: 50,
+  });
+  const r = await runLadder("x", d);
+  assert.equal(r.engine, "core");
+  assert.ok(!d.calls.includes("ollama"));
+});
+
+test("deadline: the configured value can never exceed the safe ceiling", async () => {
+  const { answerDeadlineMs } = await import("./answer-ladder.ts");
+  process.env.SG16_ANSWER_DEADLINE_MS = "500000";
+  assert.equal(answerDeadlineMs(), 85_000);
+  process.env.SG16_ANSWER_DEADLINE_MS = "garbage";
+  assert.equal(answerDeadlineMs(), 80_000);
+  delete process.env.SG16_ANSWER_DEADLINE_MS;
+});

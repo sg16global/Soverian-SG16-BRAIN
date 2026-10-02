@@ -45,6 +45,13 @@ export type LadderDeps = {
   queueWaitMs?: number;
   /** hard cap on one Ollama answer, enforced here even if the bridge stalls */
   ollamaTimeoutMs?: number;
+  /**
+   * Latest moment (ms after the request started) at which the Ollama phase must be over.
+   * Behind Cloudflare a request with no response for ~100s becomes a 524 error page, so
+   * the gate + queue + Ollama time is capped here and the fast deterministic core takes
+   * over instead. Applies on top of queueWaitMs and ollamaTimeoutMs, whichever is shorter.
+   */
+  deadlineMs?: number;
   /** fires when the client goes away; a queued request then leaves the queue */
   signal?: AbortSignal;
   /** children's edition: only ever makes the ladder stricter (see child-safety.ts) */
@@ -165,6 +172,12 @@ async function vet(
 }
 
 export async function runLadder(text: string, deps: LadderDeps): Promise<LadderResult> {
+  const startedAt = Date.now();
+  const remaining = () => (deps.deadlineMs === undefined ? Infinity : deps.deadlineMs - (Date.now() - startedAt));
+  const within = (limit: number | undefined) => {
+    const left = remaining();
+    return limit === undefined ? (left === Infinity ? undefined : left) : Math.min(limit, left);
+  };
   if (deps.child) {
     const fixed = deps.child.preCheck(text);
     if (fixed) return fixed;
@@ -184,11 +197,12 @@ export async function runLadder(text: string, deps: LadderDeps): Promise<LadderR
     gateDetail = err instanceof Error ? err.message : "core link down";
   }
 
-  if (gateUp && deps.ollama) {
-    const release = await deps.limiter.acquire({ timeoutMs: deps.queueWaitMs, signal: deps.signal });
+  // no time left for a model answer (slow gate): go straight to the fast core
+  if (gateUp && deps.ollama && remaining() > Math.min(1000, (deps.deadlineMs ?? 0) / 4)) {
+    const release = await deps.limiter.acquire({ timeoutMs: within(deps.queueWaitMs), signal: deps.signal });
     if (!release) return { content: BUSY_TEXT, engine: "busy" };
     try {
-      const answer = await withTimeout(deps.ollama(text), deps.ollamaTimeoutMs);
+      const answer = await withTimeout(deps.ollama(text), within(deps.ollamaTimeoutMs));
       return await vet(deps, answer, "ollama", "ollama");
     } catch {
       // fall through to the deterministic core
@@ -222,6 +236,15 @@ function shared(): Shared {
     last: null,
   });
 }
+
+/**
+ * Cloudflare answers 524 when the origin is silent for ~100s. The core fallback needs up to
+ * ~15s after this, so the model phase must end well before that.
+ */
+export const answerDeadlineMs = (): number => {
+  const n = Number(process.env.SG16_ANSWER_DEADLINE_MS);
+  return Number.isFinite(n) && n >= 5000 ? Math.min(n, 85_000) : 80_000;
+};
 
 /** longest a queued request waits for the single answer slot */
 export const queueWaitMs = (): number => {
