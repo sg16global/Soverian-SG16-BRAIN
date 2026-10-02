@@ -2,11 +2,17 @@
 
 import { useRouter } from "next/navigation";
 import { Crown, LogIn } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 export default function SignedOutPage() {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
+
+  // Nothing to do here: go back to the public homepage straight away (the page stays for anyone who lands on it).
+  useEffect(() => {
+    const t = window.setTimeout(() => router.replace("/"), 1200);
+    return () => window.clearTimeout(t);
+  }, [router]);
 
   // Signing in is the real email flow on /login - this page does not sign anyone in.
   function signIn() {

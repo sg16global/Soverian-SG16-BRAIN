@@ -10,7 +10,7 @@ export const metadata: Metadata = {
   applicationName: "Sovereign SG16 Brain",
   creator: "SAIF TECH GLOBAL LLC",
   publisher: "SAIF TECH GLOBAL LLC",
-  icons: { icon: "/images/emblem-base.png", apple: "/images/emblem-base.png" },
+  icons: { icon: "/images/emblem-v2.png", apple: "/images/emblem-v2.png" },
 };
 
 export default function RootLayout({ children }: { children: ReactNode }) {

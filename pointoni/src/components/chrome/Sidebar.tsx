@@ -66,7 +66,7 @@ function SidebarBody({
       // browser storage may be unavailable
     }
     announceIdentityChange();
-    router.push("/signed-out");
+    router.push("/");
     onNavigate?.();
   }
 

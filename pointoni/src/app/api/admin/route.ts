@@ -67,7 +67,7 @@ export async function GET(req: NextRequest) {
         globe: "/images/globe.png",
         brain: "/images/ai-brain.jpg",
         shield: "/images/shield.png",
-        emblem: "/images/emblem-base.png",
+        emblem: "/images/emblem-v2.png",
       },
       timestamp: new Date().toISOString(),
     },

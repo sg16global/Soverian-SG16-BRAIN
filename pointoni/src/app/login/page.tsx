@@ -57,6 +57,7 @@ export default function LoginPage() {
       // storage unavailable
     }
     announceIdentityChange();
+    router.push("/");
   }
 
   return (

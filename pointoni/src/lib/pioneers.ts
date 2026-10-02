@@ -9,7 +9,7 @@ export type Pioneer = {
   role: string;
   /** path under /public, or null for an initials card until a freely usable photo is added */
   image: string | null;
-  credit: { author: string; license: string; source: string } | null;
+  credit: { author: string; license: string; source: string | null } | null;
 };
 
 const commons = (file: string) => `https://commons.wikimedia.org/wiki/File:${file}`;
@@ -51,8 +51,9 @@ export const PIONEERS: Pioneer[] = [
     id: "arthur-samuel",
     name: "Arthur Samuel",
     role: "Machine Learning Pioneer",
-    image: null,
-    credit: null,
+    image: "/images/pioneers/arthur-samuel.jpg",
+    // supplied by the site owner; no free licence could be found, so the rights should be confirmed
+    credit: { author: "Historical photograph supplied by the site owner", license: "rights to be confirmed", source: null },
   },
   {
     id: "claude-shannon",

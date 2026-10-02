@@ -33,7 +33,7 @@ export function TopNav({ onMenu }: { onMenu: () => void }) {
         {/* Brand */}
         <Link href="/" className="flex flex-none items-center gap-2.5">
           {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src="/images/emblem-base.png" alt="Sovereign SG16 Brain" className="h-10 w-10 flex-none object-contain drop-shadow-[0_0_8px_rgba(255,31,46,.5)]" />
+          <img src="/images/emblem-v2.png" alt="Sovereign SG16 Brain" className="h-10 w-10 flex-none object-contain drop-shadow-[0_0_8px_rgba(255,31,46,.5)]" />
           <span className="leading-none">
             <span className="block font-mono2 text-[8px] tracking-[0.28em] text-cyan-300/80 sm:text-[9px]">
               MISTRALBRAIN.COM

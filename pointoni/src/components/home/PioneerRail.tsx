@@ -181,12 +181,15 @@ export function PioneerRail() {
           {credited.map((p) => (
             <li key={p.id}>
               {p.name} — {p.credit!.author},{" "}
-              <a href={p.credit!.source} target="_blank" rel="noreferrer" className="underline decoration-slate-600 hover:text-white">
-                {p.credit!.license}
-              </a>
+              {p.credit!.source ? (
+                <a href={p.credit!.source} target="_blank" rel="noreferrer" className="underline decoration-slate-600 hover:text-white">
+                  {p.credit!.license}
+                </a>
+              ) : (
+                p.credit!.license
+              )}
             </li>
           ))}
-          <li>Arthur Samuel — initials card until a freely usable photograph is added.</li>
         </ul>
       </details>
     </Panel>

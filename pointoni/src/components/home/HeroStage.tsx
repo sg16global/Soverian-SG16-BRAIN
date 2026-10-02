@@ -79,7 +79,7 @@ export function HeroStage() {
         aria-hidden
         className="pointer-events-none absolute inset-x-0 top-0 -z-10 h-[430px] lg:h-full"
         style={{
-          backgroundImage: "url('/images/stage-bg.jpg')",
+          backgroundImage: "url('/images/stage-bg-v2.jpg')",
           backgroundSize: "cover",
           backgroundPosition: "50% 45%",
           backgroundRepeat: "no-repeat",
