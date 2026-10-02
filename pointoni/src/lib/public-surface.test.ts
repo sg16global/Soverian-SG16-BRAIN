@@ -7,6 +7,7 @@ import path from "node:path";
 import { test } from "node:test";
 import { distillCharter } from "./charter-prompt.ts";
 import { publicEngine } from "./public-engine.ts";
+import { directProbe } from "./rate-limit.ts";
 import { RUNTIME_LABEL } from "./ollama-brain.ts";
 
 const SRC = path.resolve(import.meta.dirname, "..");
@@ -77,9 +78,24 @@ test("the public engine label: inner engines all read 'sg16'; outcomes about the
   for (const outcome of ["core-gate", "busy", "rate-limited", "child-fallback", "child-crisis"]) assert.equal(publicEngine(outcome), outcome, outcome);
 });
 
-test("the chat route shows the exact engine only to trusted infrastructure and project keys", () => {
+test("a visitor coming through the public proxy is never a direct probe, even though the proxy adds the secret", () => {
+  const env = { SG16_PROXY_AUTH_SECRET: "s".repeat(40) } as unknown as NodeJS.ProcessEnv;
+  const secret = { "x-sg16-proxy-auth": "s".repeat(40) };
+  // our own script talking straight to the web port: secret, no visitor address
+  assert.equal(directProbe(new Headers(secret), env), true);
+  // a visitor: the proxy adds the secret AND the visitor address
+  assert.equal(directProbe(new Headers({ ...secret, "x-forwarded-for": "203.0.113.9" }), env), false);
+  assert.equal(directProbe(new Headers({ ...secret, "cf-connecting-ip": "203.0.113.9" }), env), false);
+  assert.equal(directProbe(new Headers({ ...secret, "x-real-ip": "203.0.113.9" }), env), false);
+  // no secret at all, or the wrong one: never
+  assert.equal(directProbe(new Headers(), env), false);
+  assert.equal(directProbe(new Headers({ "x-sg16-proxy-auth": "wrong" }), env), false);
+  assert.equal(directProbe(new Headers(secret), {} as unknown as NodeJS.ProcessEnv), false);
+});
+
+test("the chat route shows the exact engine only to direct probes and project keys", () => {
   const route = fs.readFileSync(path.join(SRC, "app/api/brain/route.ts"), "utf8");
-  assert.match(route, /exactEngine = fromProject \|\| proxyTrusted\(req\.headers\)/);
+  assert.match(route, /exactEngine = fromProject \|\| directProbe\(req\.headers\)/);
   assert.equal((route.match(/brain: shown\(turn\.brain\)/g) ?? []).length, 2);
   assert.doesNotMatch(route, /brain: turn\.brain/);
 });

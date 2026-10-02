@@ -34,6 +34,16 @@ export function proxyTrusted(headers: Headers, env: NodeJS.ProcessEnv = process.
   return Boolean(expected && supplied && sameSecret(supplied, expected));
 }
 
+/**
+ * True only for our own scripts talking straight to the web port (deploy checks, smoke tests, health probes):
+ * they carry the proxy secret but no visitor address. Everything that came through the public proxy carries
+ * the secret AND a forwarded address, so it is a visitor - and a visitor never sees the inner engine's name.
+ */
+export function directProbe(headers: Headers, env: NodeJS.ProcessEnv = process.env): boolean {
+  if (!proxyTrusted(headers, env)) return false;
+  return !headers.get("x-forwarded-for") && !headers.get("cf-connecting-ip") && !headers.get("x-real-ip");
+}
+
 export function clientIdentity(headers: Headers, env: NodeJS.ProcessEnv = process.env): ClientIdentity {
   if (!proxyTrusted(headers, env)) return { key: null, trusted: false };
   const candidates = [

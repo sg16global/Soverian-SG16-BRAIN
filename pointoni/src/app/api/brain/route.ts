@@ -15,7 +15,7 @@ import {
   brainIntrospect,
 } from "@/lib/brain-gateway";
 import { ollamaChat, ollamaEnabled, ollamaHealth, ollamaTimeoutMs } from "@/lib/ollama-brain";
-import { clientIdentity, proxyTrusted, sharedRateLimiter } from "@/lib/rate-limit";
+import { clientIdentity, directProbe, sharedRateLimiter } from "@/lib/rate-limit";
 import { publicEngine } from "@/lib/public-engine";
 import { isAdminRequest } from "@/lib/admin-gate";
 import { projectFromHeaders } from "@/lib/project-keys";
@@ -185,8 +185,9 @@ export async function POST(req: NextRequest) {
     : visitorKey
       ? { owner: `visitor:${visitorKey}`, ownerLimit: 1 }
       : {};
-  // the exact inner engine is shown only to trusted infrastructure and project keys, never the public
-  const exactEngine = fromProject || proxyTrusted(req.headers);
+  // the exact inner engine is shown only to project keys and our own direct probes, never to visitors
+  // (visitors arrive through the proxy, which also carries the proxy secret - see directProbe)
+  const exactEngine = fromProject || directProbe(req.headers);
   const shown = (engine: string) => (exactEngine ? engine : publicEngine(engine));
   const decision = fromProject ? ({ ok: true } as const) : sharedRateLimiter().check(clientIdentity(req.headers));
   if (!decision.ok) {
