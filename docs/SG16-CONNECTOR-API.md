@@ -83,3 +83,17 @@ const { assistantMessage, sessionId: sid, tier } = await r.json();
 *Bodies live on their own domains and their own look; they never fork the core, they draw power from it. When a body grows traffic, the answer is a mirror/sister host behind the same signed manifest — never a vendor API.*
 
 — connector v1 · SAIF TECH GLOBAL LLC · the power plant stays singular, the bodies multiply
+
+## Modes (what the request is for)
+
+`POST /api/brain` accepts an optional `"mode"`: `"chat"`, `"assistant"`, `"code"`, `"build"` or `"auto"` (the default).
+
+| Mode | Behaviour |
+|---|---|
+| `chat` | Conversational, short by default. |
+| `assistant` | Does the task and returns the finished result (draft, plan, table, JSON, checklist); no small talk. |
+| `code` | Complete runnable code in fenced blocks, file names, no greeting or closing remarks; larger answer budget. |
+| `build` | A short plan (stack, files, run steps), every file in full, then next improvements; can write a ready-to-paste prompt for another coding tool. |
+| `auto` | Decided from the text: pasted code or fenced blocks give `code`, "build me an app…" gives `build`, anything else `chat`. |
+
+A valid explicit mode always wins over detection. The reply carries the mode that was used (`"mode"`). The safety gate screens every request in every mode.

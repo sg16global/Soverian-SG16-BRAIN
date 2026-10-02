@@ -31,6 +31,24 @@ const SYNTAX = [
 const BUILD_REQUEST =
   /\b(write|build|create|make|implement|generate|fix|debug|refactor|port|convert|scaffold|deploy)\b[^.\n]{0,60}\b(app|application|api|script|function|class|component|website|web\s?site|bot|cli|program|code|module|endpoint|server|backend|frontend|database|schema|dockerfile|workflow|regex|query|test|plugin|extension|library|package)\b/i;
 
+export const MODES = ["auto", "chat", "assistant", "code", "build"] as const;
+export type Mode = (typeof MODES)[number];
+export type ResolvedMode = Exclude<Mode, "auto">;
+
+const BUILD_INTENT = /\b(app|application|website|web\s?site|saas|dashboard|bot|backend|frontend|full[-\s]?stack|project|mvp|landing\s?page|api)\b/i;
+
+/**
+ * The mode for one request. An explicit, valid `mode` from the caller always wins (a project that
+ * connects over the API picks its own). "auto" or anything unrecognised is decided from the text.
+ */
+export function resolveMode(requested: unknown, message: string): ResolvedMode {
+  if (typeof requested === "string" && (MODES as readonly string[]).includes(requested) && requested !== "auto") {
+    return requested as ResolvedMode;
+  }
+  if (!isTechnicalRequest(message)) return "chat";
+  return BUILD_REQUEST.test(message) && BUILD_INTENT.test(message) && !FENCE.test(message) ? "build" : "code";
+}
+
 /** True when the text carries code, structured text, or asks for something to be built. */
 export function isTechnicalRequest(text: string): boolean {
   if (FENCE.test(text)) return true;
@@ -44,6 +62,9 @@ export function isTechnicalRequest(text: string): boolean {
 export function turnLimit(content: string, normal: number): number {
   return FENCE.test(content) || isTechnicalRequest(content) ? Math.max(normal, MAX_CODE_TURN_CHARS) : normal;
 }
+
+/** Modes that write code or whole deliverables: code hint, larger budget. */
+export const isCodeLike = (m: ResolvedMode): boolean => m === "code" || m === "build";
 
 export function codeTokenBudget(normal: number): number {
   return Math.min(CODE_TOKEN_CEILING, normal * CODE_TOKEN_FACTOR);

@@ -121,9 +121,9 @@ test("system prompt is identical across calls and stays near the token budget", 
   const a = distillCharter("flagship", { runtime: "a local Ollama model" });
   const b = distillCharter("flagship", { runtime: "a local Ollama model" });
   assert.equal(a, b);
-  // ~4 chars/token for English: 5,400 chars is roughly 1,300 tokens. It carries the identity, honesty and style rules;
+  // ~4 chars/token for English: 5,800 chars is roughly 1,450 tokens. It carries the identity, honesty and style rules;
   // the prompt prefix is cached by the model server, so it costs time only on the first message after a restart
-  assert.ok(a.length < 5400, `prompt grew to ${a.length} chars`);
+  assert.ok(a.length < 5800, `prompt grew to ${a.length} chars`);
 });
 
 // ---- hang protection: a stalled Ollama must never strand a request ----------

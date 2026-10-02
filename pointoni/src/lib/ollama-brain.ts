@@ -24,6 +24,7 @@
 // ===================================================================
 
 import { distillCharter, type CharterBody } from "./charter-prompt.ts";
+import type { ResolvedMode } from "./code-mode.ts";
 
 export type OllamaTurn = {
   /** the model that actually answered (daemon-reported) */
@@ -101,6 +102,7 @@ export type OllamaTurnInput = {
   /** rolling history, oldest first — kept tiny on purpose */
   history?: { role: "user" | "assistant"; content: string }[];
   body?: CharterBody;
+  mode?: ResolvedMode;
   tier?: string;
   humanitarianRegion?: string | null;
   /** extra context injected into the system preamble (e.g. a tape snapshot) */
@@ -150,6 +152,7 @@ export async function ollamaChat(input: OllamaTurnInput): Promise<OllamaTurn> {
   const system = distillCharter(body, {
     tier: input.tier,
     humanitarianRegion: input.humanitarianRegion,
+    mode: input.mode,
     // constant on purpose: the system prompt must be byte-identical every
     // request so Ollama can reuse its cached prompt start
     runtime: RUNTIME_LABEL,

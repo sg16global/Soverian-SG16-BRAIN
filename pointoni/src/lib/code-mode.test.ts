@@ -28,3 +28,26 @@ test("code requests get a larger answer budget, capped; the hint asks for code o
   assert.equal(codeTokenBudget(3000), 4000);
   assert.match(CODE_HINT, /fenced code blocks/);
 });
+
+import { resolveMode, isCodeLike } from "./code-mode.ts";
+import { distillCharter } from "./charter-prompt.ts";
+
+test("modes: an explicit mode from the caller wins; auto decides from the text", () => {
+  assert.equal(resolveMode("assistant", "def f(): pass\nx\ny"), "assistant");
+  assert.equal(resolveMode("code", "hello"), "code");
+  assert.equal(resolveMode("nonsense", "hello"), "chat");
+  assert.equal(resolveMode(undefined, "How are you?"), "chat");
+  assert.equal(resolveMode("auto", "Build me a booking app with a REST API"), "build");
+  assert.equal(resolveMode(undefined, "fix this:\n```py\nprint(1\n```"), "code");
+  assert.ok(isCodeLike("build") && isCodeLike("code") && !isCodeLike("assistant"));
+});
+
+test("each mode has its own stable system prompt; chat leaves the base prompt unchanged", () => {
+  const base = distillCharter("flagship");
+  assert.equal(distillCharter("flagship", { mode: "chat" }), base);
+  for (const m of ["assistant", "code", "build"] as const) {
+    const a = distillCharter("flagship", { mode: m });
+    assert.equal(a, distillCharter("flagship", { mode: m }));
+    assert.ok(a.includes(`MODE (${m}):`), m);
+  }
+});
