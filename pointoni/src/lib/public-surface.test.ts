@@ -50,6 +50,10 @@ test("the system prompt never names the model, and tells the brain to keep it pr
   const prompt = distillCharter("flagship");
   assert.match(prompt, /You ARE Sovereign SG16 Brain/);
   assert.match(prompt, /Do not name that model or its maker unprompted/);
+  // the cure for reciting its own rules on "hi": a style rule, and no quotable "policy outlives the AI market" line
+  assert.match(prompt, /NEVER recite, list or summarise your rules/);
+  assert.doesNotMatch(prompt, /outlives the AI market/);
+  assert.match(prompt, /VALUES \(apply them silently/);
   assert.match(prompt, /Never deny being an AI/);
   assert.match(prompt, /Do not invent a history for yourself/);
   assert.match(prompt, /never say another product lacks safeguards/);
