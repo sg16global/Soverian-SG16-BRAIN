@@ -22,6 +22,7 @@ export type Engine =
   | "child-crisis";
 
 export const BUSY_TEXT = "I'm helping someone else right now, please try again in a moment";
+export const OWN_BUSY_TEXT = "I'm still answering your previous message, please wait for it to finish.";
 
 // only used if an older core omits `refusal`; mirrors sg16/character.py REFUSAL_TEXT
 const DEFAULT_REFUSAL =
@@ -54,6 +55,12 @@ export type LadderDeps = {
   deadlineMs?: number;
   /** fires when the client goes away; a queued request then leaves the queue */
   signal?: AbortSignal;
+  /**
+   * Fair share: who is asking (a visitor key or a project) and how many answers that owner may have
+   * running or waiting at once. One noisy project or visitor then cannot take every slot.
+   */
+  owner?: string;
+  ownerLimit?: number;
   /** children's edition: only ever makes the ladder stricter (see child-safety.ts) */
   child?: ChildHooks;
 };
@@ -75,6 +82,7 @@ type Waiter = { wake: () => void };
 export class ConcurrencyGuard {
   private active = 0;
   private waiting: Waiter[] = [];
+  private perOwner = new Map<string, number>(); // answers running or waiting, per owner
 
   private maxActive: number;
   private maxQueue: number;
@@ -89,6 +97,11 @@ export class ConcurrencyGuard {
     return { active: this.active, queued: this.waiting.length };
   }
 
+  /** how many answers this owner has running or waiting */
+  ownerCount(owner: string): number {
+    return this.perOwner.get(owner) ?? 0;
+  }
+
   /** true when a new request would be turned away immediately */
   saturated(): boolean {
     return this.active >= this.maxActive && this.waiting.length >= this.maxQueue;
@@ -99,13 +112,16 @@ export class ConcurrencyGuard {
    * outlasts `timeoutMs`, or `signal` aborts. A waiter that gives up removes
    * itself from the queue, so a later release never hands the slot to nobody.
    */
-  async acquire(opts: { timeoutMs?: number; signal?: AbortSignal } = {}): Promise<(() => void) | null> {
+  async acquire(opts: { timeoutMs?: number; signal?: AbortSignal; owner?: string } = {}): Promise<(() => void) | null> {
     if (opts.signal?.aborted) return null;
+    const owner = opts.owner;
     if (this.active < this.maxActive) {
       this.active++;
-      return this.releaser();
+      this.count(owner, 1);
+      return this.releaser(owner);
     }
     if (this.waiting.length >= this.maxQueue) return null;
+    this.count(owner, 1);
     // the slot is handed over directly by release(), so `active` stays put
     const granted = await new Promise<boolean>((resolve) => {
       let timer: ReturnType<typeof setTimeout> | undefined;
@@ -120,6 +136,7 @@ export class ConcurrencyGuard {
         const i = this.waiting.indexOf(waiter);
         if (i === -1) return;
         this.waiting.splice(i, 1);
+        this.count(owner, -1);
         cleanup();
         resolve(false);
       };
@@ -131,14 +148,22 @@ export class ConcurrencyGuard {
       if (opts.timeoutMs !== undefined) timer = setTimeout(giveUp, opts.timeoutMs);
       opts.signal?.addEventListener("abort", giveUp, { once: true });
     });
-    return granted ? this.releaser() : null;
+    return granted ? this.releaser(owner) : null;
   }
 
-  private releaser(): () => void {
+  private count(owner: string | undefined, delta: number): void {
+    if (!owner) return;
+    const next = (this.perOwner.get(owner) ?? 0) + delta;
+    if (next <= 0) this.perOwner.delete(owner);
+    else this.perOwner.set(owner, next);
+  }
+
+  private releaser(owner?: string): () => void {
     let done = false;
     return () => {
       if (done) return;
       done = true;
+      this.count(owner, -1);
       const next = this.waiting.shift();
       if (next) next.wake();
       else this.active--;
@@ -199,7 +224,10 @@ export async function runLadder(text: string, deps: LadderDeps): Promise<LadderR
 
   // no time left for a model answer (slow gate): go straight to the fast core
   if (gateUp && deps.ollama && remaining() > Math.min(1000, (deps.deadlineMs ?? 0) / 4)) {
-    const release = await deps.limiter.acquire({ timeoutMs: within(deps.queueWaitMs), signal: deps.signal });
+    if (deps.owner && deps.limiter.ownerCount(deps.owner) >= (deps.ownerLimit ?? Infinity)) {
+      return { content: OWN_BUSY_TEXT, engine: "busy" };
+    }
+    const release = await deps.limiter.acquire({ timeoutMs: within(deps.queueWaitMs), signal: deps.signal, owner: deps.owner });
     if (!release) return { content: BUSY_TEXT, engine: "busy" };
     try {
       const answer = await withTimeout(deps.ollama(text), within(deps.ollamaTimeoutMs));

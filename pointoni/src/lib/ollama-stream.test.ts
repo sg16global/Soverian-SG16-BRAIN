@@ -130,3 +130,51 @@ test("trimToSentence keeps whole sentences, or whole words when there is no sent
   assert.equal(trimToSentence("no punctuation but several words here ok partia"), "no punctuation but several words here ok");
   assert.equal(trimToSentence("Short. and then a very long run of words without any stop at all in sight"), "Short. and then a very long run of words without any stop at all in");
 });
+
+test("onDelta receives each piece as it is written, in order", async () => {
+  stubFetch(() => streamOf([piece("Hel"), piece("lo "), piece("there."), done()]));
+  const seen: string[] = [];
+  const turn = await ollamaChat({ message: "hi", onDelta: (t) => seen.push(t) });
+  assert.deepEqual(seen, ["Hel", "lo ", "there."]);
+  assert.equal(turn.reply, "Hello there.");
+});
+
+test("a failing onDelta callback never breaks the answer", async () => {
+  stubFetch(() => streamOf([piece("fine "), piece("answer."), done()]));
+  const turn = await ollamaChat({
+    message: "hi",
+    onDelta: () => {
+      throw new Error("display broke");
+    },
+  });
+  assert.equal(turn.reply, "fine answer.");
+});
+
+test("when the person leaves, the request to the model is closed at once", async () => {
+  const leave = new AbortController();
+  let upstreamClosed = false;
+  stubFetch((init) => {
+    const enc = new TextEncoder();
+    const body = new ReadableStream<Uint8Array>({
+      start(c) {
+        c.enqueue(enc.encode(piece("This answer is long enough to count as written so far, and then the person closes the page. ")));
+        init.signal?.addEventListener("abort", () => {
+          upstreamClosed = true;
+          try {
+            c.error(Object.assign(new Error("aborted"), { name: "AbortError" }));
+          } catch {
+            /* closed */
+          }
+        });
+      },
+    });
+    return new Response(body, { status: 200 });
+  });
+  const pending = ollamaChat({ message: "x", signal: leave.signal });
+  await new Promise((r) => setTimeout(r, 30));
+  leave.abort();
+  const t0 = Date.now();
+  await pending.catch(() => undefined);
+  assert.ok(upstreamClosed, "the model request must be aborted");
+  assert.ok(Date.now() - t0 < 500);
+});

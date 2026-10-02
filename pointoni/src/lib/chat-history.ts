@@ -7,8 +7,11 @@
 
 export type HistoryTurn = { role: "user" | "assistant"; content: string };
 
-export const MAX_HISTORY_TURNS = 6;
-export const MAX_TURN_CHARS = 1500;
+// Measured on the CPU-only server: text the model has not seen before is read at ~20-40 tokens/s, so every
+// remembered character costs waiting time. Four messages (two exchanges) of at most 800 characters keeps a
+// follow-up cheap; the fixed system prompt is cached and costs almost nothing.
+export const MAX_HISTORY_TURNS = 4;
+export const MAX_TURN_CHARS = 800;
 export const MAX_GATE_CHARS = 8000;
 
 export function sanitizeHistory(raw: unknown): HistoryTurn[] {

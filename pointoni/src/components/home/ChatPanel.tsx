@@ -20,6 +20,7 @@ import { encodePassHeader, loadPassRecord } from "@/lib/billing";
 import { useTurnstile } from "./useTurnstile";
 import { deviceVault, recordTurn } from "@/lib/device-vault";
 import { historyFromMessages } from "@/lib/chat-history";
+import { readNdjson } from "@/lib/ndjson-stream";
 import { writeSessionBackup } from "@/lib/device-folder";
 import type { ChatMessageDto } from "@/lib/types";
 
@@ -34,6 +35,20 @@ const SOVEREIGN = {
 };
 
 type MessageView = ChatMessageDto & { pending?: boolean; engine?: string };
+
+/** What /api/brain answers: a finished reply, or one of the early refusals (limit, check, busy). */
+type ChatReply = {
+  sessionId: string;
+  userMessage: ChatMessageDto;
+  assistantMessage: ChatMessageDto;
+  brain?: string;
+  humanToken?: string;
+  error?: string;
+  retryAt?: number;
+  busy?: boolean;
+  turnstileRequired?: boolean;
+  rateLimited?: boolean;
+};
 
 function renderContent(text: string) {
   const parts = text.split(/```(\w*)\n?([\s\S]*?)```/g);
@@ -198,31 +213,56 @@ export function ChatPanel({
         method: "POST",
         headers: identityHeaders({ "Content-Type": "application/json", ...passHeader() }),
         // The server remembers nothing: this device sends the last few answered turns so follow-ups work.
-        body: JSON.stringify({ sessionId, modelId: SOVEREIGN.id, message, history, ...turnstile.control.fields() }),
+        // stream:true asks for the answer to arrive as it is written, so you can read along.
+        body: JSON.stringify({ sessionId, modelId: SOVEREIGN.id, message, history, stream: true, ...turnstile.control.fields() }),
       });
-      const data = await res.json();
-      if (!res.ok) {
-        if (res.status === 429 && data.retryAt) {
-          const waitSec = Math.max(1, Math.ceil((Number(data.retryAt) - Date.now()) / 1000));
-          throw new Error(
-            `${data.error || "Fair-use pause active."} You can try again in about ${waitSec}s. Your text was kept in the composer history view.`,
-          );
+      let data: ChatReply;
+      if (res.ok && res.body && (res.headers.get("content-type") ?? "").includes("application/x-ndjson")) {
+        let shown = "";
+        let final: ChatReply | null = null;
+        let failure: string | null = null;
+        const streamId = `stream-${tempId}`;
+        await readNdjson<{ type: string; text?: string; error?: string }>(res.body, (ev) => {
+          if (ev.type === "delta" && ev.text) {
+            shown += ev.text;
+            const text = shown;
+            setMessages((prev) => {
+              const bubble: MessageView = {
+                id: streamId, sessionId: sessionId ?? "new", role: "assistant", content: text, modelId: SOVEREIGN.id,
+                relay: false, latencyMs: 0, createdAt: new Date().toISOString(), pending: true,
+              };
+              return prev.some((m) => m.id === streamId) ? prev.map((m) => (m.id === streamId ? bubble : m)) : [...prev, bubble];
+            });
+          } else if (ev.type === "done") final = ev as unknown as ChatReply;
+          else if (ev.type === "error") failure = ev.error ?? null;
+        });
+        if (!final) throw new Error(failure ?? "The answer was interrupted. Please try again.");
+        data = final;
+      } else {
+        data = (await res.json()) as ChatReply;
+        if (!res.ok) {
+          if (res.status === 429 && data.retryAt) {
+            const waitSec = Math.max(1, Math.ceil((Number(data.retryAt) - Date.now()) / 1000));
+            throw new Error(
+              `${data.error || "Fair-use pause active."} You can try again in about ${waitSec}s. Your text was kept in the composer history view.`,
+            );
+          }
+          // busy is not a failure of the message: give the text back so nothing is lost
+          if (data.busy || data.turnstileRequired || data.rateLimited) setInput(message);
+          if (data.turnstileRequired) turnstile.control.reject();
+          throw new Error(data.error || "The SG16 core is unreachable. Try again.");
         }
-        // busy is not a failure of the message: give the text back so nothing is lost
-        if (data.busy || data.turnstileRequired || data.rateLimited) setInput(message);
-        if (data.turnstileRequired) turnstile.control.reject();
-        throw new Error(data.error || "The SG16 core is unreachable. Try again.");
       }
       turnstile.control.accept(data);
       void saveToDevice(data);
       setSessionId(data.sessionId);
       setMessages((prev) => [
-        ...prev.filter((m) => m.id !== tempId),
+        ...prev.filter((m) => m.id !== tempId && m.id !== `stream-${tempId}`),
         data.userMessage as ChatMessageDto,
         { ...(data.assistantMessage as ChatMessageDto), engine: data.brain },
       ]);
     } catch (e) {
-      setMessages((prev) => prev.filter((m) => m.id !== tempId));
+      setMessages((prev) => prev.filter((m) => m.id !== tempId && m.id !== `stream-${tempId}`));
       setError(e instanceof Error ? e.message : "Request failed.");
     } finally {
       setSending(false);

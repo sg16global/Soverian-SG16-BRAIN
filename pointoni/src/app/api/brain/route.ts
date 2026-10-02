@@ -176,7 +176,15 @@ export async function POST(req: NextRequest) {
   // logged. Over the limit is a friendly 429, never an error page.
   // The operator's own projects (signed project key) are not visitors: no per-visitor limit and no
   // human check. They still queue for the single model like everyone else.
-  const fromProject = projectFromHeaders(req.headers) !== null;
+  const projectKey = projectFromHeaders(req.headers);
+  const fromProject = projectKey !== null;
+  const visitorKey = clientIdentity(req.headers).key;
+  const projectSlots = Number(process.env.SG16_PROJECT_CONCURRENCY);
+  const fairShare = projectKey
+    ? { owner: `project:${projectKey.project}`, ownerLimit: Number.isInteger(projectSlots) && projectSlots > 0 ? projectSlots : 2 }
+    : visitorKey
+      ? { owner: `visitor:${visitorKey}`, ownerLimit: 1 }
+      : {};
   // the exact inner engine is shown only to trusted infrastructure and project keys, never the public
   const exactEngine = fromProject || proxyTrusted(req.headers);
   const shown = (engine: string) => (exactEngine ? engine : publicEngine(engine));
@@ -203,6 +211,7 @@ export async function POST(req: NextRequest) {
     forgetSessionId?: unknown;
     audience?: unknown;
     history?: unknown;
+    stream?: unknown;
     turnstileToken?: unknown;
     humanToken?: unknown;
   } | null;
@@ -304,6 +313,7 @@ export async function POST(req: NextRequest) {
   const think = async (
     text: string,
     sessionId: string | null,
+    live?: { onDelta?: (text: string) => void; signal?: AbortSignal },
   ): Promise<{ content: string; brain: BrainSource; relay: boolean }> => {
     const passToken = tierInfo.passToken;
     const startedAt = performance.now();
@@ -317,11 +327,14 @@ export async function POST(req: NextRequest) {
         ? async (t) => {
             // a language the model writes badly: say so (in that language) and answer in simple English
             const weak = weakLanguage(t);
+            if (weak) live?.onDelta?.(`${WEAK_LANGUAGE_NOTE[weak]}\n\n`);
             const turn = await ollamaChat({
               message: weak ? t + ENGLISH_FALLBACK_HINT : t,
               history,
               body: bodyKind,
               maxTokens: children ? CHILD_MAX_NEW_TOKENS : undefined,
+              onDelta: live?.onDelta,
+              signal: live?.signal,
             });
             const cut = turn.truncated ? (children ? CHILD_CUT_NOTE : CUT_NOTE) : "";
             return `${weak ? WEAK_LANGUAGE_NOTE[weak] + "\n\n" : ""}${turn.reply}${cut}`;
@@ -339,9 +352,11 @@ export async function POST(req: NextRequest) {
       child: children ? childHooks(brainIntrospect) : undefined,
       queueWaitMs: queueWaitMs(),
       deadlineMs: answerDeadlineMs(),
+      // fair share of the single model: a project may have a couple of answers going, a visitor one
+      ...fairShare,
       // the bridge aborts its own fetch at ollamaTimeoutMs; this is the backstop
       ollamaTimeoutMs: ollamaTimeoutMs() + 5_000,
-      signal: req.signal,
+      signal: live?.signal ?? req.signal,
     });
     recordAnswer(result.engine, result.engine === "busy" ? undefined : performance.now() - startedAt);
     return { content: result.content, brain: result.engine, relay: false };
@@ -386,26 +401,82 @@ export async function POST(req: NextRequest) {
     ? requestedSession
     : `guest-${randomUUID()}`;
   const started = performance.now();
+  const payloadFor = (turn: { content: string; brain: BrainSource; relay: boolean }) => {
+    const now = new Date().toISOString();
+    const latencyMs = Math.round(performance.now() - started);
+    return {
+      sessionId: guestSessionId,
+      userMessage: {
+        id: randomUUID(), sessionId: guestSessionId, role: "user", content: message,
+        modelId: model.id, relay: false, latencyMs: 0, createdAt: now,
+      },
+      assistantMessage: {
+        id: randomUUID(), sessionId: guestSessionId, role: "assistant", content: turn.content,
+        modelId: model.id, relay: turn.relay, latencyMs, createdAt: now,
+      },
+      brain: shown(turn.brain),
+      tier: tierInfo.tier,
+      friend: false,
+      stored: false,
+      tierChip: tierChip(bodyKind, tierInfo.tier),
+      ...humanExtra,
+    };
+  };
+
+  // Streaming: the first word arrives in about a second even though a long answer takes a minute on
+  // this hardware. Lines of JSON: {"type":"start"}, {"type":"delta","text":...} ..., then {"type":"done",
+  // ...the same payload as a normal reply...}. The "done" text is authoritative; the deltas are for
+  // reading along. Everything that can fail early (limits, checks) already answered as plain JSON above.
+  if (body?.stream === true) {
+    const leave = new AbortController();
+    const encoder = new TextEncoder();
+    const stream = new ReadableStream<Uint8Array>({
+      async start(controller) {
+        const send = (event: unknown) => {
+          try {
+            controller.enqueue(encoder.encode(JSON.stringify(event) + "\n"));
+          } catch {
+            // the person has gone; nothing to write to
+          }
+        };
+        send({ type: "start", sessionId: guestSessionId });
+        try {
+          const turn = await think(message, guestSessionId, {
+            onDelta: (text) => send({ type: "delta", text }),
+            signal: AbortSignal.any([req.signal, leave.signal]),
+          });
+          send({ type: "done", ...payloadFor(turn) });
+        } catch {
+          send({ type: "error", error: "The Brain could not finish this answer. Please try again." });
+        }
+        try {
+          controller.close();
+        } catch {
+          // already closed
+        }
+      },
+      cancel() {
+        leave.abort();
+      },
+    });
+    return withChildrenCors(
+      req,
+      new NextResponse(stream, {
+        status: 200,
+        headers: {
+          ...rateHeaders,
+          "Content-Type": "application/x-ndjson; charset=utf-8",
+          // tell every proxy: send each line as it is written, do not hold or compress it
+          "Cache-Control": "no-store, no-transform",
+          "Content-Encoding": "identity",
+          "X-Accel-Buffering": "no",
+        },
+      }),
+    );
+  }
+
   const turn = await think(message, guestSessionId);
-  const now = new Date().toISOString();
-  const latencyMs = Math.round(performance.now() - started);
-  return json({
-    sessionId: guestSessionId,
-    userMessage: {
-      id: randomUUID(), sessionId: guestSessionId, role: "user", content: message,
-      modelId: model.id, relay: false, latencyMs: 0, createdAt: now,
-    },
-    assistantMessage: {
-      id: randomUUID(), sessionId: guestSessionId, role: "assistant", content: turn.content,
-      modelId: model.id, relay: turn.relay, latencyMs, createdAt: now,
-    },
-    brain: shown(turn.brain),
-    tier: tierInfo.tier,
-    friend: false,
-    stored: false,
-    tierChip: tierChip(bodyKind, tierInfo.tier),
-    ...humanExtra,
-  });
+  return json(payloadFor(turn));
 }
 // DELETE /api/brain?session=<id>  - history is on the device; this only clears the core's short
 // in-memory context for that conversation.

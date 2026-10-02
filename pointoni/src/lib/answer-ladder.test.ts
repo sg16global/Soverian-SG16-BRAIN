@@ -1,7 +1,7 @@
 // Run with: npm test   (node's built-in runner, no extra dependencies)
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { BUSY_TEXT, ConcurrencyGuard, runLadder, type LadderDeps } from "./answer-ladder.ts";
+import { BUSY_TEXT, OWN_BUSY_TEXT, ConcurrencyGuard, runLadder, type LadderDeps } from "./answer-ladder.ts";
 import { distillCharter } from "./charter-prompt.ts";
 
 const REFUSAL = "Sorry, I can't help with that request.";
@@ -229,4 +229,63 @@ test("deadline: the configured value can never exceed the safe ceiling", async (
   process.env.SG16_ANSWER_DEADLINE_MS = "garbage";
   assert.equal(answerDeadlineMs(), 80_000);
   delete process.env.SG16_ANSWER_DEADLINE_MS;
+});
+
+// ---- fair share: one owner cannot take every slot -------------------------------------------
+test("fair share: an owner already being answered is told to wait, others are still queued", async () => {
+  const limiter = new ConcurrencyGuard(1, 2);
+  let finish!: (s: string) => void;
+  const first = runLadder("a1", deps({ limiter, owner: "visitor:A", ownerLimit: 1, ollama: () => new Promise<string>((r) => (finish = r)) }));
+  await new Promise((r) => setTimeout(r, 5));
+  const second = await runLadder("a2", deps({ limiter, owner: "visitor:A", ownerLimit: 1 }));
+  assert.deepEqual(second, { content: OWN_BUSY_TEXT, engine: "busy" }); // immediate, nothing queued
+  const other = runLadder("b1", deps({ limiter, owner: "visitor:B", ownerLimit: 1 })); // different owner waits its turn
+  await new Promise((r) => setTimeout(r, 5));
+  assert.equal(limiter.stats().queued, 1);
+  finish("done");
+  assert.equal((await first).engine, "ollama");
+  assert.equal((await other).engine, "ollama");
+  assert.equal(limiter.ownerCount("visitor:A"), 0);
+  assert.equal(limiter.ownerCount("visitor:B"), 0);
+});
+
+test("fair share: a project may hold more than one slot, up to its limit", async () => {
+  const limiter = new ConcurrencyGuard(1, 3);
+  let finish!: (s: string) => void;
+  const a = runLadder("p1", deps({ limiter, owner: "project:shop", ownerLimit: 2, ollama: () => new Promise<string>((r) => (finish = r)) }));
+  await new Promise((r) => setTimeout(r, 5));
+  const b = runLadder("p2", deps({ limiter, owner: "project:shop", ownerLimit: 2 }));
+  await new Promise((r) => setTimeout(r, 5));
+  assert.equal(limiter.ownerCount("project:shop"), 2);
+  const c = await runLadder("p3", deps({ limiter, owner: "project:shop", ownerLimit: 2 }));
+  assert.equal(c.engine, "busy");
+  assert.equal(c.content, OWN_BUSY_TEXT);
+  finish("ok");
+  await a;
+  await b;
+  assert.equal(limiter.ownerCount("project:shop"), 0);
+});
+
+test("fair share: the count is given back when the answer fails, times out or the client leaves", async () => {
+  const limiter = new ConcurrencyGuard(1, 2);
+  await runLadder("x", deps({ limiter, owner: "o", ownerLimit: 1, ollama: async () => { throw new Error("boom"); } }));
+  assert.equal(limiter.ownerCount("o"), 0);
+  await runLadder("x", deps({ limiter, owner: "o", ownerLimit: 1, ollama: () => new Promise<string>(() => {}), ollamaTimeoutMs: 30 }));
+  assert.equal(limiter.ownerCount("o"), 0);
+  // a queued request whose client leaves also gives its place back
+  void runLadder("holder", deps({ limiter, ollama: () => new Promise<string>(() => {}) }));
+  await new Promise((r) => setTimeout(r, 5));
+  const gone = new AbortController();
+  const queued = runLadder("q", deps({ limiter, owner: "leaver", ownerLimit: 1, signal: gone.signal }));
+  await new Promise((r) => setTimeout(r, 5));
+  assert.equal(limiter.ownerCount("leaver"), 1);
+  gone.abort();
+  assert.equal((await queued).engine, "busy");
+  assert.equal(limiter.ownerCount("leaver"), 0);
+});
+
+test("fair share: requests without an owner are never limited by it", async () => {
+  const limiter = new ConcurrencyGuard(1, 2);
+  const r = await runLadder("x", deps({ limiter }));
+  assert.equal(r.engine, "ollama");
 });

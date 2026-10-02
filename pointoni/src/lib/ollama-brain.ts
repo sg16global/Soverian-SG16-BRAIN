@@ -107,6 +107,10 @@ export type OllamaTurnInput = {
   context?: string | null;
   /** hard cap on generated tokens (children's edition keeps answers short) */
   maxTokens?: number;
+  /** called with each piece of the answer as it is written, so the person can read along */
+  onDelta?: (text: string) => void;
+  /** the person left: stop asking the model to write (closing the stream makes Ollama stop) */
+  signal?: AbortSignal;
 };
 
 type OllamaChatChunk = {
@@ -162,6 +166,9 @@ export async function ollamaChat(input: OllamaTurnInput): Promise<OllamaTurn> {
   let modelName: string | undefined;
   let finished = false;
   let hitTokenCap = false;
+  const onCallerAbort = () => controller.abort();
+  if (input.signal?.aborted) controller.abort();
+  input.signal?.addEventListener("abort", onCallerAbort, { once: true });
 
   try {
     const res = await fetch(`${ollamaBaseUrl()}/api/chat`, {
@@ -202,7 +209,15 @@ export async function ollamaChat(input: OllamaTurnInput): Promise<OllamaTurn> {
         throw new OllamaBridgeError("bad-payload", "heart-bridge sent an unreadable chunk");
       }
       if (chunk.error) throw new OllamaBridgeError("bad-payload", `heart-bridge error: ${String(chunk.error).slice(0, 200)}`);
-      text += chunk.message?.content ?? "";
+      const piece = chunk.message?.content ?? "";
+      text += piece;
+      if (piece && input.onDelta) {
+        try {
+          input.onDelta(piece);
+        } catch {
+          // a broken display callback must never break the answer
+        }
+      }
       modelName ??= chunk.model;
       if (chunk.done) {
         finished = true;
@@ -246,6 +261,7 @@ export async function ollamaChat(input: OllamaTurnInput): Promise<OllamaTurn> {
     };
   } finally {
     clearTimeout(timer);
+    input.signal?.removeEventListener("abort", onCallerAbort);
   }
 
   const reply = text.trim();

@@ -194,6 +194,20 @@ ask blocked "$BLOCKED_MSG"; report blocked
 
 # follow-up memory (the device sends the earlier turns) and a language the model writes badly (Bengali)
 ask_json followup '{"modelId":"sg16-brain","message":"And can you say that again in five words?","history":[{"role":"user","content":"In one sentence, what is a sovereign AI?"},{"role":"assistant","content":"A sovereign AI is an assistant that runs on infrastructure its operator owns."}]}'; report followup
+# streaming: the first line of the answer should arrive almost at once, long before the whole answer
+curl -sS -N --max-time 150 -o "$WORK/stream.body" -w '%{http_code} %{time_starttransfer} %{time_total}'   -H 'Content-Type: application/json' -H "X-SG16-Proxy-Auth: $SG16_PROXY_AUTH_SECRET"   -d '{"modelId":"sg16-brain","message":"In two short sentences, why is the sky blue?","stream":true}' "$BASE/api/brain" >"$WORK/stream.meta" 2>/dev/null || echo "000 0 0" >"$WORK/stream.meta"
+python3 - "$WORK/stream.meta" "$WORK/stream.body" <<'PY'
+import json, sys
+code, first, total = open(sys.argv[1]).read().split()[:3]
+events = []
+for line in open(sys.argv[2], encoding="utf-8", errors="replace"):
+    try: events.append(json.loads(line))
+    except Exception: pass
+kinds = "".join(e.get("type", "?")[0] for e in events)
+done = next((e for e in events if e.get("type") == "done"), {})
+text = " ".join((done.get("assistantMessage") or {}).get("content", "").split())[:70]
+print(f"stream     http={code:<4} first-byte={float(first):5.2f}s whole={float(total):6.2f}s events={len(events)} ({kinds[:3]}..{kinds[-1:]})  {text!r}")
+PY
 ask_json bengali '{"modelId":"sg16-brain","message":"আমি একজন রিকশাচালক। কীভাবে শুরু করব?"}'; report bengali
 
 echo
