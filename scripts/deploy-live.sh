@@ -87,7 +87,7 @@ RB="$APP/.deploy-rollback"   # parked old node_modules/.next (outside pointoni/ 
 BK=""; PREV_BRANCH=""; PREV_SHA=""
 STASHED=0; GIT_MOVED=0; ENV_CHANGED=0; CADDY_CHANGED=0; UNITS_CHANGED=0
 NM_SWAPPED=0; NEXT_SWAPPED=0; RESTARTED=0; TIMER_ENABLED=0; ROLLING_BACK=0
-CADDY_NOTE=""
+CADDY_NOTE=""; OLD_MODEL=""
 
 rollback() {
   [ "$ROLLING_BACK" = 1 ] && return 0
@@ -297,8 +297,20 @@ env_step() {
     ids=""
   fi
   # the operator password is typed by the operator, never generated or stored here
+  # The hash is made on the operator's own computer (node scripts/admin-password.mjs, which prints the line
+  # SG16_ADMIN_PASSWORD_HASH=scrypt:...). Pass only the part after the "=" in the environment of THIS run:
+  #   SG16_DEPLOY_ADMIN_PASSWORD_HASH='scrypt:...' bash scripts/deploy-live.sh ...
+  # It is a salted hash, not the password; it is validated, written to .env and never printed.
   if ! has_key SG16_ADMIN_PASSWORD_HASH; then
-    warn "SG16_ADMIN_PASSWORD_HASH is not set: the admin console cannot be opened. On your own computer run: node scripts/admin-password.mjs  and add the line it prints to .env"
+    if [ -n "${SG16_DEPLOY_ADMIN_PASSWORD_HASH:-}" ]; then
+      if ! printf '%s' "$SG16_DEPLOY_ADMIN_PASSWORD_HASH" | grep -Eq '^scrypt:[0-9]+:[0-9]+:[0-9]+:[A-Za-z0-9_-]+:[A-Za-z0-9_-]+$'; then
+        warn "SG16_DEPLOY_ADMIN_PASSWORD_HASH is not in the format scripts/admin-password.mjs prints (scrypt:N:r:p:salt:hash)"; return 1
+      fi
+      if [ "$DRY" = 1 ]; then say "[dry-run] would: set SG16_ADMIN_PASSWORD_HASH in .env (from SG16_DEPLOY_ADMIN_PASSWORD_HASH, value hidden)"
+      else ENV_CHANGED=1; append_env SG16_ADMIN_PASSWORD_HASH "$SG16_DEPLOY_ADMIN_PASSWORD_HASH"; say "SG16_ADMIN_PASSWORD_HASH added to .env (value hidden)"; fi
+    else
+      warn "SG16_ADMIN_PASSWORD_HASH is not set: the admin console cannot be opened. On your own computer run: node scripts/admin-password.mjs  and re-run with SG16_DEPLOY_ADMIN_PASSWORD_HASH='<the part after =>'"
+    fi
   fi
   # Operator emails: set from the environment of THIS run so the address is never stored in the
   # repository, e.g.  SG16_DEPLOY_ADMIN_EMAILS=you@example.com bash scripts/deploy-live.sh ...
@@ -310,6 +322,33 @@ env_step() {
       warn "SG16_ADMIN_EMAILS is not set: nobody can open the admin console. Re-run with SG16_DEPLOY_ADMIN_EMAILS=<email>"
     fi
   else say "SG16_ADMIN_EMAILS already set"; fi
+  # Switch the answering model, e.g.  SG16_DEPLOY_OLLAMA_MODEL=mistral:7b-instruct-v0.3-q8_0 bash scripts/deploy-live.sh ...
+  # Only a model that is already pulled is accepted. The old one is unloaded after a good verify so the two do not
+  # share the server's memory; a failed deploy restores .env (and so the old model) like every other edit.
+  if [ -n "${SG16_DEPLOY_OLLAMA_MODEL:-}" ]; then
+    local want cur
+    want="$SG16_DEPLOY_OLLAMA_MODEL"
+    if ! printf '%s' "$want" | grep -Eq '^[A-Za-z0-9._:/-]{1,100}$'; then warn "SG16_DEPLOY_OLLAMA_MODEL has unexpected characters"; return 1; fi
+    if [ "$DRY" != 1 ]; then
+      command -v ollama >/dev/null 2>&1 || { warn "ollama is not installed here: cannot switch the model"; return 1; }
+      ollama list 2>/dev/null | awk 'NR>1{print $1}' | grep -qxF "$want" || { warn "model $want is not pulled yet (ollama pull $want first)"; return 1; }
+    fi
+    cur="$(grep -E '^SG16_OLLAMA_MODEL=' "$APP/.env" 2>/dev/null | tail -1 | cut -d= -f2-)"
+    if [ "$cur" = "$want" ]; then say "SG16_OLLAMA_MODEL is already $want"
+    elif [ "$DRY" = 1 ]; then say "[dry-run] would: set SG16_OLLAMA_MODEL=$want in .env (was ${cur:-<default>})"
+    else
+      ENV_CHANGED=1; OLD_MODEL="${cur:-mistral}"
+      if key_present SG16_OLLAMA_MODEL; then
+        # rewrite in place through a temp file so the .env keeps its owner and mode
+        local tmpenv; tmpenv="$(mktemp)" || return 1
+        awk -v w="$want" 'BEGIN{done=0} /^SG16_OLLAMA_MODEL=/{ if(!done){print "SG16_OLLAMA_MODEL=" w; done=1} next } {print}' "$APP/.env" >"$tmpenv" && cat "$tmpenv" >"$APP/.env"
+        rm -f "$tmpenv"
+      else
+        append_env SG16_OLLAMA_MODEL "$want"
+      fi
+      say "SG16_OLLAMA_MODEL: ${cur:-<default>} -> $want"
+    fi
+  fi
   local pair name val
   for pair in SG16_ANSWER_QUEUE_WAIT_MS=30000 SG16_OLLAMA_TIMEOUT_MS=60000; do
     name="${pair%%=*}"; val="${pair#*=}"
@@ -598,6 +637,10 @@ for step in "${STEPS[@]}"; do
     exit 1
   fi
 done
+
+if [ -n "$OLD_MODEL" ] && command -v ollama >/dev/null 2>&1; then
+  ollama stop "$OLD_MODEL" >>"$LOG" 2>&1 && say "old model unloaded from memory: $OLD_MODEL" || say "old model $OLD_MODEL was not loaded (nothing to unload)"
+fi
 
 if systemctl enable --now sg16-healthcheck.timer >>"$LOG" 2>&1; then TIMER_ENABLED=1; say "watchdog timer enabled"; else warn "could not enable sg16-healthcheck.timer (the deploy itself succeeded)"; fi
 

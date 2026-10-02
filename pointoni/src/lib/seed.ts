@@ -1,5 +1,5 @@
 import { db } from "@/db";
-import { aiModels, newsItems } from "@/db/schema";
+import { aiModels } from "@/db/schema";
 import { eq } from "drizzle-orm";
 
 // The only model on this platform. Status and latency are NOT stored here: they are
@@ -21,63 +21,6 @@ const SG16_MODEL = {
   sortOrder: 0,
 };
 
-const NEWS = [
-  {
-    headline:
-      "GPT-5 runners intensify: Focus on reasoning, to deep-runner reasoning\u2026",
-    category: "Reasoning",
-    modelTag: "GPT-5",
-    source: "Live AI Model Updates",
-    accent: "#22e08c",
-    ageMinutes: 6,
-  },
-  {
-    headline:
-      "New Llama 3 model variants announced to frontier model audiences\u2026",
-    category: "Model Release",
-    modelTag: "Llama 3",
-    source: "Live AI Model Updates",
-    accent: "#ff4fa3",
-    ageMinutes: 24,
-  },
-  {
-    headline:
-      "Stable Diffusion update: Improved image generation to Stable Diffusion\u2026",
-    category: "Multimodal",
-    modelTag: "Stable Diffusion",
-    source: "Live AI Model Updates",
-    accent: "#ffd166",
-    ageMinutes: 47,
-  },
-  {
-    headline:
-      "AI ethics debate heats up: Key players join discussion to discuss reasoning\u2026",
-    category: "Policy",
-    modelTag: "AI Ethics",
-    source: "Live AI Model Updates",
-    accent: "#39d7ff",
-    ageMinutes: 73,
-  },
-  {
-    headline:
-      "Healthcare AI breakthrough: New diagnostics tool, and human neurocentric\u2026",
-    category: "Health",
-    modelTag: "Med-AI",
-    source: "Live AI Model Updates",
-    accent: "#2ee6a0",
-    ageMinutes: 118,
-  },
-  {
-    headline:
-      "Quantum Computing and AI: Recent advances in quantum computing and\u2026",
-    category: "Research",
-    modelTag: "Quantum",
-    source: "Live AI Model Updates",
-    accent: "#ffb020",
-    ageMinutes: 165,
-  },
-];
-
 let seedingPromise: Promise<void> | null = null;
 
 export async function ensureSeeded(): Promise<void> {
@@ -88,20 +31,6 @@ export async function ensureSeeded(): Promise<void> {
     const sg16 = await db.select({ id: aiModels.id }).from(aiModels).where(eq(aiModels.id, SG16_MODEL.id)).limit(1);
     if (sg16.length === 0) {
       await db.insert(aiModels).values(SG16_MODEL);
-    }
-
-    const existingNews = await db.select({ id: newsItems.id }).from(newsItems).limit(1);
-    if (existingNews.length === 0) {
-      await db.insert(newsItems).values(
-        NEWS.map((n) => ({
-          headline: n.headline,
-          category: n.category,
-          modelTag: n.modelTag,
-          source: n.source,
-          accent: n.accent,
-          publishedAt: new Date(Date.now() - n.ageMinutes * 60_000),
-        })),
-      );
     }
   })();
   try {

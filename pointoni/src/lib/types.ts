@@ -1,7 +1,6 @@
-import type { aiModels, newsItems } from "@/db/schema";
+import type { aiModels } from "@/db/schema";
 
 export type AiModel = typeof aiModels.$inferSelect;
-export type NewsItem = typeof newsItems.$inferSelect;
 
 export type ChatMessageDto = {
   id: string;

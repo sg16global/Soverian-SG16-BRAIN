@@ -22,6 +22,14 @@ cat >"$T/bin/git" <<SH
 echo "\$*" >>"$T/git.log"
 exec "$REAL_GIT" "\$@"
 SH
+cat >"$T/bin/ollama" <<SH
+#!/usr/bin/env bash
+echo "ollama \$*" >>"$T/ollama.log"
+case "\$1" in
+  list) printf 'NAME ID SIZE MODIFIED\nmistral:7b-instruct-v0.3-fp16 aaa 14 GB now\nmistral:7b-instruct-v0.3-q8_0 bbb 7 GB now\n' ;;
+esac
+exit 0
+SH
 cat >"$T/bin/python3" <<SH
 #!/usr/bin/env bash
 exec "$REAL_PY" "\$@"
@@ -248,6 +256,39 @@ SG16_ADMIN_EMAILS=kept@example.com
 ' >>"$APPD/.env"
 SG16_DEPLOY_ADMIN_EMAILS=other@example.com run_deploy --snapshot-done
 check "an existing SG16_ADMIN_EMAILS is never overwritten" '[ $RC = 0 ] && grep -q "^SG16_ADMIN_EMAILS=kept@example.com$" "$APPD/.env" && ! grep -q "other@example.com" "$APPD/.env"'
+
+# 8b2 operator password hash: validated, written to .env, never printed ---------------------------------------
+GOODHASH='scrypt:32768:8:1:c2FsdHNhbHRzYWx0:aGFzaGhhc2hoYXNoaGFzaA'
+fixture
+SG16_DEPLOY_ADMIN_PASSWORD_HASH="$GOODHASH" run_deploy --snapshot-done
+check "the admin password hash is added to .env from the deploy environment, and never printed" '[ $RC = 0 ] && grep -q "^SG16_ADMIN_PASSWORD_HASH=$GOODHASH$" "$APPD/.env" && ! grep -q "c2FsdHNhbHRzYWx0" "$T/out"'
+fixture
+SG16_DEPLOY_ADMIN_PASSWORD_HASH='not a hash; rm -rf /' run_deploy --snapshot-done
+check "a malformed hash stops the deploy and rolls back, .env untouched" '[ $RC = 1 ] && grep -qx "ROLLED BACK" "$T/out" && [ "$(md5sum <"$APPD/.env")" = "$H_ENV" ]'
+fixture
+printf '\nSG16_ADMIN_PASSWORD_HASH=scrypt:1:1:1:keep:keep\n' >>"$APPD/.env"
+SG16_DEPLOY_ADMIN_PASSWORD_HASH="$GOODHASH" run_deploy --snapshot-done
+check "an existing admin password hash is never overwritten" '[ $RC = 0 ] && grep -q "^SG16_ADMIN_PASSWORD_HASH=scrypt:1:1:1:keep:keep$" "$APPD/.env" && ! grep -q "c2FsdHNhbHRzYWx0" "$APPD/.env"'
+
+# 8b3 switching the answering model ----------------------------------------------------------------------
+Q8=mistral:7b-instruct-v0.3-q8_0
+fixture
+: >"$T/ollama.log"
+printf '\nSG16_OLLAMA_MODEL=mistral:7b-instruct-v0.3-fp16\nSG16_ANSWER_QUEUE_WAIT_MS=30000\n' >>"$APPD/.env"
+SG16_DEPLOY_OLLAMA_MODEL="$Q8" run_deploy --snapshot-done
+check "the model is switched in .env (one line, others untouched) and the old model is unloaded after a good deploy" '[ $RC = 0 ] && [ "$(grep -c "^SG16_OLLAMA_MODEL=" "$APPD/.env")" = 1 ] && grep -q "^SG16_OLLAMA_MODEL=$Q8$" "$APPD/.env" && grep -q "^SG16_ANSWER_QUEUE_WAIT_MS=30000$" "$APPD/.env" && grep -q "ollama stop mistral:7b-instruct-v0.3-fp16" "$T/ollama.log"'
+fixture
+: >"$T/ollama.log"
+SG16_DEPLOY_OLLAMA_MODEL="$Q8" run_deploy --snapshot-done
+check "with no model line yet, one is added" '[ $RC = 0 ] && grep -q "^SG16_OLLAMA_MODEL=$Q8$" "$APPD/.env"'
+fixture
+: >"$T/ollama.log"
+SG16_DEPLOY_OLLAMA_MODEL="mistral:not-pulled" run_deploy --snapshot-done
+check "a model that is not pulled is refused before anything changes (rolled back, .env untouched, nothing unloaded)" '[ $RC = 1 ] && grep -q "not pulled yet" "$T/out" && [ "$(md5sum <"$APPD/.env")" = "$H_ENV" ] && ! grep -q "ollama stop" "$T/ollama.log"'
+fixture
+: >"$T/ollama.log"
+FAIL_LIVE=1 SG16_DEPLOY_OLLAMA_MODEL="$Q8" run_deploy --snapshot-done
+check "if the deploy fails after switching, the old model setting comes back and nothing is unloaded" '[ $RC = 1 ] && [ "$(md5sum <"$APPD/.env")" = "$H_ENV" ] && ! grep -q "ollama stop" "$T/ollama.log"'
 
 # 8c the other secrets: generated when missing, never printed; a too-short identity secret fails safely --------
 fixture
