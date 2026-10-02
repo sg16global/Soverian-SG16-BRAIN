@@ -214,6 +214,16 @@ export function charterDigest(): string {
   return `SG16 charter v1 · ${CHARTER_LAWS.length} laws distilled · ${PERMANENT_HIERARCHY.length}-step permanent hierarchy · sections 1-23 + master principle`;
 }
 
+/** Structured form of the digest, for the operator console. */
+export function charterSummary() {
+  return {
+    laws: CHARTER_LAWS.length,
+    bodies: Object.keys(BODY_OVERLAYS).length,
+    hierarchySteps: PERMANENT_HIERARCHY.length,
+    digest: charterDigest(),
+  };
+}
+
 /** Just the hierarchy — the safety floor any engine must keep even if trimmed. */
 export function hierarchyFloor(): string {
   return PERMANENT_HIERARCHY.join(" > ");

@@ -1,3 +1,4 @@
+import { isAdminEmail } from "@/lib/admin-auth";
 import { NextRequest, NextResponse } from "next/server";
 import {
   bindVerifiedPlan,
@@ -129,6 +130,8 @@ export async function POST(req: NextRequest) {
         plan: planActive(identity) ? identity.plan : null,
         planExpiresAt: identity.planExpiresAt,
         tier: planActive(identity) ? "work" : "free",
+        // lets the page show or hide operator links; the server re-checks on every admin call
+        admin: isAdminEmail(identity.email),
       });
     }
 

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { db, persistenceMode } from "@/db";
 import { sql } from "drizzle-orm";
 import { resolveAccount } from "@/lib/account-auth";
+import { isAdminRequest } from "@/lib/admin-gate";
 import { brainHealth } from "@/lib/brain-gateway";
 import { ollamaHealth } from "@/lib/ollama-brain";
 import { charterDigest } from "@/lib/charter-prompt";
@@ -18,6 +19,9 @@ export async function GET(req: NextRequest) {
   const account = await resolveAccount(req);
   if (!account) {
     return NextResponse.json({ error: "Sign in with a verified email to access admin data." }, { status: 401 });
+  }
+  if (!(await isAdminRequest(req))) {
+    return NextResponse.json({ error: "This account is not an operator." }, { status: 403 });
   }
 
   let database = false;

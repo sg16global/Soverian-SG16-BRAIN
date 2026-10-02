@@ -210,7 +210,7 @@ echo "== /api/health: which engine answered last =="
 curl -sS --max-time 10 "$BASE/api/health" | python3 -c '
 import json, sys
 d = json.load(sys.stdin)
-print("lastAnswered:", d.get("lastAnswered"), "| next clean message ->", d.get("answering"))' \
+print("lastAnswered:", d.get("lastAnswered", "(detail is operator-only)"), "| next clean message ->", d.get("answering", "(operator-only)"))' \
   || echo "(health unavailable)"
 
 echo

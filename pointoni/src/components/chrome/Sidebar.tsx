@@ -3,7 +3,8 @@
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { Crown, Pin, PinOff, Power } from "lucide-react";
+import { Crown, LogIn, Pin, PinOff, Power } from "lucide-react";
+import { announceIdentityChange, useAdmin, useSignedIn } from "@/lib/use-session";
 import { SIDEBAR_LINKS } from "./nav-items";
 import { GLOBAL_NODES } from "@/lib/content";
 import { LiveClock } from "./LiveClock";
@@ -54,20 +55,19 @@ function SidebarBody({
   const pathname = usePathname();
   const router = useRouter();
 
-  async function signOut() {
+  const signedIn = useSignedIn();
+  const isAdmin = useAdmin() === true;
+
+  // Sign out = forget the sign-in token on this device. (There is no server session or cookie to end.)
+  function signOut() {
     try {
       window.localStorage.removeItem("sg16/identity");
       window.localStorage.removeItem("sg16/pass");
     } catch {
       // browser storage may be unavailable
     }
-    await fetch("/api/session", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ state: "out" }),
-    });
+    announceIdentityChange();
     router.push("/signed-out");
-    router.refresh();
     onNavigate?.();
   }
 
@@ -90,7 +90,7 @@ function SidebarBody({
         )}
 
         <ul className="space-y-1">
-          {SIDEBAR_LINKS.map((item) => {
+          {SIDEBAR_LINKS.filter((item) => item.href !== "/admin" || isAdmin).map((item) => {
             const active = pathname === item.href;
             const Icon = item.icon;
             return (
@@ -112,13 +112,24 @@ function SidebarBody({
           })}
         </ul>
 
-        <button
-          onClick={signOut}
-          className="mt-2 flex w-full items-center gap-3 rounded-lg border border-transparent px-3 py-2 font-display text-[12px] font-bold tracking-wider text-red-500 transition-all hover:border-red-400/40 hover:bg-red-500/15 hover:text-red-300"
-        >
-          <Power className="h-[18px] w-[18px] flex-none" strokeWidth={2.2} />
-          Sign Out
-        </button>
+        {signedIn ? (
+          <button
+            onClick={signOut}
+            className="mt-2 flex w-full items-center gap-3 rounded-lg border border-transparent px-3 py-2 font-display text-[12px] font-bold tracking-wider text-red-500 transition-all hover:border-red-400/40 hover:bg-red-500/15 hover:text-red-300"
+          >
+            <Power className="h-[18px] w-[18px] flex-none" strokeWidth={2.2} />
+            Sign Out
+          </button>
+        ) : (
+          <Link
+            href="/login"
+            onClick={onNavigate}
+            className="mt-2 flex w-full items-center gap-3 rounded-lg border border-transparent px-3 py-2 font-display text-[12px] font-bold tracking-wider text-emerald-400 transition-all hover:border-emerald-400/40 hover:bg-emerald-500/10 hover:text-emerald-300"
+          >
+            <LogIn className="h-[18px] w-[18px] flex-none" strokeWidth={2.2} />
+            Sign In
+          </Link>
+        )}
 
         <div className="my-4 hairline" />
 

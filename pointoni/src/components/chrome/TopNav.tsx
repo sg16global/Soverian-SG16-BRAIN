@@ -5,10 +5,12 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Crown, Grid2x2, Menu } from "lucide-react";
 import { TOP_LINKS } from "./nav-items";
+import { useAdmin } from "@/lib/use-session";
 
 export function TopNav({ onMenu }: { onMenu: () => void }) {
   const pathname = usePathname();
   const [online, setOnline] = useState(false);
+  const isAdmin = useAdmin() === true;
 
   useEffect(() => {
     let cancelled = false;
@@ -48,7 +50,7 @@ export function TopNav({ onMenu }: { onMenu: () => void }) {
 
         {/* Center links */}
         <nav className="mx-auto hidden items-center gap-1 xl:flex">
-          {TOP_LINKS.map((l) => {
+          {TOP_LINKS.filter((l) => l.href !== "/admin" || isAdmin).map((l) => {
             const isHash = l.href.includes("#");
             const active = isHash
               ? pathname === "/"

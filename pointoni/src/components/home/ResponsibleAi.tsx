@@ -17,9 +17,6 @@ export function ResponsibleAi() {
             style={{ mixBlendMode: "screen", filter: "drop-shadow(0 0 22px rgba(34,224,140,.55))" }}
             loading="lazy"
           />
-          <span className="absolute bottom-1 left-1 rounded-full border border-emerald-400/20 bg-emerald-500/10 px-1.5 py-0.5 font-mono2 text-[7px] tracking-widest text-emerald-300">
-            SHIELD · 5d9ac32
-          </span>
         </div>
 
         {/* message */}

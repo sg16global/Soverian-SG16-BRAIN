@@ -26,6 +26,7 @@ import { SiteChrome } from "@/components/chrome/SiteChrome";
 import { PageHeader } from "@/components/PageHeader";
 import { Panel, StatusPill } from "@/components/ui/Panel";
 import { identityHeaders } from "@/lib/browser-identity";
+import { useAdmin, useSignedIn } from "@/lib/use-session";
 
 type Health = {
   ok: boolean;
@@ -108,7 +109,7 @@ function StatCard({
   );
 }
 
-export default function AdminPage() {
+function AdminConsole() {
   const [health, setHealth] = useState<Health | null>(null);
   const [models, setModels] = useState<Model[]>([]);
   const [billing, setBilling] = useState<Billing | null>(null);
@@ -561,6 +562,40 @@ export default function AdminPage() {
             OPEN CHAT
           </Link>
         </div>
+      </div>
+    </SiteChrome>
+  );
+}
+
+// Operators only. The server enforces the same rule on every admin API call; this page just does not
+// render the console (or call those APIs) for anyone else.
+export default function AdminPage() {
+  const signedIn = useSignedIn();
+  const admin = useAdmin();
+  if (admin === true) return <AdminConsole />;
+  return (
+    <SiteChrome>
+      <div className="mx-auto max-w-[560px] px-4 py-20">
+        <Panel className="p-8 text-center">
+          <Shield className="mx-auto h-8 w-8 text-red-400" />
+          <h1 className="mt-4 font-display text-lg font-black tracking-[0.14em] text-white">OPERATOR ACCESS</h1>
+          {!signedIn ? (
+            <>
+              <p className="mt-3 text-[13px] leading-relaxed text-slate-400">
+                This console is for the platform operator. Sign in with the operator email to continue.
+              </p>
+              <Link href="/login" className="btn-red mt-6 inline-flex items-center gap-2 px-6 py-3 text-[11px]">
+                SIGN IN
+              </Link>
+            </>
+          ) : admin === null ? (
+            <p className="mt-3 text-[13px] text-slate-400">Checking your account…</p>
+          ) : (
+            <p className="mt-3 text-[13px] leading-relaxed text-slate-400">
+              This account is not an operator of this platform.
+            </p>
+          )}
+        </Panel>
       </div>
     </SiteChrome>
   );

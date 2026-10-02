@@ -3,6 +3,7 @@ import { Shield, MessageSquare } from "lucide-react";
 import { Emblem } from "@/components/chrome/Emblem";
 import { HERO_PILLARS } from "@/lib/content";
 import { FallbackImg } from "./FallbackImg";
+import { AdminOnly } from "@/components/AdminOnly";
 
 function Pillar({ label }: { label: string }) {
   return (
@@ -86,15 +87,14 @@ export function HeroStage() {
           <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 shadow-[0_0_6px_rgba(34,224,140,.8)]" />
           SOVEREIGN CORE · Q16.16
         </span>
-        <span className="inline-flex items-center gap-1.5 rounded-full border border-cyan-400/30 bg-cyan-500/10 px-3 py-1 font-mono2 text-[9px] tracking-[0.18em] text-cyan-300">
-          IMAGERY · 5d9ac32 RESTORED
-        </span>
-        <Link
-          href="/admin"
-          className="inline-flex items-center gap-1.5 rounded-full border border-red-400/40 bg-red-500/10 px-3 py-1 font-mono2 text-[9px] tracking-[0.18em] text-red-200 transition hover:border-red-400/70 hover:text-white"
-        >
-          <Shield className="h-3 w-3" /> ADMIN CONSOLE
-        </Link>
+        <AdminOnly>
+          <Link
+            href="/admin"
+            className="inline-flex items-center gap-1.5 rounded-full border border-red-400/40 bg-red-500/10 px-3 py-1 font-mono2 text-[9px] tracking-[0.18em] text-red-200 transition hover:border-red-400/70 hover:text-white"
+          >
+            <Shield className="h-3 w-3" /> ADMIN CONSOLE
+          </Link>
+        </AdminOnly>
       </div>
 
       <div className="grid items-center gap-8 lg:grid-cols-[1fr_auto_1fr]">
@@ -123,9 +123,11 @@ export function HeroStage() {
             <Link href="/chat" className="btn-red inline-flex items-center gap-2 px-6 py-2.5 text-[11px]">
               <MessageSquare className="h-4 w-4" /> START CHAT
             </Link>
-            <Link href="/admin" className="btn-ghost inline-flex items-center gap-2 px-6 py-2.5 text-[11px]">
-              <Shield className="h-4 w-4" /> OPERATOR CONSOLE
-            </Link>
+            <AdminOnly>
+              <Link href="/admin" className="btn-ghost inline-flex items-center gap-2 px-6 py-2.5 text-[11px]">
+                <Shield className="h-4 w-4" /> OPERATOR CONSOLE
+              </Link>
+            </AdminOnly>
           </div>
         </div>
 

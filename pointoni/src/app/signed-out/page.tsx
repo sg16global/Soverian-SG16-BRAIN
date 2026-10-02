@@ -8,15 +8,10 @@ export default function SignedOutPage() {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
 
-  async function signIn() {
+  // Signing in is the real email flow on /login - this page does not sign anyone in.
+  function signIn() {
     setBusy(true);
-    await fetch("/api/session", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ state: "in" }),
-    });
     router.push("/login");
-    router.refresh();
   }
 
   return (
@@ -29,11 +24,11 @@ export default function SignedOutPage() {
           SESSION ENDED
         </h1>
         <p className="mt-2 text-[13px] leading-relaxed text-slate-400">
-          You have signed out of the Sovereign SG16 Brain network. Your conversations and files remain
-          stored in your sovereign deployment.
+          You have signed out on this device. Nothing about you is kept on the server; your conversation history
+          stays on this device.
         </p>
         <button onClick={signIn} disabled={busy} className="btn-red mt-6 inline-flex items-center gap-2 px-6 py-3 text-[11px] disabled:opacity-50">
-          <LogIn className="h-4 w-4" /> {busy ? "RECONNECTING…" : "ACCESS SG16 BRAIN"}
+          <LogIn className="h-4 w-4" /> {busy ? "OPENING…" : "SIGN IN"}
         </button>
       </div>
     </div>

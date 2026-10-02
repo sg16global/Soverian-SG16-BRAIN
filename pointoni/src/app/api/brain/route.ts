@@ -17,6 +17,7 @@ import {
 } from "@/lib/brain-gateway";
 import { ollamaChat, ollamaEnabled, ollamaHealth, ollamaTimeoutMs } from "@/lib/ollama-brain";
 import { clientIdentity, sharedRateLimiter } from "@/lib/rate-limit";
+import { isAdminRequest } from "@/lib/admin-gate";
 import { checkHuman, sharedHumanDeps, turnstileAppliesTo, turnstileEnabled, turnstileSiteKey } from "@/lib/turnstile";
 import { CHILD_MAX_NEW_TOKENS, childHooks } from "@/lib/child-safety";
 import { BUSY_TEXT, answerDeadlineMs, answerMetrics, lastAnswer, queueWaitMs, recordAnswer, runLadder, sharedLimiter, type Engine } from "@/lib/answer-ladder";
@@ -82,7 +83,12 @@ export async function GET(req: NextRequest) {
   }
 
   if (searchParams.get("probe") === "health") {
-    // The pilot deserves the whole honest picture: the core first, then the
+    // Anyone may learn whether the brain is up; the stack detail is for the operator only.
+    if (!(await isAdminRequest(req))) {
+      const up = await brainHealth().then(() => true).catch(() => false);
+      return NextResponse.json({ ok: up, brain: up ? "online" : "offline" }, { status: up ? 200 : 503 });
+    }
+    // The operator gets the whole honest picture: the core first, then the
     // heart-bridge, plus which law the answer would be spoken under.
     const heart = await ollamaHealth();
     try {

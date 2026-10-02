@@ -292,6 +292,16 @@ env_step() {
     if [ -n "$bs" ] && [ "${#bs}" -lt 32 ]; then warn "SG16_BILLING_SECRET in .env is shorter than 32 characters; the core would refuse to start"; bs=""; return 1; fi
     bs=""
   fi
+  # Operator emails: set from the environment of THIS run so the address is never stored in the
+  # repository, e.g.  SG16_DEPLOY_ADMIN_EMAILS=you@example.com bash scripts/deploy-live.sh ...
+  if ! key_present SG16_ADMIN_EMAILS; then
+    if [ -n "${SG16_DEPLOY_ADMIN_EMAILS:-}" ]; then
+      if [ "$DRY" = 1 ]; then say "[dry-run] would: set SG16_ADMIN_EMAILS in .env (from SG16_DEPLOY_ADMIN_EMAILS)"
+      else ENV_CHANGED=1; append_env SG16_ADMIN_EMAILS "$SG16_DEPLOY_ADMIN_EMAILS"; say "SG16_ADMIN_EMAILS added to .env"; fi
+    else
+      warn "SG16_ADMIN_EMAILS is not set: nobody can open the admin console. Re-run with SG16_DEPLOY_ADMIN_EMAILS=<email>"
+    fi
+  else say "SG16_ADMIN_EMAILS already set"; fi
   local pair name val
   for pair in SG16_ANSWER_QUEUE_WAIT_MS=30000 SG16_OLLAMA_TIMEOUT_MS=60000; do
     name="${pair%%=*}"; val="${pair#*=}"

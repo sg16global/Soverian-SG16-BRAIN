@@ -233,6 +233,20 @@ H2="$(md5sum <"$APPD/.env")"
 run_deploy --snapshot-done
 check "existing secrets and settings are left alone (no openssl call, .env unchanged)" '[ $RC = 0 ] && [ ! -s "$T/openssl.log" ] && [ "$(md5sum <"$APPD/.env")" = "$H2" ]'
 
+# 8b operator email: taken from this run's environment, only if .env has none ------------------------------
+fixture
+SG16_DEPLOY_ADMIN_EMAILS=op@example.com run_deploy --snapshot-done
+check "SG16_ADMIN_EMAILS is added from SG16_DEPLOY_ADMIN_EMAILS when .env has none" '[ $RC = 0 ] && grep -q "^SG16_ADMIN_EMAILS=op@example.com$" "$APPD/.env"'
+fixture
+run_deploy --snapshot-done
+check "without it the deploy warns that nobody can open the admin console, and still succeeds" '[ $RC = 0 ] && grep -q "nobody can open the admin console" "$T/out" && ! grep -q "^SG16_ADMIN_EMAILS=" "$APPD/.env"'
+fixture
+printf '
+SG16_ADMIN_EMAILS=kept@example.com
+' >>"$APPD/.env"
+SG16_DEPLOY_ADMIN_EMAILS=other@example.com run_deploy --snapshot-done
+check "an existing SG16_ADMIN_EMAILS is never overwritten" '[ $RC = 0 ] && grep -q "^SG16_ADMIN_EMAILS=kept@example.com$" "$APPD/.env" && ! grep -q "other@example.com" "$APPD/.env"'
+
 # 9 a billing secret too short for the core to accept is caught before restart -------------------------
 fixture
 printf '\nSG16_BILLING_SECRET=short\n' >>"$APPD/.env"

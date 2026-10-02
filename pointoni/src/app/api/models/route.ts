@@ -6,6 +6,7 @@ import { ensureSeeded } from "@/lib/seed";
 import { brainHealth } from "@/lib/brain-gateway";
 import { ollamaEnabled, ollamaHealth } from "@/lib/ollama-brain";
 import { answerMetrics } from "@/lib/answer-ladder";
+import { isAdminRequest } from "@/lib/admin-gate";
 
 export const dynamic = "force-dynamic";
 
@@ -13,7 +14,7 @@ export const dynamic = "force-dynamic";
 // One model (the SG16 brain). Its status comes from probing the core and the Ollama
 // daemon at request time, and its latency is the measured average of answers actually
 // given (null until there is one). The engines list names what is installed in Ollama.
-export async function GET() {
+export async function GET(req: Request) {
   await ensureSeeded();
   const [row] = await db.select().from(aiModels).where(eq(aiModels.id, "sg16-brain")).limit(1);
 
@@ -43,16 +44,21 @@ export async function GET() {
         sortOrder: 0,
       },
     ],
-    engines: [
-      { id: "gate+core", status: core ? "online" : "offline" },
-      {
-        id: "ollama",
-        status: heartUp ? "online" : "offline",
-        model: heart.model,
-        installed: heart.models ?? [],
-        detail: heart.detail,
-      },
-    ],
+    // which engines sit behind it, and what Ollama has installed, is for the operator only
+    ...((await isAdminRequest(req))
+      ? {
+          engines: [
+            { id: "gate+core", status: core ? "online" : "offline" },
+            {
+              id: "ollama",
+              status: heartUp ? "online" : "offline",
+              model: heart.model,
+              installed: heart.models ?? [],
+              detail: heart.detail,
+            },
+          ],
+        }
+      : {}),
     serverTime: new Date().toISOString(),
   });
 }

@@ -14,6 +14,7 @@ Written for the person running the VPS. Nothing here is applied automatically to
 | `SG16_FREE_SHARED_PER_HOUR` | platform | Shared free-tier hourly cap used only when no per-visitor identity exists | 2000 |
 | `SG16_ANSWER_CONCURRENCY` / `SG16_ANSWER_QUEUE` / `SG16_ANSWER_QUEUE_WAIT_MS` | platform | Answers at once / queue length / longest queue wait | 1 / 2 / 60000 |
 | `SG16_ANSWER_DEADLINE_MS` | platform | Latest moment (after the request starts) the gate + queue + Ollama phase may run before the fast core answers instead. Capped at 85000 so a request never goes silent for Cloudflare's ~100s limit (a 524 error page). | 80000 |
+| `SG16_ADMIN_EMAILS` | platform | Comma-separated verified emails allowed to open the admin console and see operator detail in `/api/health`, `/api/models`, `/api/admin`. Unset = nobody (fails closed). | unset |
 | `TURNSTILE_SECRET_KEY` + `TURNSTILE_SITE_KEY` | platform | Both set = Cloudflare Turnstile on. Either missing = off. | off |
 | `TURNSTILE_ON_CHILDREN=1` | platform | Also challenge the children's edition (loads a Cloudflare script there) | off |
 | `SG16_METRICS_LOG=1` | platform | Write one numbers-only line per hour to `state/metrics.jsonl` (0600, 30 days) | off |

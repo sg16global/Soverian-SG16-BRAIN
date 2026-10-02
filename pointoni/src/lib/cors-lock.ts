@@ -118,6 +118,8 @@ export function childrenIdentityBlock(req: Request): NextResponse | null {
 export function childrenLockSummary() {
   return {
     origins: childrenOrigins(),
+    allowedOrigins: childrenOrigins().length,
+    mode: "enforced" as const,
     credentials: false,
     identity: "blocked for children origins",
   };
