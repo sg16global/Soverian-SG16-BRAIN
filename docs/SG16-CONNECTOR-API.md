@@ -97,3 +97,11 @@ const { assistantMessage, sessionId: sid, tier } = await r.json();
 | `auto` | Decided from the text: pasted code or fenced blocks give `code`, "build me an app…" gives `build`, anything else `chat`. |
 
 A valid explicit mode always wins over detection. The reply carries the mode that was used (`"mode"`). The safety gate screens every request in every mode.
+
+## Running code (sandbox)
+
+`POST /api/run` with `{ "language": "python" | "node", "code": "...", "timeoutMs": 10000 }`. Only the operator and signed project keys may call it; visitors cannot run code. It is off unless `SG16_SANDBOX_ENABLED=1`.
+
+Each run is a throwaway Docker container: no network, read-only filesystem plus a 16 MB `noexec` tmpfs, all capabilities dropped, no privilege gain, unprivileged user, 128 MB memory, 0.5 CPU, 64 processes, 10 s default (30 s maximum), 64 KB output. The code goes in on stdin and the images are never pulled at run time. Reply: `{ ok, exitCode, stdout, stderr, timedOut, truncated, ms }`.
+
+Host setup: install Docker (rootless Docker is best: membership of the `docker` group is root-equivalent on the host), then `docker pull python:3.12-alpine node:22-alpine`. At most two runs at once (`SG16_SANDBOX_CONCURRENCY`).
