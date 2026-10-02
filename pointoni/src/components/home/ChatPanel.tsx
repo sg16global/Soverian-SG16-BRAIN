@@ -19,6 +19,7 @@ import { identityHeaders } from "@/lib/browser-identity";
 import { encodePassHeader, loadPassRecord } from "@/lib/billing";
 import { useTurnstile } from "./useTurnstile";
 import { deviceVault, recordTurn } from "@/lib/device-vault";
+import { historyFromMessages } from "@/lib/chat-history";
 import { writeSessionBackup } from "@/lib/device-folder";
 import type { ChatMessageDto } from "@/lib/types";
 
@@ -33,7 +34,7 @@ const SOVEREIGN = {
   accent: "#22e08c",
 };
 
-type MessageView = ChatMessageDto & { pending?: boolean };
+type MessageView = ChatMessageDto & { pending?: boolean; engine?: string };
 
 function renderContent(text: string) {
   const parts = text.split(/```(\w*)\n?([\s\S]*?)```/g);
@@ -135,6 +136,7 @@ export function ChatPanel({
           relay: false,
           latencyMs: 0,
           createdAt: m.createdAt,
+          engine: m.engine,
         })),
       );
       setSessionId(id);
@@ -176,6 +178,7 @@ export function ChatPanel({
     setSending(true);
     setShowSuggestions(false);
     setInput("");
+    const history = historyFromMessages(messages);
     const tempId = `temp-${Date.now()}`;
     setMessages((prev) => [
       ...prev,
@@ -195,7 +198,8 @@ export function ChatPanel({
       const res = await fetch("/api/brain", {
         method: "POST",
         headers: identityHeaders({ "Content-Type": "application/json", ...passHeader() }),
-        body: JSON.stringify({ sessionId, modelId: SOVEREIGN.id, message, ...turnstile.control.fields() }),
+        // The server remembers nothing: this device sends the last few answered turns so follow-ups work.
+        body: JSON.stringify({ sessionId, modelId: SOVEREIGN.id, message, history, ...turnstile.control.fields() }),
       });
       const data = await res.json();
       if (!res.ok) {
@@ -216,7 +220,7 @@ export function ChatPanel({
       setMessages((prev) => [
         ...prev.filter((m) => m.id !== tempId),
         data.userMessage as ChatMessageDto,
-        data.assistantMessage as ChatMessageDto,
+        { ...(data.assistantMessage as ChatMessageDto), engine: data.brain },
       ]);
     } catch (e) {
       setMessages((prev) => prev.filter((m) => m.id !== tempId));

@@ -18,6 +18,8 @@ import { ollamaChat, ollamaEnabled, ollamaHealth, ollamaTimeoutMs } from "@/lib/
 import { clientIdentity, sharedRateLimiter } from "@/lib/rate-limit";
 import { isAdminRequest } from "@/lib/admin-gate";
 import { projectFromHeaders } from "@/lib/project-keys";
+import { gateTextFor, sanitizeHistory } from "@/lib/chat-history";
+import { ENGLISH_FALLBACK_HINT, WEAK_LANGUAGE_NOTE, weakLanguage } from "@/lib/language";
 import { checkHuman, sharedHumanDeps, turnstileAppliesTo, turnstileEnabled, turnstileSiteKey } from "@/lib/turnstile";
 import { CHILD_MAX_NEW_TOKENS, childHooks } from "@/lib/child-safety";
 import { BUSY_TEXT, answerDeadlineMs, answerMetrics, lastAnswer, queueWaitMs, recordAnswer, runLadder, sharedLimiter, type Engine } from "@/lib/answer-ladder";
@@ -29,6 +31,9 @@ export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 const SG16_MODEL_ID = "sg16-brain";
+// shown when an answer had to be cut at the time limit (the history on the device makes "continue" work)
+const CUT_NOTE = '\n\n(I ran out of time for this answer. Say "continue" and I will go on.)';
+const CHILD_CUT_NOTE = "\n\n(I ran out of time. Ask me to keep going!)";
 
 function rateLimitedLine(child: boolean, scope: "visitor" | "global"): string {
   if (scope === "global") return "I'm very busy right now - please try again in a moment.";
@@ -193,6 +198,7 @@ export async function POST(req: NextRequest) {
     message?: unknown;
     forgetSessionId?: unknown;
     audience?: unknown;
+    history?: unknown;
     turnstileToken?: unknown;
     humanToken?: unknown;
   } | null;
@@ -270,6 +276,11 @@ export async function POST(req: NextRequest) {
   }
   const humanExtra = "humanToken" in human && human.humanToken ? { humanToken: human.humanToken } : {};
 
+  // Memory without storage: the device sends the last few answered turns; they serve this one answer.
+  // The gate reads them together with the new message, so nothing can be smuggled in through them.
+  const history = sanitizeHistory(body?.history);
+  const gateText = gateTextFor(history, message);
+
   await ensureSeeded();
   const modelRows = await db.select().from(aiModels).where(eq(aiModels.id, modelId)).limit(1);
   const model = modelRows[0];
@@ -294,19 +305,23 @@ export async function POST(req: NextRequest) {
     const startedAt = performance.now();
     const result = await runLadder(text, {
       // 1. the core's gate screens every message before any model sees it
-      gate: brainIntrospect,
+      gate: () => brainIntrospect(gateText),
       // 2. Mistral via Ollama answers clean messages. The system prompt is the
       //    same for every request of a body (no tier, no context) so Ollama
       //    can reuse the cached prompt start.
       ollama: ollamaEnabled()
-        ? async (t) =>
-            (
-              await ollamaChat({
-                message: t,
-                body: bodyKind,
-                maxTokens: children ? CHILD_MAX_NEW_TOKENS : undefined,
-              })
-            ).reply
+        ? async (t) => {
+            // a language the model writes badly: say so (in that language) and answer in simple English
+            const weak = weakLanguage(t);
+            const turn = await ollamaChat({
+              message: weak ? t + ENGLISH_FALLBACK_HINT : t,
+              history,
+              body: bodyKind,
+              maxTokens: children ? CHILD_MAX_NEW_TOKENS : undefined,
+            });
+            const cut = turn.truncated ? (children ? CHILD_CUT_NOTE : CUT_NOTE) : "";
+            return `${weak ? WEAK_LANGUAGE_NOTE[weak] + "\n\n" : ""}${turn.reply}${cut}`;
+          }
         : null,
       // 3. deterministic core when Ollama fails or times out
       core: async (t) =>

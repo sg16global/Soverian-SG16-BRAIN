@@ -156,6 +156,12 @@ ask() {
     || echo "000 0" >"$WORK/$label.meta"
 }
 
+# ask_json <label> <json body> -> same as ask, for requests with extra fields
+ask_json() {
+  local label="$1"
+  curl -sS --max-time 150 -o "$WORK/$label.body" -w '%{http_code} %{time_total}'     -H 'Content-Type: application/json' -d "$2" "$BASE/api/brain" >"$WORK/$label.meta" 2>"$WORK/$label.err"     || echo "000 0" >"$WORK/$label.meta"
+}
+
 report() {
   local label="$1"
   python3 - "$WORK/$label.body" "$WORK/$label.meta" "$label" <<'PY'
@@ -181,6 +187,10 @@ echo
 echo "== requests =="
 ask clean "$CLEAN_MSG";    report clean
 ask blocked "$BLOCKED_MSG"; report blocked
+
+# follow-up memory (the device sends the earlier turns) and a language the model writes badly (Bengali)
+ask_json followup '{"modelId":"sg16-brain","message":"And can you say that again in five words?","history":[{"role":"user","content":"In one sentence, what is a sovereign AI?"},{"role":"assistant","content":"A sovereign AI is an assistant that runs on infrastructure its operator owns."}]}'; report followup
+ask_json bengali '{"modelId":"sg16-brain","message":"আমি একজন রিকশাচালক। কীভাবে শুরু করব?"}'; report bengali
 
 echo
 echo "== busy guard: 4 simultaneous requests (1 active + 2 queued + 1 over the limit) =="

@@ -23,7 +23,7 @@
 //   SG16_OLLAMA_MODEL=mistral
 // ===================================================================
 
-import { distillCharter, type CharterBody } from "./charter-prompt";
+import { distillCharter, type CharterBody } from "./charter-prompt.ts";
 
 export type OllamaTurn = {
   /** the model that actually answered (daemon-reported) */
@@ -34,6 +34,8 @@ export type OllamaTurn = {
   latencyMs: number;
   /** always "ollama" — the platform reports the real runtime, never a guess */
   source: "ollama";
+  /** true when the answer was cut (time budget or token cap) rather than finished by the model */
+  truncated: boolean;
 };
 
 export type OllamaHealth = {
@@ -47,13 +49,14 @@ export type OllamaHealth = {
 export type OllamaBridgeKind = "unreachable" | "http-error" | "bad-payload" | "timeout";
 
 export class OllamaBridgeError extends Error {
-  constructor(
-    public kind: OllamaBridgeKind,
-    message: string,
-    public status?: number,
-  ) {
+  kind: OllamaBridgeKind;
+  status?: number;
+
+  constructor(kind: OllamaBridgeKind, message: string, status?: number) {
     super(message);
     this.name = "OllamaBridgeError";
+    this.kind = kind;
+    this.status = status;
   }
 }
 
@@ -61,6 +64,9 @@ const DEFAULT_OLLAMA_URL = "http://127.0.0.1:11434";
 const DEFAULT_OLLAMA_MODEL = "mistral";
 const DEFAULT_TIMEOUT_MS = 45_000;
 const MAX_TURNS = 12;
+const DEFAULT_MAX_TOKENS = 600;
+/** a cut-off answer shorter than this is not worth showing: fall back instead */
+const MIN_PARTIAL_CHARS = 120;
 
 /** Loopback default; overridable by the operator only. */
 function ollamaBaseUrl(): string {
@@ -69,6 +75,12 @@ function ollamaBaseUrl(): string {
 
 export function ollamaModel(): string {
   return process.env.SG16_OLLAMA_MODEL?.trim() || DEFAULT_OLLAMA_MODEL;
+}
+
+/** Hard cap on generated tokens per answer (children get a smaller one from the caller). */
+export function ollamaMaxTokens(): number {
+  const parsed = Number(process.env.SG16_OLLAMA_MAX_TOKENS);
+  return Number.isInteger(parsed) && parsed >= 50 && parsed <= 4000 ? parsed : DEFAULT_MAX_TOKENS;
 }
 
 export function ollamaTimeoutMs(): number {
@@ -101,15 +113,31 @@ type OllamaChatChunk = {
   error?: string;
 };
 
+/** Cut at the last sentence end when that keeps most of the text; otherwise at the last word. */
+export function trimToSentence(text: string): string {
+  const clean = text.trimEnd();
+  const stops = [". ", "! ", "? ", "\n", "\u3002", "\u0964 "].map((m) => clean.lastIndexOf(m));
+  const end = Math.max(...stops);
+  if (end > clean.length * 0.5) return clean.slice(0, end + 1).trimEnd();
+  return clean.replace(/\s+\S*$/, "");
+}
+
 /**
- * One turn through the heart-bridge: charter preamble + history + message,
- * streamed off the daemon and returned whole. Throws OllamaBridgeError so the
- * caller can degrade honestly instead of guessing.
+ * One turn through the heart-bridge: charter preamble + history + message, STREAMED off the daemon.
+ *
+ * Streaming matters twice over. A long answer on this hardware takes about a minute, so when the time
+ * budget (SG16_OLLAMA_TIMEOUT_MS) runs out we return what has been written so far instead of throwing
+ * the whole answer away; and closing the stream tells Ollama to stop generating instead of burning the
+ * model on an answer nobody will read. Throws OllamaBridgeError so the caller can degrade honestly.
  */
 export async function ollamaChat(input: OllamaTurnInput): Promise<OllamaTurn> {
   const started = Date.now();
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), ollamaTimeoutMs());
+  let timedOut = false;
+  const timer = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, ollamaTimeoutMs());
 
   const body: CharterBody = input.body ?? "flagship";
   const system = distillCharter(body, {
@@ -127,19 +155,22 @@ export async function ollamaChat(input: OllamaTurnInput): Promise<OllamaTurn> {
     { role: "user", content: input.message },
   ];
 
+  let text = "";
+  let modelName: string | undefined;
+  let finished = false;
+  let hitTokenCap = false;
+
   try {
     const res = await fetch(`${ollamaBaseUrl()}/api/chat`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      // stream:false keeps the bridge a single awaited transaction, exactly
-      // like the sovereign core's /api/ingest contract.
       body: JSON.stringify({
         model: ollamaModel(),
         messages,
-        stream: false,
+        stream: true,
         options: {
           temperature: body === "children" ? 0.4 : 0.7,
-          ...(input.maxTokens ? { num_predict: input.maxTokens } : {}),
+          num_predict: input.maxTokens ?? ollamaMaxTokens(),
         },
       }),
       signal: controller.signal,
@@ -148,39 +179,81 @@ export async function ollamaChat(input: OllamaTurnInput): Promise<OllamaTurn> {
 
     if (!res.ok) {
       // read a bounded slice for the operator error, never the whole body
-      const text = await res.text().catch(() => "");
+      const errText = await res.text().catch(() => "");
       throw new OllamaBridgeError(
         "http-error",
-        `heart-bridge answered ${res.status}${text ? `: ${text.slice(0, 200)}` : ""}`,
+        `heart-bridge answered ${res.status}${errText ? `: ${errText.slice(0, 200)}` : ""}`,
         res.status,
       );
     }
+    if (!res.body) throw new OllamaBridgeError("bad-payload", "heart-bridge sent no body");
 
-    const data = (await res.json()) as OllamaChatChunk;
-    const reply = data.message?.content?.trim();
-    if (!reply) {
-      throw new OllamaBridgeError(
-        "bad-payload",
-        data.error ? `heart-bridge error: ${data.error.slice(0, 200)}` : "heart-bridge returned an empty reply",
-      );
-    }
-
-    return {
-      model: data.model ?? ollamaModel(),
-      reply,
-      latencyMs: Date.now() - started,
-      source: "ollama",
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let pending = "";
+    const take = (line: string) => {
+      let chunk: OllamaChatChunk;
+      try {
+        chunk = JSON.parse(line) as OllamaChatChunk;
+      } catch {
+        throw new OllamaBridgeError("bad-payload", "heart-bridge sent an unreadable chunk");
+      }
+      if (chunk.error) throw new OllamaBridgeError("bad-payload", `heart-bridge error: ${String(chunk.error).slice(0, 200)}`);
+      text += chunk.message?.content ?? "";
+      modelName ??= chunk.model;
+      if (chunk.done) {
+        finished = true;
+        hitTokenCap = (chunk as { done_reason?: string }).done_reason === "length";
+      }
     };
+    try {
+      while (!finished) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        pending += decoder.decode(value, { stream: true });
+        let nl = pending.indexOf("\n");
+        while (nl >= 0 && !finished) {
+          const line = pending.slice(0, nl).trim();
+          pending = pending.slice(nl + 1);
+          if (line) take(line);
+          nl = pending.indexOf("\n");
+        }
+      }
+      if (!finished && pending.trim()) take(pending.trim());
+    } finally {
+      // closing the stream tells Ollama to stop generating
+      reader.cancel().catch(() => undefined);
+    }
   } catch (err) {
     if (err instanceof OllamaBridgeError) throw err;
-    const aborted = err instanceof Error && err.name === "AbortError";
-    throw new OllamaBridgeError(
-      aborted ? "timeout" : "unreachable",
-      aborted ? "heart-bridge timed out" : "heart-bridge is unreachable",
-    );
+    const aborted = timedOut || (err instanceof Error && err.name === "AbortError");
+    if (!aborted || text.trim().length < MIN_PARTIAL_CHARS) {
+      throw new OllamaBridgeError(
+        aborted ? "timeout" : "unreachable",
+        aborted ? "heart-bridge timed out" : "heart-bridge is unreachable",
+      );
+    }
+    // out of time but most of an answer exists: keep it, honestly cut
+    return {
+      model: modelName ?? ollamaModel(),
+      reply: `${trimToSentence(text)} \u2026`,
+      latencyMs: Date.now() - started,
+      source: "ollama",
+      truncated: true,
+    };
   } finally {
     clearTimeout(timer);
   }
+
+  const reply = text.trim();
+  if (!reply) throw new OllamaBridgeError("bad-payload", "heart-bridge returned an empty reply");
+  return {
+    model: modelName ?? ollamaModel(),
+    reply: hitTokenCap ? `${trimToSentence(reply)} \u2026` : reply,
+    latencyMs: Date.now() - started,
+    source: "ollama",
+    truncated: hitTokenCap,
+  };
 }
 
 /** Readiness probe (GET /api/tags) — cheap, also lists pulled models. */
