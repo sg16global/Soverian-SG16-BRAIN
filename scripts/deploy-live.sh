@@ -229,7 +229,9 @@ git_step() {
     [ "$before" != "$after" ] && STASHED=1
     say "server edits stashed (recover with: git -C $APP stash list)"
   fi
-  G fetch origin >>"$LOG" 2>&1 || return 1
+  # Name the branch explicitly: the server's clone was made single-branch (and shallow), so a plain
+  # `git fetch origin` only updates main and never creates origin/$BRANCH.
+  G fetch origin "+refs/heads/$BRANCH:refs/remotes/origin/$BRANCH" >>"$LOG" 2>&1 || return 1
   G rev-parse -q --verify "refs/remotes/origin/$BRANCH" >/dev/null || { warn "origin/$BRANCH not found"; return 1; }
   # an untracked file that the new branch also tracks would be overwritten: stop instead
   local clash
@@ -239,7 +241,10 @@ git_step() {
   if G show-ref --verify -q "refs/heads/$BRANCH"; then
     G checkout "$BRANCH" >>"$LOG" 2>&1 || return 1
   else
-    G checkout -b "$BRANCH" --track "origin/$BRANCH" >>"$LOG" 2>&1 || return 1
+    # no --track: on a single-branch clone git refuses to treat origin/$BRANCH as trackable
+    G checkout -b "$BRANCH" "origin/$BRANCH" >>"$LOG" 2>&1 || return 1
+    G config "branch.$BRANCH.remote" origin >>"$LOG" 2>&1
+    G config "branch.$BRANCH.merge" "refs/heads/$BRANCH" >>"$LOG" 2>&1
   fi
   G pull --ff-only origin "$BRANCH" >>"$LOG" 2>&1 || return 1
   say "now on $BRANCH @ $(G rev-parse --short HEAD)"

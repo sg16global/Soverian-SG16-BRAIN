@@ -113,8 +113,10 @@ FIXES_SHA="$("$REAL_GIT" -C "$REMOTE" rev-parse fixes)"
 fixture() {
   rm -rf "$APPD" "$BK" "$UNITS" "$CADDY" "$T/"*.log "$T/building"
   mkdir -p "$(dirname "$APPD")" "$UNITS"
-  "$REAL_GIT" clone -q "$REMOTE" "$APPD" 2>/dev/null
-  "$REAL_GIT" -C "$APPD" checkout -q main
+  # like the live server's clone: shallow and single-branch, so origin/fixes does not exist until fetched by name
+  if ! "$REAL_GIT" clone -q --depth 1 --single-branch --branch main "file://$REMOTE" "$APPD" 2>/dev/null; then
+    "$REAL_GIT" clone -q --single-branch --branch main "$REMOTE" "$APPD" 2>/dev/null
+  fi
   echo '{"dodo":"edited-on-server"}' >"$APPD/config/brain.json"        # uncommitted tracked edit
   printf 'SG16_IDENTITY_SECRET=orig-identity\nSG16_OLLAMA_URL=http://127.0.0.1:11434' >"$APPD/.env"  # no trailing newline
   chmod 600 "$APPD/.env"
