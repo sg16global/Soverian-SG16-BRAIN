@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db, persistenceMode } from "@/db";
 import { sql } from "drizzle-orm";
-import { resolveAccount } from "@/lib/account-auth";
 import { isAdminRequest } from "@/lib/admin-gate";
 import { brainHealth } from "@/lib/brain-gateway";
 import { ollamaHealth } from "@/lib/ollama-brain";
@@ -12,16 +11,16 @@ export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 // GET /api/admin — sovereign operator dashboard data.
-// Requires a verified account bearer token. No secrets are ever returned.
+// Requires the signed operator token. No secrets are ever returned.
 // If SG16_OWNER_SECRET is configured, the presence of X-SG16-Owner-Sig is
 // reported as owner: true/false, but the secret itself is never echoed.
 export async function GET(req: NextRequest) {
-  const account = await resolveAccount(req);
-  if (!account) {
-    return NextResponse.json({ error: "Sign in with a verified email to access admin data." }, { status: 401 });
-  }
   if (!(await isAdminRequest(req))) {
-    return NextResponse.json({ error: "This account is not an operator." }, { status: 403 });
+    const signedIn = Boolean(req.headers.get("authorization"));
+    return NextResponse.json(
+      { error: signedIn ? "This account is not an operator." : "Operator sign-in required." },
+      { status: signedIn ? 403 : 401 },
+    );
   }
 
   let database = false;
@@ -53,12 +52,6 @@ export async function GET(req: NextRequest) {
   return NextResponse.json({
     ok: database,
     admin: {
-      user: {
-        id: account.user.id,
-        email: account.user.email,
-        handle: account.user.handle,
-        role: account.user.role,
-      },
       owner: { configured: ownerConfigured, presented: Boolean(ownerSig), matched: owner },
       system: {
         database,

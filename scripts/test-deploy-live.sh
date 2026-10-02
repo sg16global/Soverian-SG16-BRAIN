@@ -121,7 +121,7 @@ fixture() {
     "$REAL_GIT" clone -q --single-branch --branch main "$REMOTE" "$APPD" 2>/dev/null
   fi
   echo '{"dodo":"edited-on-server"}' >"$APPD/config/brain.json"        # uncommitted tracked edit
-  printf 'SG16_IDENTITY_SECRET=orig-identity\nSG16_OLLAMA_URL=http://127.0.0.1:11434' >"$APPD/.env"  # no trailing newline
+  printf 'SG16_IDENTITY_SECRET=orig-identity-secret-0123456789abcdef0123456789\nSG16_OLLAMA_URL=http://127.0.0.1:11434' >"$APPD/.env"  # no trailing newline
   chmod 600 "$APPD/.env"
   mkdir -p "$APPD/.venv/bin" "$APPD/state" "$APPD/pointoni/node_modules" "$APPD/pointoni/.next"
   echo py >"$APPD/.venv/bin/python"; echo '{"passes":{"tok":1}}' >"$APPD/state/billing_state.json"
@@ -173,7 +173,7 @@ check "deploy succeeds" '[ $RC = 0 ] && grep -q "DEPLOY OK" "$T/out"'
 check "now on fixes at the remote commit" '[ "$(branch)" = fixes ] && [ "$("$REAL_GIT" -C "$APPD" rev-parse HEAD)" = "$FIXES_SHA" ]'
 check "server edit was stashed, not discarded" '[ "$("$REAL_GIT" -C "$APPD" stash list | wc -l)" = 1 ] && "$REAL_GIT" -C "$APPD" stash show -p | grep -q edited-on-server'
 check "untracked .venv, state/, stage-bg.jpg untouched" '[ "$(md5sum <"$APPD/state/billing_state.json")" = "$H_STATE" ] && [ -f "$APPD/stage-bg.jpg" ] && [ -f "$APPD/.venv/bin/python" ]'
-check ".env keeps its original lines and gains the secrets and defaults" 'grep -q "^SG16_IDENTITY_SECRET=orig-identity$" "$APPD/.env" && grep -q "^SG16_OLLAMA_URL=http://127.0.0.1:11434$" "$APPD/.env" && grep -Eq "^SG16_PROXY_AUTH_SECRET=.{32,}" "$APPD/.env" && grep -Eq "^SG16_BILLING_SECRET=.{32,}" "$APPD/.env" && grep -q "^SG16_ANSWER_QUEUE_WAIT_MS=30000$" "$APPD/.env" && grep -q "^SG16_OLLAMA_TIMEOUT_MS=60000$" "$APPD/.env"'
+check ".env keeps its original lines and gains the secrets and defaults" 'grep -q "^SG16_IDENTITY_SECRET=orig-identity-secret-0123456789abcdef0123456789$" "$APPD/.env" && grep -q "^SG16_OLLAMA_URL=http://127.0.0.1:11434$" "$APPD/.env" && grep -Eq "^SG16_PROXY_AUTH_SECRET=.{32,}" "$APPD/.env" && grep -Eq "^SG16_BILLING_SECRET=.{32,}" "$APPD/.env" && grep -q "^SG16_ANSWER_QUEUE_WAIT_MS=30000$" "$APPD/.env" && grep -q "^SG16_OLLAMA_TIMEOUT_MS=60000$" "$APPD/.env"'
 [ $POSIX_MODES = 1 ] && check ".env stays mode 600" '[ "$(stat -c %a "$APPD/.env")" = 600 ]'
 check "no secret value was printed" '! secret_in_output'
 PROXY="$(grep '^SG16_PROXY_AUTH_SECRET=' "$APPD/.env" | cut -d= -f2-)"
@@ -228,7 +228,7 @@ check "a secret echoed by a failing caddy is redacted from the output" '! secret
 
 # 8 secrets and defaults already present: nothing generated or appended -------------------------
 fixture
-printf '\nSG16_PROXY_AUTH_SECRET=%s\nSG16_BILLING_SECRET=%s\nSG16_ANSWER_QUEUE_WAIT_MS=5000\nSG16_OLLAMA_TIMEOUT_MS=45000\n' "$(printf 'p%.0s' $(seq 40))" "$(printf 'b%.0s' $(seq 40))" >>"$APPD/.env"
+printf '\nSG16_PROXY_AUTH_SECRET=%s\nSG16_BILLING_SECRET=%s\nSG16_PROJECT_KEY_SECRET=%s\nSG16_ANSWER_QUEUE_WAIT_MS=5000\nSG16_OLLAMA_TIMEOUT_MS=45000\n' "$(printf 'p%.0s' $(seq 40))" "$(printf 'b%.0s' $(seq 40))" "$(printf 'k%.0s' $(seq 40))" >>"$APPD/.env"
 H2="$(md5sum <"$APPD/.env")"
 run_deploy --snapshot-done
 check "existing secrets and settings are left alone (no openssl call, .env unchanged)" '[ $RC = 0 ] && [ ! -s "$T/openssl.log" ] && [ "$(md5sum <"$APPD/.env")" = "$H2" ]'
@@ -246,6 +246,24 @@ SG16_ADMIN_EMAILS=kept@example.com
 ' >>"$APPD/.env"
 SG16_DEPLOY_ADMIN_EMAILS=other@example.com run_deploy --snapshot-done
 check "an existing SG16_ADMIN_EMAILS is never overwritten" '[ $RC = 0 ] && grep -q "^SG16_ADMIN_EMAILS=kept@example.com$" "$APPD/.env" && ! grep -q "other@example.com" "$APPD/.env"'
+
+# 8c the other secrets: generated when missing, never printed; a too-short identity secret fails safely --------
+fixture
+run_deploy --snapshot-done
+check "project-key and identity secrets are generated when missing (values hidden)" '[ $RC = 0 ] && grep -Eq "^SG16_PROJECT_KEY_SECRET=.{32,}" "$APPD/.env" && grep -Eq "^SG16_IDENTITY_SECRET=.{32,}" "$APPD/.env" && ! secret_in_output'
+check "the deploy tells the operator how to set the admin password when it is missing" 'grep -q "scripts/admin-password.mjs" "$T/out"'
+fixture
+printf '
+SG16_IDENTITY_SECRET=too-short
+' >>"$APPD/.env"
+run_deploy --snapshot-done
+check "a too-short identity secret fails before restart and rolls back" '[ $RC = 1 ] && grep -qx "ROLLED BACK" "$T/out" && [ "$(branch)" = main ]'
+fixture
+printf '
+SG16_ADMIN_PASSWORD_HASH=scrypt:1:2:3:a:b
+' >>"$APPD/.env"
+run_deploy --snapshot-done
+check "no warning about the admin password when it is set" '[ $RC = 0 ] && ! grep -q "scripts/admin-password.mjs" "$T/out"'
 
 # 9 a billing secret too short for the core to accept is caught before restart -------------------------
 fixture

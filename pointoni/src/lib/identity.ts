@@ -14,6 +14,7 @@ import { and, eq } from "drizzle-orm";
 import { PASSES, type PassId } from "@/lib/billing";
 import { brainVerifyPass } from "@/lib/brain-gateway";
 import { clientIdentity } from "@/lib/rate-limit";
+import { projectFromHeaders } from "@/lib/project-keys";
 
 const CODE_TTL_MS = 10 * 60_000;
 const TOKEN_TTL_MS = 30 * 24 * 3600_000;
@@ -324,6 +325,19 @@ export async function resolveTier(req: Request): Promise<{
   /** host-verified pass token when the request proved one via X-SG16-Pass */
   passToken: string | null;
 }> {
+  // The operator's own projects: a signed project key is free and unlimited (see project-keys.ts).
+  const project = projectFromHeaders(req.headers);
+  if (project) {
+    const ceiling = Number(process.env.SG16_PROJECT_HOURLY);
+    return {
+      tier: "work",
+      email: null,
+      bucketKey: `project:${project.project}`,
+      limit: Number.isInteger(ceiling) && ceiling > 0 ? ceiling : 100_000,
+      passToken: null,
+    };
+  }
+
   const authorization = req.headers.get("authorization") ?? "";
   const match = /^Bearer\s+([^\s]+)$/i.exec(authorization);
   if (match && match[1].length <= 512) {

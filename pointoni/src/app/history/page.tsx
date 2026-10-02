@@ -6,6 +6,7 @@ import { Trash2, MessageSquareText, SquarePen, Download, Upload, FolderOpen, Shi
 import { SiteChrome } from "@/components/chrome/SiteChrome";
 import { PageHeader } from "@/components/PageHeader";
 import { Panel } from "@/components/ui/Panel";
+import { CapsuleCenter } from "@/components/CapsuleCenter";
 import {
   buildExport,
   deviceVault,
@@ -233,6 +234,8 @@ export default function HistoryPage() {
             </li>
           ))}
         </ul>
+
+        <CapsuleCenter />
       </div>
     </SiteChrome>
   );

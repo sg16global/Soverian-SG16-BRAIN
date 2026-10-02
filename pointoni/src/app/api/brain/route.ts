@@ -18,6 +18,7 @@ import {
 import { ollamaChat, ollamaEnabled, ollamaHealth, ollamaTimeoutMs } from "@/lib/ollama-brain";
 import { clientIdentity, sharedRateLimiter } from "@/lib/rate-limit";
 import { isAdminRequest } from "@/lib/admin-gate";
+import { projectFromHeaders } from "@/lib/project-keys";
 import { checkHuman, sharedHumanDeps, turnstileAppliesTo, turnstileEnabled, turnstileSiteKey } from "@/lib/turnstile";
 import { CHILD_MAX_NEW_TOKENS, childHooks } from "@/lib/child-safety";
 import { BUSY_TEXT, answerDeadlineMs, answerMetrics, lastAnswer, queueWaitMs, recordAnswer, runLadder, sharedLimiter, type Engine } from "@/lib/answer-ladder";
@@ -168,7 +169,10 @@ export async function POST(req: NextRequest) {
   // Per-visitor limit, before any body parsing or database work. The visitor key
   // is a salted hash held in memory only; nothing about the visitor is stored or
   // logged. Over the limit is a friendly 429, never an error page.
-  const decision = sharedRateLimiter().check(clientIdentity(req.headers));
+  // The operator's own projects (signed project key) are not visitors: no per-visitor limit and no
+  // human check. They still queue for the single model like everyone else.
+  const fromProject = projectFromHeaders(req.headers) !== null;
+  const decision = fromProject ? ({ ok: true } as const) : sharedRateLimiter().check(clientIdentity(req.headers));
   if (!decision.ok) {
     recordAnswer("rate-limited");
     return withChildrenCors(
@@ -253,7 +257,7 @@ export async function POST(req: NextRequest) {
   // the rate limiter if Cloudflare cannot be reached.
   // The children's edition promises no third-party scripts, so it is only
   // challenged if the operator opts in with TURNSTILE_ON_CHILDREN=1.
-  const human = turnstileAppliesTo(children)
+  const human = turnstileAppliesTo(children) && !fromProject
     ? await checkHuman(
         { turnstileToken: body?.turnstileToken, humanToken: body?.humanToken },
         sharedHumanDeps(),

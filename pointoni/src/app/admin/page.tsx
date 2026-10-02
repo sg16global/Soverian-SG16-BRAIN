@@ -14,7 +14,6 @@ import {
   Users,
   Crown,
   Settings,
-  BarChart3,
   CheckCircle2,
   AlertTriangle,
   Server,
@@ -65,13 +64,6 @@ type Billing = {
   gateway?: { provider: string; mode: string };
 };
 
-type AdminStats = {
-  sessions: number;
-  files: number;
-  tokens: number;
-  devices: number;
-};
-
 function StatCard({
   icon: Icon,
   label,
@@ -109,14 +101,94 @@ function StatCard({
   );
 }
 
+// Project keys: how the operator's other projects use the Brain. A key is signed on the spot and
+// shown once; the server stores nothing, so the keys survive every restart.
+function ProjectsPanel() {
+  const [name, setName] = useState("");
+  const [created, setCreated] = useState<{ project: string; key: string } | null>(null);
+  const [info, setInfo] = useState<{ configured: boolean; revoked: string[] } | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
+
+  useEffect(() => {
+    let alive = true;
+    fetch("/api/admin/project-keys", { headers: identityHeaders(), cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => alive && d && setInfo(d))
+      .catch(() => undefined);
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  async function create() {
+    setError(null);
+    setCreated(null);
+    setCopied(false);
+    const res = await fetch("/api/admin/project-keys", {
+      method: "POST",
+      headers: identityHeaders({ "Content-Type": "application/json" }),
+      body: JSON.stringify({ project: name }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) return setError(data.error || "Could not create the key.");
+    setCreated({ project: data.project, key: data.key });
+  }
+
+  const origin = typeof window === "undefined" ? "https://your-brain" : window.location.origin;
+  return (
+    <Panel className="p-5">
+      <h3 className="flex items-center gap-2 font-display text-[13px] font-black tracking-widest text-white">
+        <KeyRound className="h-4 w-4 text-amber-300" /> PROJECT KEYS
+      </h3>
+      <p className="mt-2 font-mono2 text-[10px] leading-relaxed tracking-wider text-slate-400">
+        Connect your own projects to the Brain. Keys are free and unlimited, signed on the spot and never stored.
+      </p>
+      {info && !info.configured && (
+        <p className="mt-3 rounded-lg border border-amber-400/30 bg-amber-500/10 p-2.5 font-mono2 text-[10px] text-amber-200">
+          SG16_PROJECT_KEY_SECRET is not set on the server, so keys cannot be made yet.
+        </p>
+      )}
+      <div className="mt-3 flex gap-2">
+        <input
+          value={name}
+          onChange={(e) => setName(e.target.value.toLowerCase())}
+          placeholder="project name, e.g. my-shop"
+          className="input-dark h-10 min-w-0 flex-1 px-3 text-[13px]"
+        />
+        <button onClick={() => void create()} disabled={!name || info?.configured === false} className="btn-red px-4 text-[10px] disabled:opacity-50">
+          CREATE KEY
+        </button>
+      </div>
+      {error && <p className="mt-2 text-[12px] text-red-300">{error}</p>}
+      {created && (
+        <div className="mt-3 rounded-lg border border-emerald-400/30 bg-emerald-500/10 p-3">
+          <p className="font-mono2 text-[10px] tracking-widest text-emerald-300">KEY FOR {created.project.toUpperCase()} · SHOWN ONCE · COPY IT NOW</p>
+          <code className="mt-2 block break-all font-mono2 text-[11px] text-white">{created.key}</code>
+          <button
+            onClick={() => navigator.clipboard?.writeText(created.key).then(() => setCopied(true))}
+            className="btn-ghost mt-2 px-3 py-1.5 text-[10px]"
+          >
+            {copied ? "COPIED" : "COPY"}
+          </button>
+          <pre className="mt-3 overflow-x-auto rounded bg-black/50 p-2 font-mono2 text-[10px] text-cyan-100">{`curl -X POST ${origin}/api/brain \
+  -H "Authorization: Bearer <the key>" -H "Content-Type: application/json" \
+  -d '{"message":"Hello"}'`}</pre>
+        </div>
+      )}
+      <p className="mt-3 font-mono2 text-[9px] leading-relaxed tracking-wider text-slate-500">
+        STOP ONE PROJECT: put its name in SG16_REVOKED_PROJECTS on the server{info && info.revoked.length ? ` (now: ${info.revoked.join(", ")})` : ""}. STOP ALL: change SG16_PROJECT_KEY_SECRET.
+      </p>
+    </Panel>
+  );
+}
+
 function AdminConsole() {
   const [health, setHealth] = useState<Health | null>(null);
   const [models, setModels] = useState<Model[]>([]);
   const [billing, setBilling] = useState<Billing | null>(null);
-  const [stats, setStats] = useState<AdminStats>({ sessions: 0, files: 0, tokens: 0, devices: 0 });
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
-  const [isAuthed, setIsAuthed] = useState(false);
 
   useEffect(() => {
     async function load() {
@@ -125,7 +197,7 @@ function AdminConsole() {
       try {
         const headers = identityHeaders();
 
-        // health is public, but we try with auth anyway
+        // the operator token unlocks the detail in /api/health
         const hRes = await fetch("/api/health", { cache: "no-store", headers });
         const hData = await hRes.json();
         if (hRes.ok) setHealth(hData);
@@ -138,36 +210,6 @@ function AdminConsole() {
         const bData = await bRes.json();
         if (bRes.ok) setBilling(bData.billing ?? bData);
 
-        // account-scoped stats — will 401 if not signed in, we handle gracefully
-        const results = await Promise.all([
-          fetch("/api/chat?sessions=1", { headers, cache: "no-store" })
-            .then((r) => r.json())
-            .catch(() => ({ sessions: [] })),
-          fetch("/api/files", { headers, cache: "no-store" })
-            .then((r) => r.json())
-            .catch(() => ({ files: [] })),
-          fetch("/api/tokens", { headers, cache: "no-store" })
-            .then((r) => r.json())
-            .catch(() => ({ tokens: [] })),
-          fetch("/api/devices", { headers, cache: "no-store" })
-            .then((r) => r.json())
-            .catch(() => ({ devices: [] })),
-          fetch("/api/profile", { headers, cache: "no-store" })
-            .then(async (r) => {
-              const j = await r.json();
-              return { ok: r.ok, data: j };
-            })
-            .catch(() => ({ ok: false, data: null })),
-        ]);
-
-        const [s, f, t, d, p] = results;
-        setIsAuthed(!!(p as any)?.ok);
-        setStats({
-          sessions: (s as any).sessions?.length ?? 0,
-          files: (f as any).files?.length ?? 0,
-          tokens: (t as any).tokens?.filter((x: { revoked: boolean }) => !x.revoked).length ?? 0,
-          devices: (d as any).devices?.length ?? 0,
-        });
       } catch (e) {
         setError(e instanceof Error ? e.message : "Failed to load admin console.");
       } finally {
@@ -181,7 +223,7 @@ function AdminConsole() {
     <SiteChrome>
       <PageHeader
         title="ADMIN CONSOLE"
-        subtitle="Sovereign operator dashboard — system health, charter law, models, billing, and live presence. Restricted to verified account holders."
+        subtitle="Sovereign operator dashboard — system health, charter law, models, billing and project keys. Operator only; no user data exists on this server."
       />
 
       <div className="mx-auto max-w-[1200px] space-y-6 px-3 py-8 sm:px-5">
@@ -203,7 +245,7 @@ function AdminConsole() {
               </p>
               <div className="mt-3 flex flex-wrap gap-2">
                 <span className="rounded-full border border-emerald-400/40 bg-emerald-500/10 px-3 py-1 font-mono2 text-[9px] tracking-widest text-emerald-300">
-                  ADMIN · {isAuthed ? "VERIFIED" : "GUEST VIEW"}
+                  ADMIN · OPERATOR SIGNED IN
                 </span>
                 <span className="rounded-full border border-cyan-400/40 bg-cyan-500/10 px-3 py-1 font-mono2 text-[9px] tracking-widest text-cyan-300">
                   BUILD · {health?.persistence ?? "checking"}
@@ -338,48 +380,7 @@ function AdminConsole() {
                 </div>
               </Panel>
 
-              <Panel className="p-5">
-                <h3 className="flex items-center gap-2 font-display text-[13px] font-black tracking-widest text-white">
-                  <BarChart3 className="h-4 w-4 text-amber-300" /> ACCOUNT LEDGER
-                </h3>
-                <div className="mt-4 grid grid-cols-2 gap-3">
-                  <div className="rounded-lg border border-cyan-400/20 bg-cyan-500/5 p-3 text-center">
-                    <p className="font-display text-2xl font-black text-white">{stats.sessions}</p>
-                    <p className="font-mono2 text-[9px] tracking-widest text-cyan-300">CONVERSATIONS</p>
-                  </div>
-                  <div className="rounded-lg border border-emerald-400/20 bg-emerald-500/5 p-3 text-center">
-                    <p className="font-display text-2xl font-black text-white">{stats.files}</p>
-                    <p className="font-mono2 text-[9px] tracking-widest text-emerald-300">FILES</p>
-                  </div>
-                  <div className="rounded-lg border border-amber-400/20 bg-amber-500/5 p-3 text-center">
-                    <p className="font-display text-2xl font-black text-white">{stats.tokens}</p>
-                    <p className="font-mono2 text-[9px] tracking-widest text-amber-300">API TOKENS</p>
-                  </div>
-                  <div className="rounded-lg border border-red-400/20 bg-red-500/5 p-3 text-center">
-                    <p className="font-display text-2xl font-black text-white">{stats.devices}</p>
-                    <p className="font-mono2 text-[9px] tracking-widest text-red-300">DEVICES</p>
-                  </div>
-                </div>
-                {!isAuthed && (
-                  <p className="mt-4 rounded-lg border border-amber-400/20 bg-amber-500/10 p-2.5 font-mono2 text-[10px] leading-relaxed text-amber-200">
-                    Sign in to see your own ledger. Guest view shows 0 for privacy — no other pilot&apos;s data is ever revealed.
-                  </p>
-                )}
-                <div className="mt-4 flex flex-wrap gap-2">
-                  <Link href="/history" className="btn-ghost px-3 py-1.5 text-[10px]">
-                    HISTORY
-                  </Link>
-                  <Link href="/files" className="btn-ghost px-3 py-1.5 text-[10px]">
-                    FILES
-                  </Link>
-                  <Link href="/api-access" className="btn-ghost px-3 py-1.5 text-[10px]">
-                    TOKENS
-                  </Link>
-                  <Link href="/devices" className="btn-ghost px-3 py-1.5 text-[10px]">
-                    DEVICES
-                  </Link>
-                </div>
-              </Panel>
+              <ProjectsPanel />
             </div>
           </>
         )}

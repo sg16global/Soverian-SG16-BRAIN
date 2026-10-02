@@ -31,7 +31,7 @@ test("the operator-only routes really call the server-side check", () => {
   for (const rel of ["app/api/admin/route.ts", "app/api/health/route.ts", "app/api/models/route.ts", "app/api/brain/route.ts"]) {
     assert.match(read(rel), /isAdminRequest\(/, `${rel} must check isAdminRequest`);
   }
-  assert.match(read("app/api/admin/route.ts"), /status: 403/);
+  assert.match(read("app/api/admin/route.ts"), /403/);
 });
 
 test("the public health answer carries no engine, model or counter detail", () => {

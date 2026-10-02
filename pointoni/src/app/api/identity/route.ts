@@ -1,3 +1,4 @@
+import { adminLogin } from "@/lib/admin-login";
 import { isAdminEmail } from "@/lib/admin-auth";
 import { NextRequest, NextResponse } from "next/server";
 import {
@@ -5,6 +6,7 @@ import {
   getIdentity,
   planActive,
   requestMagicCode,
+  signToken,
   verifyMagicCode,
   verifyToken,
 } from "@/lib/identity";
@@ -61,6 +63,13 @@ export async function POST(req: NextRequest) {
     }
     const action = String(body.action ?? "");
     const rateKey = networkKey(req);
+
+    // The operator signs in with email + password (no mail service, nothing stored).
+    if (action === "admin-login") {
+      const result = adminLogin({ email: body.email, password: body.password, networkKey: rateKey }, signToken);
+      if (!result.ok) return NextResponse.json({ ok: false, error: result.error }, { status: result.status });
+      return NextResponse.json({ ok: true, token: result.token, email: result.email, admin: true });
+    }
 
     if (action === "request") {
       const result = await requestMagicCode(String(body.email ?? ""), rateKey);
@@ -122,6 +131,10 @@ export async function POST(req: NextRequest) {
     if (action === "me") {
       const payload = verifyToken(bearer(req) ?? "");
       if (!payload) return NextResponse.json({ ok: false, error: "invalid token" }, { status: 401 });
+      // an operator is recognised from the signed token alone; no database row is needed
+      if (isAdminEmail(payload.email)) {
+        return NextResponse.json({ ok: true, email: payload.email.toLowerCase(), plan: null, tier: "work", admin: true });
+      }
       const identity = await getIdentity(payload.email);
       if (!identity) return NextResponse.json({ ok: false, error: "identity not found" }, { status: 401 });
       return NextResponse.json({

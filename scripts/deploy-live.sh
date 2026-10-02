@@ -272,7 +272,7 @@ append_env() { # <KEY> <VALUE> - the value is never printed
 env_step() {
   [ -f "$APP/.env" ] || { act "create $APP/.env (mode 600)" install -m 600 /dev/null "$APP/.env"; }
   local k
-  for k in SG16_PROXY_AUTH_SECRET SG16_BILLING_SECRET; do
+  for k in SG16_PROXY_AUTH_SECRET SG16_BILLING_SECRET SG16_PROJECT_KEY_SECRET SG16_IDENTITY_SECRET; do
     if has_key "$k"; then
       say "$k already set (value not shown)"
     else
@@ -291,6 +291,14 @@ env_step() {
     local bs; bs="$(grep -E '^SG16_BILLING_SECRET=' "$APP/.env" | tail -1 | cut -d= -f2-)"
     if [ -n "$bs" ] && [ "${#bs}" -lt 32 ]; then warn "SG16_BILLING_SECRET in .env is shorter than 32 characters; the core would refuse to start"; bs=""; return 1; fi
     bs=""
+    # the platform refuses to start if the identity secret is shorter than 32 bytes
+    local ids; ids="$(grep -E '^SG16_IDENTITY_SECRET=' "$APP/.env" | tail -1 | cut -d= -f2-)"
+    if [ -n "$ids" ] && [ "${#ids}" -lt 32 ]; then warn "SG16_IDENTITY_SECRET in .env is shorter than 32 characters; the platform would refuse to start"; ids=""; return 1; fi
+    ids=""
+  fi
+  # the operator password is typed by the operator, never generated or stored here
+  if ! has_key SG16_ADMIN_PASSWORD_HASH; then
+    warn "SG16_ADMIN_PASSWORD_HASH is not set: the admin console cannot be opened. On your own computer run: node scripts/admin-password.mjs  and add the line it prints to .env"
   fi
   # Operator emails: set from the environment of THIS run so the address is never stored in the
   # repository, e.g.  SG16_DEPLOY_ADMIN_EMAILS=you@example.com bash scripts/deploy-live.sh ...
