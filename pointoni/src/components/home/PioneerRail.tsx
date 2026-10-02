@@ -27,8 +27,12 @@ function Card({ p }: { p: Pioneer }) {
           // eslint-disable-next-line @next/next/no-img-element
           <img src={p.image} alt={p.name} width={180} height={180} draggable={false} />
         ) : (
-          <span aria-hidden className="pioneer-initials">
-            {initials(p.name)}
+          <span aria-hidden className="pioneer-silhouette">
+            <svg viewBox="0 0 100 100" className="h-full w-full">
+              <circle cx="50" cy="38" r="17" fill="currentColor" />
+              <path d="M16 100c0-22 15-36 34-36s34 14 34 36z" fill="currentColor" />
+            </svg>
+            <span className="pioneer-initials">{initials(p.name)}</span>
           </span>
         )}
       </div>
