@@ -254,6 +254,119 @@ class ConcurrencyTests(_TmpCase):
         self.assertEqual(set(json.loads(self.path.read_text("utf-8"))["passes"]), {"b"})
 
 
+class LegacyFormatTests(_TmpCase):
+    """The host's earlier persistence code wrote {passes, dodo_pending, dodo_seen_webhooks}. A loader
+    that rejected it would silently drop every issued pass on the next restart."""
+
+    def _record(self, token: str, pass_id: str = "day", ttl: int = 3600) -> dict:
+        return {"pass": pass_id, "token": token, "expires_at": int(time.time()) + ttl, "activated_at": int(time.time())}
+
+    def _legacy(self, **over) -> dict:
+        now = int(time.time())
+        tok = "a" * 64
+        base = {
+            "passes": {tok: self._record(tok)},
+            "dodo_pending": {
+                "ref-1": {"pass": "week", "session_id": "ref-1", "gateway_session_id": "gw-1", "status": "pending", "opened_at": now},
+                "gw-1": {"pass": "week", "session_id": "ref-1", "gateway_session_id": "gw-1", "status": "pending", "opened_at": now},
+            },
+            "dodo_seen_webhooks": ["msg_1"],
+        }
+        base.update(over)
+        return base
+
+    def _write(self, path: Path, data) -> bytes:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        raw = data if isinstance(data, bytes) else json.dumps(data).encode()
+        path.write_bytes(raw)
+        return raw
+
+    def test_old_format_main_file_is_converted_not_quarantined(self) -> None:
+        original = self._write(self.path, self._legacy())
+        with self.assertLogs("sg16.billing_state", level="WARNING"):
+            host = _Host(self.path)
+        self.addCleanup(host.stop)
+        s = host.server
+        self.assertIn("a" * 64, s.passes)
+        self.assertIn("msg_1", s.dodo_seen_webhooks)
+        self.assertIs(s.dodo_pending["ref-1"], s.dodo_pending["gw-1"])  # the saved copies become one shared checkout
+        self.assertEqual(self.path.with_name(self.path.name + ".legacy-backup").read_bytes(), original)
+        self.assertFalse(self.path.with_name(self.path.name + ".corrupt").exists())
+        rewritten = json.loads(self.path.read_text("utf-8"))  # saved in the current format right away
+        self.assertEqual(rewritten["version"], 1)
+        self.assertIn("a" * 64, rewritten["passes"])
+
+    def test_a_legacy_pass_still_verifies_after_the_restart(self) -> None:
+        from sg16 import billing
+
+        record = billing.issue_record("day", None, BILLING_SECRET)
+        self._write(self.path, {"passes": {record["token"]: record}, "dodo_pending": {}, "dodo_seen_webhooks": []})
+        with self.assertLogs("sg16.billing_state", level="WARNING"):
+            host = _Host(self.path)
+        self.addCleanup(host.stop)
+        status, raw = host.request("POST", "/api/pass/verify", {"token": record["token"]})
+        self.assertEqual(status, 200)
+        self.assertTrue(json.loads(raw)["valid"])
+
+    def test_expired_legacy_passes_are_pruned(self) -> None:
+        live, dead = "b" * 64, "c" * 64
+        self._write(self.path, self._legacy(passes={live: self._record(live), dead: self._record(dead, ttl=-10)}))
+        with self.assertLogs("sg16.billing_state", level="WARNING"):
+            loaded = BillingStateStore(self.path).load()
+        self.assertEqual(set(loaded["passes"]), {live})
+
+    def test_a_file_an_earlier_loader_moved_aside_is_recovered_once_and_left_untouched(self) -> None:
+        a, b = "a" * 64, "b" * 64
+        quarantined = self.path.with_name(self.path.name + ".corrupt")
+        original = self._write(quarantined, self._legacy(passes={a: self._record(a), b: self._record(b)}))
+        self.assertFalse(self.path.exists())
+
+        with self.assertLogs("sg16.billing_state", level="WARNING") as logs:
+            first = _Host(self.path)
+        self.assertTrue(any("recovered old-format billing data" in m for m in logs.output))
+        self.assertEqual(set(first.server.passes), {a, b})
+        self.assertTrue(json.loads(self.path.read_text("utf-8"))["legacy_merged"])  # recorded, so it runs only once
+        self.assertEqual(quarantined.read_bytes(), original)  # the original is never modified or deleted
+        # an operator-visible change after recovery: one pass is removed (e.g. it failed verification)
+        with first.server.dodo_lock:
+            first.server.passes.pop(b)
+        first.server.persist_billing()
+        first.stop()
+
+        second = _Host(self.path)
+        self.addCleanup(second.stop)
+        self.assertEqual(set(second.server.passes), {a})  # b is NOT resurrected from the old file
+        self.assertEqual(quarantined.read_bytes(), original)
+
+    def test_recovery_never_overrides_newer_state(self) -> None:
+        shared, only_old = "d" * 64, "e" * 64
+        store = BillingStateStore(self.path)
+        newer = {"pass": "week", "token": shared, "expires_at": int(time.time()) + 7200}
+        seq, text = store.snapshot({shared: newer}, {}, {})
+        store.write(seq, text)
+        self._write(
+            self.path.with_name(self.path.name + ".corrupt"),
+            self._legacy(passes={shared: self._record(shared, "day"), only_old: self._record(only_old)}),
+        )
+        with self.assertLogs("sg16.billing_state", level="WARNING"):
+            loaded = BillingStateStore(self.path).load()
+        self.assertEqual(loaded["passes"][shared]["pass"], "week")  # the current file wins
+        self.assertIn(only_old, loaded["passes"])  # what only the old file had is added
+
+    def test_a_genuinely_corrupt_quarantined_file_is_ignored(self) -> None:
+        self._write(self.path.with_name(self.path.name + ".corrupt"), b'{"passes": {"x": ')
+        store = BillingStateStore(self.path)
+        loaded = store.load()
+        self.assertEqual(loaded["passes"], {})
+        self.assertFalse(store.needs_save)
+
+    def test_unrelated_wrong_structure_is_still_quarantined_not_converted(self) -> None:
+        self._write(self.path, {"version": 99, "passes": {}})
+        with self.assertLogs("sg16.billing_state", level="ERROR"):
+            BillingStateStore(self.path).load()
+        self.assertTrue(self.path.with_name(self.path.name + ".corrupt").exists())
+
+
 class DodoUserAgentTests(unittest.TestCase):
     def test_gateway_requests_identify_the_host_honestly(self) -> None:
         from sg16.server.dodo import USER_AGENT, DodoClient

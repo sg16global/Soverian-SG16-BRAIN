@@ -139,6 +139,7 @@ class BrainHTTPServer(ThreadingHTTPServer):
         #: handler checks; the timestamps let load() forget old ids)
         self.dodo_seen_at: dict[str, int] = loaded["seen_webhooks"]
         self.dodo_seen_webhooks: set[str] = set(self.dodo_seen_at)
+        recovered_state = self.billing_store.needs_save
         if self.billing_secret_ephemeral and (self.passes or self.dodo_pending):
             log.warning(
                 "billing state was restored but SG16_BILLING_SECRET is not set: "
@@ -161,6 +162,8 @@ class BrainHTTPServer(ThreadingHTTPServer):
             max_chars=config.throttle_max_chars,
         )
         super().__init__(address, handler)
+        if recovered_state:
+            self.persist_billing()  # write recovered/converted data in the current format now
 
     def persist_billing(self) -> bool:
         """Write the billing state.  Call after every mutation, outside or
