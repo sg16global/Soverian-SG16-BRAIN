@@ -36,7 +36,7 @@ It takes a few minutes (npm ci + build). At the end it prints `DEPLOY OK`, or `R
 | 2 | `git stash` of the server's uncommitted edits to **tracked** files (kept, listed in `git stash list`), `git fetch`, `git checkout fixes`, `git pull --ff-only`. Untracked files (`.env`, `.venv`, `state/`, `stage-bg.jpg`) are never touched. If the branch would overwrite an untracked file it stops instead | rollback |
 | 3 | `.env`: adds `SG16_PROXY_AUTH_SECRET` and `SG16_BILLING_SECRET` (random, via `openssl`) **only if missing**; adds `SG16_ANSWER_QUEUE_WAIT_MS=30000` and `SG16_OLLAMA_TIMEOUT_MS=60000` **only if unset**. Existing values are never changed. Secret values are never printed | rollback |
 | 4 | Caddyfile: adds `header_up CF-Connecting-IP {client_ip}` and `header_up X-SG16-Proxy-Auth <same secret as .env>` to the `reverse_proxy 127.0.0.1:3000` block, and (if the file has no global options block) Cloudflare's trusted ranges. It is installed only after `caddy validate` passes; if validation fails the Caddyfile is left as it was and the deploy continues (per-visitor rate limits then stay off) | continues, with a warning |
-| 5 | Moves the old `node_modules` and `.next` aside (`*.rollback`), then `npm ci --include=dev --ignore-scripts`, `npm run sync-onnx`, `npx next build` | rollback |
+| 5 | Moves the old `node_modules` and `.next` to `/opt/sg16/.deploy-rollback` (outside `pointoni/`, because TypeScript scans everything inside it), then `npm ci --include=dev --ignore-scripts`, `npm run sync-onnx`, `npx next build` | rollback |
 | 6 | Installs the `sg16-core`, `sg16-web` and `sg16-healthcheck` units. Your existing bind address, interpreter path and any extra `Environment=` lines in the old units are carried over | rollback |
 | 7 | Restarts `sg16-core`, waits for health, restarts `sg16-web`, waits for `/api/live` | rollback |
 | 8 | Verifies: core `:8080/api/health`, platform `:3000/api/live` and `/api/health`, **one real clean chat** (must be answered by ollama, core or the local guard) and **one dangerous message** (must be stopped by the gate, `core-gate`) | rollback |
@@ -63,7 +63,7 @@ the script does not edit them), or printing a secret.
   `SG16_OLLAMA_MODEL` in `/opt/sg16/.env`.
 - Your earlier server edits are in `git -C /opt/sg16 stash list` (not re-applied; the `fixes` branch already contains the
   ported billing/pass persistence). Delete the stash only when you are sure nothing in it is still needed.
-- Disk: `pointoni/node_modules.rollback` and `pointoni/.next.rollback` are kept until the next deploy removes them.
+- Disk: `/opt/sg16/.deploy-rollback` (old `node_modules` and `.next`) is kept until the next deploy removes it.
 
 ## If the script itself cannot finish a rollback
 

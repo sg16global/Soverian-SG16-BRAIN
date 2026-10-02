@@ -83,6 +83,7 @@ wait_for() { # <label> <url> <seconds>
 }
 
 # ---- rollback bookkeeping ----------------------------------------------------
+RB="$APP/.deploy-rollback"   # parked old node_modules/.next (outside pointoni/ on purpose)
 BK=""; PREV_BRANCH=""; PREV_SHA=""
 STASHED=0; GIT_MOVED=0; ENV_CHANGED=0; CADDY_CHANGED=0; UNITS_CHANGED=0
 NM_SWAPPED=0; NEXT_SWAPPED=0; RESTARTED=0; TIMER_ENABLED=0; ROLLING_BACK=0
@@ -139,12 +140,12 @@ rollback() {
       || { warn "stash pop failed; your edits are still safe in 'git stash list' (message: deploy-live $TS)"; ok=0; }
   fi
 
-  if [ "$NM_SWAPPED" = 1 ] && [ -d "$APP/pointoni/node_modules.rollback" ]; then
-    rm -rf "$APP/pointoni/node_modules" && mv "$APP/pointoni/node_modules.rollback" "$APP/pointoni/node_modules" \
+  if [ "$NM_SWAPPED" = 1 ] && [ -d "$RB/node_modules" ]; then
+    rm -rf "$APP/pointoni/node_modules" && mv "$RB/node_modules" "$APP/pointoni/node_modules" \
       && say "node_modules restored" || ok=0
   fi
-  if [ "$NEXT_SWAPPED" = 1 ] && [ -d "$APP/pointoni/.next.rollback" ]; then
-    rm -rf "$APP/pointoni/.next" && mv "$APP/pointoni/.next.rollback" "$APP/pointoni/.next" \
+  if [ "$NEXT_SWAPPED" = 1 ] && [ -d "$RB/.next" ]; then
+    rm -rf "$APP/pointoni/.next" && mv "$RB/.next" "$APP/pointoni/.next" \
       && say "previous build restored" || ok=0
   fi
 
@@ -216,6 +217,9 @@ backup() {
   mkdir -p -m 700 "$BACKUP_ROOT" || return 1
   mkdir -m 700 "$BK" "$BK/units" || return 1
   LOG="$BK/deploy.log"; : >"$LOG"; chmod 600 "$LOG"
+  # leftovers of a previous deploy (also the old in-pointoni location) must not be mistaken for
+  # this deploy's rollback copy, nor end up in the tar
+  rm -rf "$RB" "$APP/pointoni/node_modules.rollback" "$APP/pointoni/.next.rollback"
   tar czf "$BK/app.tgz" -C "$(dirname "$APP")" --exclude=node_modules --exclude=.venv "$(basename "$APP")" >>"$LOG" 2>&1 \
     || { warn "tar failed"; return 1; }
   chmod 600 "$BK/app.tgz"
@@ -224,8 +228,6 @@ backup() {
   [ -f "$CADDYFILE" ] && cp -p "$CADDYFILE" "$BK/Caddyfile"
   local u; for u in "$UNIT_DIR"/sg16-*.service "$UNIT_DIR"/sg16-*.timer; do [ -f "$u" ] && cp -p "$u" "$BK/units/"; done
   { echo "branch=${PREV_BRANCH:-}"; echo "sha=$PREV_SHA"; echo "time=$TS"; } >"$BK/git-state.txt"
-  # a stale leftover from a previous deploy would be mistaken for this deploy's rollback copy
-  rm -rf "$APP/pointoni/node_modules.rollback" "$APP/pointoni/.next.rollback"
   say "backup complete (app tar without node_modules/.venv, .env, state/, Caddyfile, units)"
 }
 
@@ -375,9 +377,12 @@ caddy_step() {
 # ---- 5. build --------------------------------------------------------------
 build_step() {
   local P="$APP/pointoni"
+  # The old copies are parked OUTSIDE pointoni/: tsconfig includes **/*.ts there, so a
+  # node_modules.rollback folder inside it is type-checked and blows the build's memory.
+  mkdir -p "$RB" || return 1
   NM_SWAPPED=1; NEXT_SWAPPED=1
-  [ -d "$P/node_modules" ] && mv "$P/node_modules" "$P/node_modules.rollback"
-  [ -d "$P/.next" ] && mv "$P/.next" "$P/.next.rollback"
+  [ -d "$P/node_modules" ] && mv "$P/node_modules" "$RB/node_modules"
+  [ -d "$P/.next" ] && mv "$P/.next" "$RB/.next"
   unset DATABASE_URL
   say "npm ci --include=dev (log: $LOG)"
   (cd "$P" && npm ci --include=dev --ignore-scripts --no-audit --no-fund) >>"$LOG" 2>&1 || return 1
@@ -577,7 +582,7 @@ if systemctl enable --now sg16-healthcheck.timer >>"$LOG" 2>&1; then TIMER_ENABL
 trap - INT TERM
 echo
 say "DEPLOY OK - $BRANCH @ $(G rev-parse --short HEAD)"
-say "backup:  $BK   (kept; the old build is in pointoni/node_modules.rollback and pointoni/.next.rollback until the next deploy)"
+say "backup:  $BK   (kept; the old build is parked in $RB until the next deploy)"
 [ -n "$CADDY_NOTE" ] && say "caddy:   $CADDY_NOTE"
 [ "$STASHED" = 1 ] && say "your earlier server edits to tracked files are saved in: git -C $APP stash list"
 exit 0
