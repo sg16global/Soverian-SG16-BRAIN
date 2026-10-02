@@ -19,13 +19,13 @@
 import { COMPANY } from "@/lib/company";
 
 const RAIL_ITEMS: readonly string[] = [
-  "ACCOUNT DATA STORAGE · SG16 POWERED · mistralbrain.com",
+  "NO USER DATA STORED · SG16 POWERED · mistralbrain.com",
   "ONE MIND · ONE PLANET · ONE SOVEREIGN BRAIN",
   "APACHE 2.0 · OPEN INTELLIGENCE · NO VENDOR LOCK-IN",
   "CHILDREN'S FRIEND · FREE IN VERIFIED HUMANITARIAN REGIONS · CHILD SHELL KEEPS NO SERVER PROFILE",
   "All proceeds collected from paying regions are pledged to children's causes through UNICEF- and UNESCO-aligned programmes.",
   "supporting children's education via UNICEF & UNESCO programmes",
-  "Q16.16 STRUCTURAL CORE · CONFIGURED GATEWAY PATH · YOUR DEVICE MAY CACHE LOCAL UI STATE",
+  "YOUR HISTORY AND FILES STAY ON YOUR DEVICE · NOTHING ABOUT YOU IS STORED HERE",
   COMPANY.legalLine,
 ];
 

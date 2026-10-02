@@ -95,6 +95,10 @@ if ! grep -q "\"$MODEL\"" <<<"$tags"; then
 fi
 echo "ok"
 
+# the test copy proves itself with a throwaway secret so it may see which engine answered
+# (the public API says only "sg16"); the core uses it to exempt the platform from its throttle
+export SG16_PROXY_AUTH_SECRET="$(head -c 16 /dev/urandom | od -An -tx1 | tr -d ' \n')"
+
 echo
 echo "== starting core on 127.0.0.1:$CORE_PORT =="
 start_service core "$ROOT" python3 scripts/serve.py 127.0.0.1 "$CORE_PORT"
@@ -152,14 +156,14 @@ ask() {
   local label="$1" msg="$2" payload
   payload="$(python3 -c 'import json,sys; print(json.dumps({"modelId":"sg16-brain","message":sys.argv[1]}))' "$msg")"
   curl -sS --max-time 150 -o "$WORK/$label.body" -w '%{http_code} %{time_total}' \
-    -H 'Content-Type: application/json' -d "$payload" "$BASE/api/brain" >"$WORK/$label.meta" 2>"$WORK/$label.err" \
+    -H 'Content-Type: application/json' -H "X-SG16-Proxy-Auth: $SG16_PROXY_AUTH_SECRET" -d "$payload" "$BASE/api/brain" >"$WORK/$label.meta" 2>"$WORK/$label.err" \
     || echo "000 0" >"$WORK/$label.meta"
 }
 
 # ask_json <label> <json body> -> same as ask, for requests with extra fields
 ask_json() {
   local label="$1"
-  curl -sS --max-time 150 -o "$WORK/$label.body" -w '%{http_code} %{time_total}'     -H 'Content-Type: application/json' -d "$2" "$BASE/api/brain" >"$WORK/$label.meta" 2>"$WORK/$label.err"     || echo "000 0" >"$WORK/$label.meta"
+  curl -sS --max-time 150 -o "$WORK/$label.body" -w '%{http_code} %{time_total}'     -H 'Content-Type: application/json' -H "X-SG16-Proxy-Auth: $SG16_PROXY_AUTH_SECRET" -d "$2" "$BASE/api/brain" >"$WORK/$label.meta" 2>"$WORK/$label.err"     || echo "000 0" >"$WORK/$label.meta"
 }
 
 report() {

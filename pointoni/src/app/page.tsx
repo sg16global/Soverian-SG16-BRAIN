@@ -1,7 +1,6 @@
 import { SiteChrome } from "@/components/chrome/SiteChrome";
 import { HeroStage } from "@/components/home/HeroStage";
 import { GlobalPresence } from "@/components/home/GlobalPresence";
-import { ModelGrid } from "@/components/home/ModelGrid";
 import { ChatPanel } from "@/components/home/ChatPanel";
 import { FinancialTicker } from "@/components/home/FinancialTicker";
 import { LocalFriendPanel } from "@/components/home/LocalFriendPanel";
@@ -21,7 +20,6 @@ export default function HomePage() {
       <HeroStage />
       <div className="mx-auto flex max-w-[1200px] flex-col gap-5 px-3 pb-12 sm:px-5">
         <GlobalPresence />
-        <ModelGrid />
 
         <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_350px]">
           <ChatPanel />

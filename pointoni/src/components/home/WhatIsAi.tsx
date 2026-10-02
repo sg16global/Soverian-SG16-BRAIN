@@ -64,7 +64,7 @@ export function WhatIsAi() {
             <p className="mt-3 max-w-xl text-[13.5px] leading-relaxed text-slate-300">
               Artificial Intelligence (AI) is technology designed to process information, recognize
               patterns, respond over data, and assist humans in solving problems. The Sovereign SG16
-              Brain runs a deterministic structural core on your own host — ownership, not dependency.
+              Brain runs on its own server — ownership, not dependency.
             </p>
             <Link
               href="/#history"

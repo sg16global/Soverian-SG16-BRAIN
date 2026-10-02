@@ -35,9 +35,9 @@ export default function VisionPage() {
             OWNERSHIP, NOT DEPENDENCY
           </h2>
           <p className="mx-auto mt-3 max-w-2xl text-[14px] leading-relaxed text-slate-300">
-            This reference stack is designed so operators can host the gateway path under their own
-            control. External providers such as Claude, GPT or Gemini are optional and only become live
-            when the operator configures credentials; this build does not claim those connections by default.
+            The Sovereign SG16 Brain runs on its own server, under its operator&apos;s control. Nothing you
+            write is passed on to another company&apos;s AI, and nothing about you is kept: your history and
+            files stay on your own device.
           </p>
         </Panel>
         <div className="grid gap-4 sm:grid-cols-2">

@@ -8,16 +8,16 @@ const SG16_MODEL = {
   id: "sg16-brain",
   name: "SG16 Brain",
   vendor: "Sovereign Systems",
-  role: "Safety gate + local model",
+  role: "Open, independent and friendly to everyone",
   description:
-    "Every message is screened by the SG16 safety gate, then answered by a local Ollama model (Mistral) when the operator has enabled it, falling back to the deterministic SG16 core.",
+    "Every message is screened by the SG16 safety gate, then answered by the Brain's own language model on the operator's own server.",
   glyph: "brain",
   accent: "#22e08c",
   status: "configured",
   latencyMs: 0,
   contextWindow: "8K chars",
   selfHosted: true,
-  capabilities: ["Safety gate", "Local model", "Deterministic core"],
+  capabilities: ["Safety gate", "Any language", "Private by design"],
   sortOrder: 0,
 };
 

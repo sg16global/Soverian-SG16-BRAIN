@@ -527,9 +527,13 @@ restart_step() {
 }
 
 chat() { # <label> <message> -> sets CHAT_CODE, CHAT_ENGINE, CHAT_TIME
-  local out="$1" body c
+  local out="$1" body c secret
   body="$(python3 -c 'import json,sys; print(json.dumps({"modelId":"sg16-brain","message":sys.argv[1]}))' "$2")"
-  CHAT_CODE="$(curl -s --max-time 150 -o "$out" -w '%{http_code}' -H 'Content-Type: application/json' -d "$body" "http://127.0.0.1:$WEB_PORT/api/brain" 2>/dev/null)" || CHAT_CODE=000
+  # with the server's own secret we are trusted infrastructure and may see the exact inner engine
+  # (the public API only ever says "sg16"); the secret is used in a header and never printed
+  secret="$(grep -E '^SG16_PROXY_AUTH_SECRET=' "$APP/.env" 2>/dev/null | tail -1 | cut -d= -f2-)"
+  CHAT_CODE="$(curl -s --max-time 150 -o "$out" -w '%{http_code}' -H 'Content-Type: application/json' -H "X-SG16-Proxy-Auth: $secret" -d "$body" "http://127.0.0.1:$WEB_PORT/api/brain" 2>/dev/null)" || CHAT_CODE=000
+  secret=""
   CHAT_ENGINE="$(python3 -c 'import json,sys
 try:
     d=json.load(open(sys.argv[1])); print(d.get("brain","-") if (d.get("assistantMessage") or {}).get("content") else "empty")

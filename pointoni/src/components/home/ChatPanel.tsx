@@ -23,13 +23,12 @@ import { historyFromMessages } from "@/lib/chat-history";
 import { writeSessionBackup } from "@/lib/device-folder";
 import type { ChatMessageDto } from "@/lib/types";
 
-// Chat uses the configured SG16 gateway. The active Python core is a limited
-// deterministic structural engine, not a general-purpose language model.
+// Chat goes to the Sovereign SG16 Brain through the host gateway.
 const SOVEREIGN = {
   id: "sg16-brain",
   name: "SG16 Brain",
   vendor: "Sovereign Systems",
-  role: "Deterministic structural core · limited coverage",
+  role: "Open, independent and friendly to everyone",
   glyph: "brain",
   accent: "#22e08c",
 };
@@ -306,7 +305,7 @@ export function ChatPanel({
           </span>
           <span className="flex-none inline-flex items-center gap-1.5 font-mono2 text-[9px] tracking-wider text-emerald-300">
             <span className="status-dot" style={{ background: SOVEREIGN.accent, color: SOVEREIGN.accent }} />
-            LIMITED
+            SOVEREIGN
           </span>
           <span className="hidden flex-none font-mono2 text-[9px] text-slate-400 sm:block">8K CHAR LIMIT · HOST GATEWAY</span>
           {passPlan ? (
@@ -345,10 +344,10 @@ export function ChatPanel({
                 SG16
               </div>
               <div className="font-display text-base font-bold tracking-wide text-white sm:text-lg">
-                Welcome to SG16 Developer Pilot
+                Welcome to Sovereign SG16 Brain
               </div>
               <p className="max-w-md text-[13px] font-medium leading-relaxed text-slate-200">
-                Ask a focused question. This build handles a limited set of curated facts, arithmetic, and English-first planning; it may defer questions outside that scope.
+                Ask anything, in your own language. I will listen, think it through and tell you honestly when I do not know. Your conversation stays on this device.
               </p>
             </div>
           ) : (

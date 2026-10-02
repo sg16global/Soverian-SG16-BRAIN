@@ -32,7 +32,7 @@ export async function GET(req: Request) {
         id: row?.id ?? "sg16-brain",
         name: row?.name ?? "SG16 Brain",
         vendor: row?.vendor ?? "Sovereign Systems",
-        role: row?.role ?? "Safety gate + local model",
+        role: row?.role ?? "Open, independent and friendly to everyone",
         description: row?.description ?? "",
         glyph: row?.glyph ?? "brain",
         accent: row?.accent ?? "#22e08c",

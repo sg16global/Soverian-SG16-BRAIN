@@ -7,11 +7,9 @@ import { History as HistoryIcon, Globe2 } from "lucide-react";
 import { SiteChrome } from "@/components/chrome/SiteChrome";
 import { ChatPanel } from "@/components/home/ChatPanel";
 import { FinancialTicker } from "@/components/home/FinancialTicker";
-import { ModelGrid } from "@/components/home/ModelGrid";
 import { PageHeader } from "@/components/PageHeader";
 
-// Workspace routes all chat through /api/brain. The active Python core is a
-// limited deterministic structural engine, not a general-purpose language model.
+// Workspace routes all chat through /api/brain (the Sovereign SG16 Brain).
 
 function Workspace() {
   const params = useSearchParams();
@@ -41,7 +39,6 @@ function Workspace() {
           </div>
         ) : (
           <div className="flex flex-col gap-5">
-            <ModelGrid />
             <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_340px]">
               <ChatPanel full initialSessionId={sessionId ?? undefined} />
               <div className="h-[520px] lg:h-auto">
@@ -49,7 +46,7 @@ function Workspace() {
               </div>
             </div>
             <p className="flex items-center justify-center gap-2 text-center font-mono2 text-[9px] tracking-[0.25em] text-slate-500">
-              <Globe2 className="h-3 w-3" /> CONFIGURED SG16 GATEWAY · LIMITED STRUCTURAL CORE · APACHE 2.0 REFERENCE STACK
+              <Globe2 className="h-3 w-3" /> SOVEREIGN SG16 BRAIN · YOUR CONVERSATIONS STAY ON YOUR DEVICE
             </p>
           </div>
         )}

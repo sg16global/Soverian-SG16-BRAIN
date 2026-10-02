@@ -15,7 +15,8 @@ import {
   brainIntrospect,
 } from "@/lib/brain-gateway";
 import { ollamaChat, ollamaEnabled, ollamaHealth, ollamaTimeoutMs } from "@/lib/ollama-brain";
-import { clientIdentity, sharedRateLimiter } from "@/lib/rate-limit";
+import { clientIdentity, proxyTrusted, sharedRateLimiter } from "@/lib/rate-limit";
+import { publicEngine } from "@/lib/public-engine";
 import { isAdminRequest } from "@/lib/admin-gate";
 import { projectFromHeaders } from "@/lib/project-keys";
 import { gateTextFor, sanitizeHistory } from "@/lib/chat-history";
@@ -176,6 +177,9 @@ export async function POST(req: NextRequest) {
   // The operator's own projects (signed project key) are not visitors: no per-visitor limit and no
   // human check. They still queue for the single model like everyone else.
   const fromProject = projectFromHeaders(req.headers) !== null;
+  // the exact inner engine is shown only to trusted infrastructure and project keys, never the public
+  const exactEngine = fromProject || proxyTrusted(req.headers);
+  const shown = (engine: string) => (exactEngine ? engine : publicEngine(engine));
   const decision = fromProject ? ({ ok: true } as const) : sharedRateLimiter().check(clientIdentity(req.headers));
   if (!decision.ok) {
     recordAnswer("rate-limited");
@@ -360,7 +364,7 @@ export async function POST(req: NextRequest) {
         content: turn.content,
         latencyMs: Math.round(performance.now() - started),
       },
-      brain: turn.brain,
+      brain: shown(turn.brain),
       tier: tierInfo.tier,
       friend: true,
       tierChip: tierChip(bodyKind, tierInfo.tier),
@@ -395,7 +399,7 @@ export async function POST(req: NextRequest) {
       id: randomUUID(), sessionId: guestSessionId, role: "assistant", content: turn.content,
       modelId: model.id, relay: turn.relay, latencyMs, createdAt: now,
     },
-    brain: turn.brain,
+    brain: shown(turn.brain),
     tier: tierInfo.tier,
     friend: false,
     stored: false,

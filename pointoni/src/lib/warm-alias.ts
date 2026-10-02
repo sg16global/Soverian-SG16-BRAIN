@@ -55,7 +55,7 @@ export function warmRateLimitLine(body: CharterBody, tier: string): string {
   if (tier === "work") {
     return "Work-mode ceiling reached for this hour. Nothing is lost — the window opens again on its own.";
   }
-  return "The brain rests an hour — fair use. Sign in with your email (free) to lift the throttle, or come back soon. 🌙";
+  return "The brain rests an hour — fair use. A pass lifts the limit (no account needed), or come back soon. 🌙";
 }
 
 /** A warm, honest opening for a body. */

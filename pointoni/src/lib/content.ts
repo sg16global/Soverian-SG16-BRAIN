@@ -161,7 +161,7 @@ export const PLANS: Plan[] = [
     features: [
       "Configured SG16 gateway",
       "Process-local free-use bucket",
-      "Structural core · 8K char message limit",
+      "Messages up to 8,000 characters",
       "History kept on your own device",
       "No host pass required",
     ],
@@ -204,11 +204,11 @@ export const PLANS: Plan[] = [
 export const FAQS = [
   {
     q: "What does \u201Csovereign AI\u201D mean?",
-    a: "Sovereign AI means the engine you depend on can be owned and hosted under your control instead of creating dependency on third-party AI APIs. This reference stack runs a deterministic structural core in-process; broader language-model capability requires additional operator-provided engines.",
+    a: "Sovereign AI means the AI you rely on can be owned and hosted under your control instead of depending on someone else's AI service. The Sovereign SG16 Brain runs on its own server. It keeps no user data: your history and files stay on your own device.",
   },
   {
-    q: "Which AI models are available?",
-    a: "This build is not a broad multi-model orchestrator. Chat uses the configured SG16 structural core path; any optional external relay depends on operator-configured provider credentials. Model statuses in the UI are illustrative unless a live health route reports otherwise.",
+    q: "Which AI am I talking to?",
+    a: "The Sovereign SG16 Brain: one friendly assistant that runs on its own server. Your messages are not relayed to any other company's AI. If you ask about other AI tools it will discuss them fairly, and you are always free to use whichever tool helps you most.",
   },
   {
     q: "Is my data used to train models?",
@@ -233,7 +233,7 @@ export const SERVICES = [
   {
     title: "Configured Gateway Routing",
     glyph: "network",
-    body: "One configured chat path with optional external relays when the operator supplies provider credentials. This build does not promise full multi-model auditability or universal provider coverage.",
+    body: "One chat path, answered by the Brain on its own server. Nothing is relayed to outside AI providers.",
   },
   {
     title: "Deployment Assistance",

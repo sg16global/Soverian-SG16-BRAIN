@@ -1,5 +1,5 @@
 // SG16 local guard engine: the deterministic last-resort answers used when the
-// core and Ollama cannot answer. It talks to nothing outside this process, and
+// core and the language model cannot answer. It talks to nothing outside this process, and
 // it never relays to a third-party model or pretends to be one.
 
 type Rule = { test: RegExp; paragraphs: string[] };
@@ -13,7 +13,7 @@ const CORE_RULES: Rule[] = [
     ],
   },
   {
-    test: /sovereign|self.?host|ownership|dependency|mistral|on-?prem|private deploy/i,
+    test: /sovereign|self.?host|ownership|dependency|on-?prem|private deploy/i,
     paragraphs: [
       "This build runs a deterministic structural core in-process. It is not a broad pretrained language model.",
       "Sovereign hosting can keep the structural core inside your deployment. This application does not train models on your chats. Account data may still be stored by the deployment, and logs/backups depend on operator configuration.",
@@ -22,8 +22,8 @@ const CORE_RULES: Rule[] = [
   {
     test: /\b(claude|gpt|gemini|llama|stable diffusion|model|compare|difference)\b/i,
     paragraphs: [
-      "This build answers through one path only: SG16's own safety gate and core, plus a local Ollama model (Mistral) when the operator has enabled it. It does not relay to outside AI providers.",
-      "• SG16 safety gate — screens every message first.\n• Local Ollama model (Mistral) — answers clean messages when the operator has enabled it.\n• SG16 deterministic core — the fallback if the model cannot answer.",
+      "This build answers through one path only: SG16's own safety gate and core, plus its own language model. It does not relay to outside AI providers.",
+      "• SG16 safety gate — screens every message first.\n• SG16 language model — answers clean messages.\n• SG16 deterministic core — the fallback if the model cannot answer.",
     ],
   },
   {
