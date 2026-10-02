@@ -63,6 +63,9 @@ export class OllamaBridgeError extends Error {
 const DEFAULT_OLLAMA_URL = "http://127.0.0.1:11434";
 const DEFAULT_OLLAMA_MODEL = "mistral";
 const DEFAULT_TIMEOUT_MS = 45_000;
+/** What the prompt says about where the Brain runs. Deliberately generic: the inner model is not named. */
+export const RUNTIME_LABEL = "the operator's own server";
+
 const MAX_TURNS = 12;
 const DEFAULT_MAX_TOKENS = 600;
 /** a cut-off answer shorter than this is not worth showing: fall back instead */
@@ -145,7 +148,7 @@ export async function ollamaChat(input: OllamaTurnInput): Promise<OllamaTurn> {
     humanitarianRegion: input.humanitarianRegion,
     // constant on purpose: the system prompt must be byte-identical every
     // request so Ollama can reuse its cached prompt start
-    runtime: "a local Ollama model",
+    runtime: RUNTIME_LABEL,
     context: input.context ?? null,
   });
 

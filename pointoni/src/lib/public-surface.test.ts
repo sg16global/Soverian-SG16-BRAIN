@@ -7,6 +7,7 @@ import path from "node:path";
 import { test } from "node:test";
 import { distillCharter } from "./charter-prompt.ts";
 import { publicEngine } from "./public-engine.ts";
+import { RUNTIME_LABEL } from "./ollama-brain.ts";
 
 const SRC = path.resolve(import.meta.dirname, "..");
 
@@ -40,13 +41,17 @@ test("no page, component or visitor-facing text names the inner model or its eng
 
 test("the system prompt never names the model, and tells the brain to keep it private yet never lie", () => {
   for (const body of ["flagship", "children"] as const) {
-    const prompt = distillCharter(body, { runtime: "a local Ollama model" });
-    assert.doesNotMatch(prompt.replace("a local Ollama model", ""), /mistral/i, body);
+    // exactly what the bridge sends: the runtime line is RUNTIME_LABEL, nothing else names an engine
+    const prompt = distillCharter(body, { runtime: RUNTIME_LABEL });
+    assert.doesNotMatch(prompt, /mistral|ollama|7b|llama/i, body);
   }
+  assert.doesNotMatch(RUNTIME_LABEL, /mistral|ollama/i);
   const prompt = distillCharter("flagship");
   assert.match(prompt, /You ARE Sovereign SG16 Brain/);
   assert.match(prompt, /Do not name that model or its maker unprompted/);
   assert.match(prompt, /Never deny being an AI/);
+  assert.match(prompt, /Do not invent a history for yourself/);
+  assert.match(prompt, /never say another product lacks safeguards/);
 });
 
 test("visitor-facing copy no longer describes the Brain as a limited 'structural core' or a multi-model relay", () => {
