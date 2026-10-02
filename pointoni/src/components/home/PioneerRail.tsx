@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { PIONEERS, type Pioneer } from "@/lib/pioneers";
 import { Panel, PanelTitle } from "@/components/ui/Panel";
 
@@ -45,6 +45,7 @@ function Card({ p }: { p: Pioneer }) {
 export function PioneerRail() {
   const viewport = useRef<HTMLDivElement>(null);
   const track = useRef<HTMLUListElement>(null);
+  const [active, setActive] = useState(0);
 
   useEffect(() => {
     const vp = viewport.current;
@@ -59,6 +60,7 @@ export function PioneerRail() {
     let last = 0;
     let raf = 0;
     let visible = true;
+    let shown = -1;
 
     const measure = () => {
       stride = cards[1].offsetLeft - cards[0].offsetLeft;
@@ -68,13 +70,31 @@ export function PioneerRail() {
 
     const paint = () => {
       tr.style.transform = `translate3d(${-offset}px,0,0)`;
+      let best = 0;
+      let bestI = 0;
+      let bestK = -1;
       for (let i = 0; i < cards.length; i++) {
         const center = i * stride + stride / 2 - offset;
-        const d = Math.min(1, Math.abs(center - half) / (half * 0.9));
+        const signed = (center - half) / (half * 0.9);
+        const d = Math.min(1, Math.abs(signed));
         const k = 1 - d * d; // 1 at the centre, 0 near the edges
-        cards[i].style.transform = `scale(${(0.82 + 0.26 * k).toFixed(3)})`;
-        cards[i].style.opacity = (0.5 + 0.5 * k).toFixed(3);
-        cards[i].dataset.center = k > 0.9 ? "1" : "0";
+        // the rail bends like a shallow arc: side cards sit lower and turn slightly towards the centre
+        const lift = d * d * 22;
+        const turn = Math.max(-1, Math.min(1, signed)) * -16;
+        cards[i].style.transform = `translateY(${lift.toFixed(1)}px) rotateY(${turn.toFixed(1)}deg) scale(${(0.8 + 0.3 * k).toFixed(3)})`;
+        cards[i].style.opacity = (0.45 + 0.55 * k).toFixed(3);
+        cards[i].style.zIndex = String(Math.round(k * 10));
+        cards[i].dataset.center = "0";
+        if (k > bestK) {
+          bestK = k;
+          bestI = i;
+          best = i % PIONEERS.length;
+        }
+      }
+      cards[bestI].dataset.center = "1"; // exactly one highlighted pioneer at a time
+      if (best !== shown) {
+        shown = best;
+        setActive(best);
       }
     };
 
@@ -123,9 +143,15 @@ export function PioneerRail() {
 
   return (
     <Panel className="mx-auto w-full max-w-[1200px] overflow-hidden px-2 py-5 sm:px-5" id="pioneers">
-      <PanelTitle accent="cyan">AI PIONEERS</PanelTitle>
-      <p className="mt-1 text-center font-mono2 text-[9px] tracking-[0.3em] text-slate-400 sm:text-[10px]">
-        INTELLIGENCE HERITAGE · THE PEOPLE BEHIND THE IDEAS
+      <div className="flex items-center justify-center gap-3 sm:gap-5">
+        <span aria-hidden className="pioneer-rule" />
+        <PanelTitle accent="cyan" className="!px-0">
+          AI PIONEERS
+        </PanelTitle>
+        <span aria-hidden className="pioneer-rule" />
+      </div>
+      <p className="mt-1 text-center font-mono2 text-[10px] tracking-[0.42em] text-slate-300 sm:text-[11px]">
+        INTELLIGENCE HERITAGE
       </p>
 
       <div ref={viewport} className="pioneer-viewport mt-4" role="region" aria-label="AI pioneers, moving slowly">
@@ -136,7 +162,15 @@ export function PioneerRail() {
         </ul>
       </div>
 
-      <p className="mt-3 text-center font-mono2 text-[9px] tracking-[0.2em] text-slate-500">
+      <div aria-hidden className="pioneer-dots">
+        {PIONEERS.map((p, i) => (
+          <span key={p.id} data-on={i === active ? "1" : "0"} />
+        ))}
+      </div>
+      <p className="mt-4 text-center font-mono2 text-[10px] tracking-[0.4em] text-slate-300 sm:text-[11px]">
+        GREAT MINDS <span className="mx-1 text-amber-300">×</span> TIMELESS IMPACT
+      </p>
+      <p className="mt-2 text-center font-mono2 text-[9px] tracking-[0.2em] text-slate-500">
         HISTORICAL PROFILES · NOT AI MODELS · NOT CONNECTED TO THIS SYSTEM
       </p>
       <details className="mx-auto mt-2 max-w-[760px] text-center">
