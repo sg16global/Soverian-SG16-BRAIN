@@ -18,6 +18,8 @@ import { SUGGESTION_PROMPTS } from "@/lib/content";
 import { identityHeaders } from "@/lib/browser-identity";
 import { loadPassRecord } from "@/lib/billing";
 import { useTurnstile } from "./useTurnstile";
+import { deviceVault, recordTurn } from "@/lib/device-vault";
+import { writeSessionBackup } from "@/lib/device-folder";
 import type { ChatMessageDto } from "@/lib/types";
 
 // Chat uses the configured SG16 gateway. The active Python core is a limited
@@ -59,6 +61,32 @@ function timeLabel(iso: string) {
   return new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
 
+// Remember a finished turn on this device (and in the person's backup folder, if they chose one).
+// If the browser blocks storage the chat still works; it just is not remembered.
+async function saveToDevice(data: {
+  sessionId: string;
+  userMessage: ChatMessageDto;
+  assistantMessage: ChatMessageDto;
+  brain?: string;
+}) {
+  try {
+    const session = await recordTurn(deviceVault(), {
+      sessionId: data.sessionId,
+      user: { id: data.userMessage.id, role: "user", content: data.userMessage.content, createdAt: data.userMessage.createdAt },
+      assistant: {
+        id: data.assistantMessage.id,
+        role: "assistant",
+        content: data.assistantMessage.content,
+        createdAt: data.assistantMessage.createdAt,
+        engine: data.brain,
+      },
+    });
+    void writeSessionBackup(session);
+  } catch {
+    // storage unavailable
+  }
+}
+
 // device-held pass, verified server-side by the core; absent or expired -> free tier
 function passHeader(): Record<string, string> {
   const token = loadPassRecord()?.token;
@@ -85,15 +113,27 @@ export function ChatPanel({
   // sovereign identity from THIS device (email-only token, user-held)
   const [identity, setIdentity] = useState<{ token: string; email: string; plan: string | null } | null>(null);
 
+  // History is read from THIS device (see lib/device-vault.ts); the server keeps none.
   const loadSession = useCallback(async (id: string) => {
-    const res = await fetch(`/api/brain?session=${encodeURIComponent(id)}`, {
-      headers: identityHeaders(),
-      cache: "no-store",
-    });
-    if (!res.ok) return;
-    const data = (await res.json()) as { messages: ChatMessageDto[] };
-    setMessages(data.messages);
-    setSessionId(id);
+    try {
+      const saved = await deviceVault().get(id);
+      if (!saved) return;
+      setMessages(
+        saved.messages.map((m) => ({
+          id: m.id,
+          sessionId: id,
+          role: m.role,
+          content: m.content,
+          modelId: SOVEREIGN.id,
+          relay: false,
+          latencyMs: 0,
+          createdAt: m.createdAt,
+        })),
+      );
+      setSessionId(id);
+    } catch {
+      // device storage unavailable: nothing to restore
+    }
   }, []);
 
   useEffect(() => {
@@ -192,6 +232,7 @@ export function ChatPanel({
         throw new Error(data.error || "The SG16 core is unreachable. Try again.");
       }
       turnstile.control.accept(data);
+      void saveToDevice(data);
       setSessionId(data.sessionId);
       setMessages((prev) => [
         ...prev.filter((m) => m.id !== tempId),

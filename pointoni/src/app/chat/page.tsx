@@ -27,7 +27,7 @@ function Workspace() {
     <>
       <PageHeader
         title="SOVEREIGN WORKSPACE"
-        subtitle="Configured SG16 gateway chat. Signed-in account sessions may be stored in this deployment database; guest chats are not archived there."
+        subtitle="SG16 gateway chat. Your conversations are saved on this device only; the server keeps none of them."
       >
         <Link href="/history" className="btn-ghost inline-flex items-center gap-2 px-4 py-2 text-[11px]">
           <HistoryIcon className="h-4 w-4" /> HISTORY

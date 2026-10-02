@@ -5,15 +5,9 @@ import { UploadCloud, FileText, Download, Trash2, FolderLock } from "lucide-reac
 import { SiteChrome } from "@/components/chrome/SiteChrome";
 import { PageHeader } from "@/components/PageHeader";
 import { Panel } from "@/components/ui/Panel";
-import { identityHeaders } from "@/lib/browser-identity";
+import { addDeviceFile, getDeviceFile, listDeviceFiles, removeDeviceFile, MAX_FILE_BYTES, type DeviceFile } from "@/lib/device-files";
 
-type FileRow = {
-  id: string;
-  name: string;
-  mime: string;
-  sizeBytes: number;
-  createdAt: string;
-};
+type FileRow = DeviceFile;
 
 function fmtSize(bytes: number) {
   if (bytes < 1024) return `${bytes} B`;
@@ -29,17 +23,27 @@ export default function FilesPage() {
   const inputRef = useRef<HTMLInputElement>(null);
 
   const load = useCallback(async () => {
-    const res = await fetch("/api/files", { headers: identityHeaders(), cache: "no-store" });
-    if (res.ok) setFiles((await res.json()).files ?? []);
-    else {
-      const data = await res.json().catch(() => ({}));
-      setError(data.error || "Sign in to manage stored files.");
+    try {
+      setFiles(await listDeviceFiles());
+    } catch {
+      setFiles([]);
+      setError("This browser is blocking local storage, so files cannot be kept here (private windows often do this).");
     }
   }, []);
 
   useEffect(() => {
-    load();
-  }, [load]);
+    let alive = true;
+    listDeviceFiles()
+      .then((f) => alive && setFiles(f))
+      .catch(() => {
+        if (!alive) return;
+        setFiles([]);
+        setError("This browser is blocking local storage, so files cannot be kept here (private windows often do this).");
+      });
+    return () => {
+      alive = false;
+    };
+  }, []);
 
   async function upload(list: FileList | null) {
     if (!list || list.length === 0) return;
@@ -47,14 +51,11 @@ export default function FilesPage() {
     setError(null);
     try {
       for (const file of Array.from(list)) {
-        if (file.size > 10 * 1024 * 1024) {
-          setError(`${file.name} exceeds the 10MB pilot limit.`);
-          continue;
+        try {
+          await addDeviceFile(file);
+        } catch (e) {
+          setError(e instanceof Error ? e.message : `Could not save ${file.name}.`);
         }
-        const fd = new FormData();
-        fd.append("file", file);
-        const res = await fetch("/api/files", { method: "POST", headers: identityHeaders(), body: fd });
-        if (!res.ok) setError(`Upload failed: ${file.name}`);
       }
       await load();
     } finally {
@@ -63,17 +64,28 @@ export default function FilesPage() {
     }
   }
 
+  async function download(f: FileRow) {
+    const saved = await getDeviceFile(f.id);
+    if (!saved) return;
+    const url = URL.createObjectURL(saved.blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = f.name;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
   async function remove(id: string) {
-    if (!confirm("Remove this file from your vault?")) return;
-    await fetch(`/api/files?id=${encodeURIComponent(id)}`, { method: "DELETE", headers: identityHeaders() });
+    if (!confirm("Remove this file from this device?")) return;
+    await removeDeviceFile(id);
     setFiles((p) => (p ?? []).filter((f) => f.id !== id));
   }
 
   return (
     <SiteChrome>
-      <PageHeader title="MY FILES" subtitle="Files stored for the signed-in account on this deployment's filesystem. This application does not send uploads to third-party model providers from this route.">
+      <PageHeader title="MY FILES" subtitle="Files you keep here are stored on this device only. They are never uploaded to the server.">
         <button onClick={() => inputRef.current?.click()} className="btn-red inline-flex items-center gap-2 px-4 py-2 text-[11px]">
-          <UploadCloud className="h-4 w-4" /> UPLOAD
+          <UploadCloud className="h-4 w-4" /> ADD FILES
         </button>
         <input ref={inputRef} type="file" multiple className="hidden" onChange={(e) => upload(e.target.files)} />
       </PageHeader>
@@ -89,9 +101,9 @@ export default function FilesPage() {
             <UploadCloud className="h-7 w-7 text-cyan-300" />
           </span>
           <p className="font-display text-sm font-bold tracking-widest text-white">
-            {uploading ? "SECURELY UPLOADING…" : "DRAG FILES HERE OR USE THE UPLOAD BUTTON"}
+            {uploading ? "SAVING TO THIS DEVICE…" : "DRAG FILES HERE OR USE THE ADD BUTTON"}
           </p>
-          <p className="font-mono2 text-[10px] tracking-widest text-slate-500">10MB PER FILE · STORED ON THIS DEPLOYMENT FILESYSTEM</p>
+          <p className="font-mono2 text-[10px] tracking-widest text-slate-500">{`${MAX_FILE_BYTES / 1024 / 1024}MB PER FILE · KEPT ON THIS DEVICE ONLY`}</p>
           <input
             type="file"
             multiple
@@ -119,7 +131,7 @@ export default function FilesPage() {
             <Panel className="corner flex flex-col items-center gap-3 p-12 text-center">
               <FolderLock className="h-10 w-10 text-slate-600" />
               <h2 className="font-display text-base font-black tracking-wide text-white">VAULT EMPTY</h2>
-              <p className="max-w-sm text-sm text-slate-400">No files stored yet. Uploads are account-scoped metadata plus files on this deployment; this build does not automatically attach them to chat turns.</p>
+              <p className="max-w-sm text-sm text-slate-400">No files yet. Files you add stay in this browser on this device; nothing is sent to the server, and they are not attached to chat turns.</p>
             </Panel>
           ) : (
             <ul className="space-y-2.5">
@@ -135,13 +147,13 @@ export default function FilesPage() {
                         {f.mime || "unknown"} · {fmtSize(f.sizeBytes)} · {new Date(f.createdAt).toLocaleString()}
                       </p>
                     </div>
-                    <a
-                      href={`/api/files/${f.id}`}
+                    <button
+                      onClick={() => void download(f)}
                       className="btn-ghost grid h-9 w-9 place-items-center"
                       title="Download"
                     >
                       <Download className="h-4 w-4" />
-                    </a>
+                    </button>
                     <button
                       onClick={() => remove(f.id)}
                       className="grid h-9 w-9 place-items-center rounded-lg border border-red-400/30 text-red-400 transition hover:bg-red-500/20"

@@ -1,8 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { db, persistenceMode } from "@/db";
-import { aiModels, chatMessages, chatSessions } from "@/db/schema";
-import { and, asc, desc, eq } from "drizzle-orm";
+import { aiModels } from "@/db/schema";
+import { eq } from "drizzle-orm";
 import { ensureSeeded } from "@/lib/seed";
 import { resolveAccount } from "@/lib/account-auth";
 import { generateReply } from "@/lib/ai-engine";
@@ -135,33 +135,15 @@ export async function GET(req: NextRequest) {
     return withChildrenCors(req, NextResponse.json({ sessions: [], friend: true, stored: false }));
   }
 
-  const account = await resolveAccount(req);
-  if (!account) {
-    return NextResponse.json({ error: "Sign in to access saved conversations." }, { status: 401 });
-  }
-
+  // This server keeps no conversation history for anyone: it lives on the visitor's own device
+  // (see lib/device-vault.ts). These endpoints stay so older clients get a clear, harmless answer.
   if (sessionId) {
-    const sessions = await db
-      .select()
-      .from(chatSessions)
-      .where(and(eq(chatSessions.id, sessionId), eq(chatSessions.userId, account.user.id)))
-      .limit(1);
-    if (!sessions[0]) return NextResponse.json({ error: "Conversation not found." }, { status: 404 });
-    const messages = await db
-      .select()
-      .from(chatMessages)
-      .where(eq(chatMessages.sessionId, sessionId))
-      .orderBy(asc(chatMessages.createdAt));
-    return NextResponse.json({ session: sessions[0], messages });
+    return NextResponse.json(
+      { error: "Conversation history is kept on your device, not on this server.", stored: false, storedOn: "device" },
+      { status: 404 },
+    );
   }
-
-  const sessions = await db
-    .select()
-    .from(chatSessions)
-    .where(eq(chatSessions.userId, account.user.id))
-    .orderBy(desc(chatSessions.updatedAt))
-    .limit(50);
-  return NextResponse.json({ sessions });
+  return NextResponse.json({ sessions: [], stored: false, storedOn: "device" });
 }
 
 // POST { sessionId?, modelId, message } | { forgetSessionId }
@@ -377,70 +359,10 @@ export async function POST(req: NextRequest) {
     return json({ error: "Session id is invalid." }, { status: 400 });
   }
 
-  if (account) {
-    let sessionId: string;
-    if (requestedSession) {
-      if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(requestedSession)) {
-        return json({ error: "Conversation not found." }, { status: 404 });
-      }
-      const owned = await db
-        .select({ id: chatSessions.id })
-        .from(chatSessions)
-        .where(and(eq(chatSessions.id, requestedSession), eq(chatSessions.userId, account.user.id)))
-        .limit(1);
-      if (!owned[0]) return json({ error: "Conversation not found." }, { status: 404 });
-      sessionId = requestedSession;
-    } else {
-      const created = await db
-        .insert(chatSessions)
-        .values({
-          userId: account.user.id,
-          title: message.slice(0, 56) + (message.length > 56 ? "\u2026" : ""),
-          modelId: model.id,
-        })
-        .returning();
-      sessionId = created[0].id;
-    }
-
-    const insertedUser = await db
-      .insert(chatMessages)
-      .values({ sessionId, role: "user", content: message, modelId: model.id })
-      .returning();
-    const started = performance.now();
-    const turn = await think(message, sessionId);
-    const latencyMs = Math.round(performance.now() - started);
-    const insertedAssistant = await db
-      .insert(chatMessages)
-      .values({
-        sessionId,
-        role: "assistant",
-        content: turn.content,
-        modelId: model.id,
-        relay: turn.relay,
-        latencyMs,
-      })
-      .returning();
-    await db
-      .update(chatSessions)
-      .set({ updatedAt: new Date(), modelId: model.id })
-      .where(and(eq(chatSessions.id, sessionId), eq(chatSessions.userId, account.user.id)));
-
-    return json({
-      sessionId,
-      userMessage: insertedUser[0],
-      assistantMessage: insertedAssistant[0],
-      brain: turn.brain,
-      tier: tierInfo.tier,
-      friend: false,
-      stored: true,
-      tierChip: tierChip(bodyKind, tierInfo.tier),
-      ...humanExtra,
-    });
-  }
-
-  // Unauthenticated flagship use is supported without storing the transcript
-  // in the account database. A high-entropy guest handle lets the core retain
-  // short in-memory context; it is not an archive or an authentication factor.
+  // Nothing is stored here, signed in or not: the transcript is never written to a database.
+  // A high-entropy guest handle only lets the core keep short in-memory context for this
+  // conversation; it is not an archive or an authentication factor. The visitor's device
+  // keeps the history.
   const guestSessionId = requestedSession && /^guest-[0-9a-f-]{36}$/i.test(requestedSession)
     ? requestedSession
     : `guest-${randomUUID()}`;
@@ -466,23 +388,14 @@ export async function POST(req: NextRequest) {
     ...humanExtra,
   });
 }
-// DELETE /api/brain?session=<id>
+// DELETE /api/brain?session=<id>  - history is on the device; this only clears the core's short
+// in-memory context for that conversation.
 export async function DELETE(req: NextRequest) {
   const { searchParams } = new URL(req.url);
   const sessionId = searchParams.get("session");
-  if (!sessionId) {
-    return withChildrenCors(
-      req,
-      NextResponse.json({ error: "session id required" }, { status: 400 }),
-    );
+  if (!sessionId || sessionId.length > 64) {
+    return withChildrenCors(req, NextResponse.json({ error: "session id required" }, { status: 400 }));
   }
-  const account = await resolveAccount(req);
-  if (!account) return NextResponse.json({ error: "Sign in to delete saved conversations." }, { status: 401 });
-  const deleted = await db
-    .delete(chatSessions)
-    .where(and(eq(chatSessions.id, sessionId), eq(chatSessions.userId, account.user.id)))
-    .returning({ id: chatSessions.id });
-  if (!deleted[0]) return NextResponse.json({ error: "Conversation not found." }, { status: 404 });
   await brainForgetSession(sessionId);
-  return withChildrenCors(req, NextResponse.json({ ok: true, coreContextMayRemain: true }));
+  return withChildrenCors(req, NextResponse.json({ ok: true, storedOn: "device", coreContextMayRemain: true }));
 }
