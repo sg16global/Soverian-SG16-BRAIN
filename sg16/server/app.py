@@ -512,12 +512,8 @@ class BrainRequestHandler(BaseHTTPRequestHandler):
         premium = False
         pass_token = self.headers.get("X-SG16-Pass") or payload.get("pass_token")
         if pass_token:
-            record = self.server.passes.get(str(pass_token))
-            if record is None:
-                self._error(403, "pass token was not issued by this host")
-                return None
             try:
-                billing.verify_record(record, self.server.billing_secret)
+                self._resolve_pass(str(pass_token))
                 premium = True
             except billing.VerificationError as exc:
                 self._error(403, f"subscription failed verification: {exc}")
@@ -819,29 +815,61 @@ class BrainRequestHandler(BaseHTTPRequestHandler):
             return self._error(410, "the confirmed record is no longer available")
         self._json({"confirmed": True, "record": record})
 
+    #: a pass as it travels: either the legacy 64-hex token (looked up in the host's copy) or the
+    #: whole signed record as base64url JSON (verified by its signature alone; nothing is looked up)
+    _PASS_VALUE = re.compile(r"[a-f0-9]{64}|[A-Za-z0-9_-]{40,3000}")
+
+    def _resolve_pass(self, value: str) -> dict:
+        """Verify a pass and return its record, or raise :class:`billing.VerificationError`.
+
+        A signed record needs no server-side state: the host recomputes the signature with its own
+        secret, so a subscriber is recognised on any device that holds their record, across restarts,
+        with nothing about them stored here.
+        """
+        value = value.strip()
+        if not self._PASS_VALUE.fullmatch(value):
+            raise billing.VerificationError("pass is malformed")
+        if re.fullmatch(r"[a-f0-9]{64}", value):
+            record = self.server.passes.get(value)
+            if record is None:
+                raise billing.VerificationError("pass token was not issued by this host")
+            try:
+                return billing.verify_record(record, self.server.billing_secret)
+            except billing.VerificationError:
+                with self.server.dodo_lock:
+                    self.server.passes.pop(value, None)
+                self.server.persist_billing()
+                raise
+        try:
+            padded = value + "=" * (-len(value) % 4)
+            record = json.loads(base64.urlsafe_b64decode(padded).decode("utf-8"))
+        except (binascii.Error, UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
+            raise billing.VerificationError("pass is not a signed record") from exc
+        if not isinstance(record, dict):
+            raise billing.VerificationError("pass is not a signed record")
+        return billing.verify_record(record, self.server.billing_secret)
+
     def _api_pass_verify(self, body: bytes) -> None:
-        """Validate a host-issued bearer token before an account binds it."""
+        """Check a pass: ``{"pass": <token or signed record>}`` (``{"token": ...}`` still accepted)."""
         try:
             payload = json.loads(body.decode("utf-8")) if body else {}
         except (UnicodeDecodeError, json.JSONDecodeError) as exc:
             return self._error(400, f"body is not valid json: {exc}")
-        token = payload.get("token") if isinstance(payload, dict) else None
-        if not isinstance(token, str) or not re.fullmatch(r"[a-f0-9]{64}", token):
-            return self._error(400, "token must be a 64-character host pass token")
+        value = payload.get("pass") or payload.get("token") if isinstance(payload, dict) else None
+        if not isinstance(value, str) or not self._PASS_VALUE.fullmatch(value.strip()):
+            return self._error(400, "pass must be a host pass token or a signed pass record")
+        # the platform calls this for every pass-bearing chat from 127.0.0.1, so it must not share
+        # one per-client bucket across all subscribers: a proxy-authenticated caller is exempt
         try:
-            self.server.throttle.check(self._client_rate_key(), len(body), exempt=False)
+            self.server.throttle.check(
+                self._client_rate_key(), len(body), exempt=self._proxy_headers_trusted()
+            )
         except ThrottleExceeded as exc:
             return self._error(429, str(exc))
-        record = self.server.passes.get(token)
-        if record is None:
-            return self._error(403, "pass token is unknown to this host")
         try:
-            verified = billing.verify_record(record, self.server.billing_secret)
+            verified = self._resolve_pass(value)
         except billing.VerificationError as exc:
-            with self.server.dodo_lock:
-                self.server.passes.pop(token, None)
-            self.server.persist_billing()
-            return self._error(403, f"pass token failed verification: {exc}")
+            return self._error(403, f"pass failed verification: {exc}")
         self._json({"valid": True, "record": verified})
 
     def _api_billing(self) -> None:

@@ -16,7 +16,7 @@ import { Panel, PanelTitle } from "@/components/ui/Panel";
 import { ModelGlyph } from "@/components/ModelGlyph";
 import { SUGGESTION_PROMPTS } from "@/lib/content";
 import { identityHeaders } from "@/lib/browser-identity";
-import { loadPassRecord } from "@/lib/billing";
+import { encodePassHeader, loadPassRecord } from "@/lib/billing";
 import { useTurnstile } from "./useTurnstile";
 import { deviceVault, recordTurn } from "@/lib/device-vault";
 import { writeSessionBackup } from "@/lib/device-folder";
@@ -89,8 +89,8 @@ async function saveToDevice(data: {
 
 // device-held pass, verified server-side by the core; absent or expired -> free tier
 function passHeader(): Record<string, string> {
-  const token = loadPassRecord()?.token;
-  return token ? { "X-SG16-Pass": token } : {};
+  const record = loadPassRecord();
+  return record ? { "X-SG16-Pass": encodePassHeader(record) } : {};
 }
 
 export function ChatPanel({

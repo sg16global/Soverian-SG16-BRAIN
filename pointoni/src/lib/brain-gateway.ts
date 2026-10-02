@@ -189,11 +189,16 @@ export type BrainCheckoutResult =
   | { mode: "dodo"; session_id: string; checkout_url: string; pass: string }
   | { mode: "humanitarian_bypass"; record: Record<string, unknown> };
 
-export async function brainVerifyPass(token: string): Promise<{ valid: true; record: Record<string, unknown> }> {
+export async function brainVerifyPass(pass: string): Promise<{ valid: true; record: Record<string, unknown> }> {
   return callBrain("/api/pass/verify", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ token }),
+    headers: {
+      "Content-Type": "application/json",
+      // the platform calls this for every pass-bearing chat from 127.0.0.1: proving itself keeps
+      // the core from counting all subscribers against one shared per-address bucket
+      ...(process.env.SG16_PROXY_AUTH_SECRET ? { "X-SG16-Proxy-Auth": process.env.SG16_PROXY_AUTH_SECRET } : {}),
+    },
+    body: JSON.stringify({ pass }),
   });
 }
 

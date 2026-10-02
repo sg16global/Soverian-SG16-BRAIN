@@ -62,7 +62,6 @@ function SidebarBody({
   function signOut() {
     try {
       window.localStorage.removeItem("sg16/identity");
-      window.localStorage.removeItem("sg16/pass");
     } catch {
       // browser storage may be unavailable
     }

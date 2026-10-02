@@ -65,6 +65,33 @@ export function loadPassRecord(): PassRecord | null {
   }
 }
 
+/** The shape a pass travels in: the whole signed record as base64url JSON (all ASCII). */
+export function encodePassHeader(record: PassRecord): string {
+  return btoa(JSON.stringify(record)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+/** Read a pass file the person saved earlier. Only the shape is checked here; the host verifies the signature. */
+export function parsePassFile(text: string): PassRecord | null {
+  try {
+    if (text.length > 8000) return null;
+    const raw = JSON.parse(text) as { format?: string; record?: PassRecord } | PassRecord;
+    const record = ("format" in raw && raw.format === "sg16-pass" ? raw.record : raw) as PassRecord | undefined;
+    if (
+      !record ||
+      !PASSES.some((p) => p.id === record.pass) ||
+      typeof record.token !== "string" || !/^[a-f0-9]{64}$/.test(record.token) ||
+      typeof record.expires_at !== "number" || typeof record.activated_at !== "number"
+    ) return null;
+    return record;
+  } catch {
+    return null;
+  }
+}
+
+export function passFileText(record: PassRecord): string {
+  return JSON.stringify({ format: "sg16-pass", version: 1, savedAt: new Date().toISOString(), record }, null, 2);
+}
+
 export function storePassRecord(record: PassRecord): void {
   try {
     localStorage.setItem(PASS_KEY, JSON.stringify(record));

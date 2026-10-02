@@ -369,14 +369,15 @@ export async function resolveTier(req: Request): Promise<{
   // A device-held pass: the 64-hex token is only trusted after the core
   // confirms it. Any failure (bad shape, core down, unknown or expired pass)
   // simply falls through to the free tier.
+  // The pass is either the signed record itself (base64url JSON, verified by signature alone:
+  // nothing about the subscriber is stored) or the older 64-hex token.
   const passHeader = req.headers.get("x-sg16-pass")?.trim() ?? "";
-  if (/^[a-f0-9]{64}$/.test(passHeader)) {
+  if (/^[a-f0-9]{64}$/.test(passHeader) || /^[A-Za-z0-9_-]{40,3000}$/.test(passHeader)) {
     try {
       const verified = await brainVerifyPass(passHeader);
       const record = verified.record;
       if (
         verified.valid === true &&
-        record.token === passHeader &&
         typeof record.expires_at === "number" &&
         record.expires_at * 1000 > Date.now()
       ) {

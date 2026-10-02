@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { Check, Crown, ShieldCheck, Globe2, AlertTriangle } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { Check, Crown, ShieldCheck, Globe2, AlertTriangle, Download, Upload } from "lucide-react";
 import Link from "next/link";
 import { SiteChrome } from "@/components/chrome/SiteChrome";
 import { PageHeader } from "@/components/PageHeader";
@@ -10,8 +10,11 @@ import {
   BILLING_COPY,
   HUMANITARIAN_REGION,
   PASSES,
+  encodePassHeader,
   formatExpiry,
   loadPassRecord,
+  parsePassFile,
+  passFileText,
   passLabel,
   storePassRecord,
   type PassId,
@@ -24,6 +27,43 @@ export default function SubscriptionPage() {
   const [confirmed, setConfirmed] = useState<string | null>(null);
   const [gateway, setGateway] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [note, setNote] = useState<string | null>(null);
+  const fileInput = useRef<HTMLInputElement>(null);
+
+  // Your pass is the proof that you subscribed: it lives on this device and the host recognises it
+  // by its signature, with nothing about you stored. So keep a copy: if the device is lost, a pass
+  // file is the only way back (there is no account to recover it from).
+  function savePass() {
+    if (!record) return;
+    const blob = new Blob([passFileText(record)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `sg16-pass-${record.pass}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+    setNote("Pass file saved. Keep it somewhere safe: anyone holding it can use the pass until it expires.");
+  }
+
+  async function restorePass(file: File) {
+    setError(null);
+    setNote(null);
+    const restored = parsePassFile(await file.text());
+    if (!restored) return setError("That file is not an SG16 pass.");
+    try {
+      const res = await fetch("/api/pass-check", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pass: encodePassHeader(restored) }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.valid) return setError(data.error || "This pass could not be verified.");
+      activate(restored);
+      setNote("Pass restored on this device.");
+    } catch {
+      setError("Could not reach the host to check the pass. Try again.");
+    }
+  }
 
   function activate(rec: PassRecord) {
     storePassRecord(rec);
@@ -137,6 +177,27 @@ export default function SubscriptionPage() {
                 {BILLING_COPY.noPassNote}
               </p>
             )}
+            <span className="inline-flex flex-wrap items-center gap-2">
+              {record && (
+                <button onClick={savePass} className="btn-ghost inline-flex items-center gap-1.5 px-3 py-1.5 text-[10px]">
+                  <Download className="h-3.5 w-3.5" /> SAVE MY PASS
+                </button>
+              )}
+              <button onClick={() => fileInput.current?.click()} className="btn-ghost inline-flex items-center gap-1.5 px-3 py-1.5 text-[10px]">
+                <Upload className="h-3.5 w-3.5" /> RESTORE PASS FROM FILE
+              </button>
+              <input
+                ref={fileInput}
+                type="file"
+                accept=".json,application/json"
+                className="hidden"
+                onChange={(e) => {
+                  const f = e.target.files?.[0];
+                  if (f) void restorePass(f);
+                  e.target.value = "";
+                }}
+              />
+            </span>
             <span className="ml-auto inline-flex items-center gap-2 font-mono2 text-[10px] tracking-[0.2em] text-slate-400">
               <Globe2 className="h-3.5 w-3.5 text-cyan-300" />
               REGION: {humanitarian ? HUMANITARIAN_REGION : "DETERMINED BY HOST"}
@@ -145,6 +206,10 @@ export default function SubscriptionPage() {
             </span>
           </div>
         </Panel>
+
+        {note && (
+          <div className="rounded-lg border border-emerald-400/30 bg-emerald-500/10 px-3 py-2 text-[11px] text-emerald-200">{note}</div>
+        )}
 
         {error && (
           <div className="flex items-center gap-2 rounded-lg border border-red-400/40 bg-red-500/10 px-3 py-2 text-[11px] text-red-300">
