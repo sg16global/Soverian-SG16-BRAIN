@@ -26,7 +26,6 @@ export default function RootLayout({ children }: { children: ReactNode }) {
       </head>
       <body className="min-h-screen antialiased">
         <div className="red-atmosphere" aria-hidden />
-        <div className="red-stage" aria-hidden />
         <div className="red-horizon" aria-hidden />
         {children}
       </body>

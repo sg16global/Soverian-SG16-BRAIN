@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Crown, Grid2x2, Menu } from "lucide-react";
+import { Grid2x2, Menu } from "lucide-react";
 import { TOP_LINKS } from "./nav-items";
 import { useAdmin } from "@/lib/use-session";
 
@@ -32,9 +32,8 @@ export function TopNav({ onMenu }: { onMenu: () => void }) {
       <div className="flex h-full items-center gap-3 px-3 sm:px-4">
         {/* Brand */}
         <Link href="/" className="flex flex-none items-center gap-2.5">
-          <span className="grid h-9 w-9 place-items-center rounded-lg border border-red-400/60 bg-gradient-to-b from-red-600/40 to-red-900/40 shadow-[0_0_14px_rgba(255,31,46,.5)]">
-            <Crown className="h-5 w-5 text-amber-300" fill="#f5c44c" strokeWidth={2} />
-          </span>
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src="/images/emblem-base.png" alt="Sovereign SG16 Brain" className="h-10 w-10 flex-none object-contain drop-shadow-[0_0_8px_rgba(255,31,46,.5)]" />
           <span className="leading-none">
             <span className="block font-mono2 text-[8px] tracking-[0.28em] text-cyan-300/80 sm:text-[9px]">
               MISTRALBRAIN.COM

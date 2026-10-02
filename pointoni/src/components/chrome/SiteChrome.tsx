@@ -2,7 +2,6 @@
 
 import { useState, type ReactNode, useMemo } from "react";
 import Link from "next/link";
-import { Crown } from "lucide-react";
 import { COMPANY } from "@/lib/company";
 import { TopNav } from "./TopNav";
 import { Sidebar, SidebarDrawer } from "./Sidebar";
@@ -68,9 +67,8 @@ export function SiteChrome({
             <FooterRail />
             <div className="mx-auto flex max-w-[1200px] flex-col items-center gap-4 px-4 py-10 text-center sm:flex-row sm:justify-between sm:text-left">
               <div className="flex items-center gap-3">
-                <span className="grid h-10 w-10 place-items-center rounded-lg border border-red-400/50 bg-red-950/50">
-                  <Crown className="h-5 w-5 text-amber-300" fill="#f5c44c" />
-                </span>
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src="/images/emblem-base.png" alt="Sovereign SG16 Brain" className="h-11 w-11 flex-none object-contain" />
                 <div>
                   <div className="font-display text-sm font-black tracking-widest text-white">
                     SOVEREIGN <span className="text-red-500">SG16</span> BRAIN
