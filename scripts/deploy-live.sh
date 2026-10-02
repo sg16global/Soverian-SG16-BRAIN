@@ -28,6 +28,7 @@ CADDYFILE="${SG16_DEPLOY_CADDYFILE:-/etc/caddy/Caddyfile}"
 UNIT_DIR="${SG16_DEPLOY_UNIT_DIR:-/etc/systemd/system}"
 CORE_PORT="${SG16_CORE_PORT:-8080}"
 WEB_PORT="${SG16_WEB_PORT:-3000}"
+BUILD_HEAP_MB="${SG16_DEPLOY_BUILD_HEAP_MB:-6144}"   # V8 heap for `next build` (the server has 24 GB; Ollama holds ~14 GB of it)
 MIN_KB="${SG16_DEPLOY_MIN_KB:-3145728}"   # 3 GB free: backup + a second node_modules
 
 DRY=0
@@ -117,6 +118,9 @@ rollback() {
   fi
 
   if [ "$GIT_MOVED" = 1 ]; then
+    # `next build` rewrites these two generated files; put them back so they do not follow us
+    # onto the old branch (the operator's own edits to them, if any, are already in the stash)
+    G checkout -- pointoni/next-env.d.ts pointoni/tsconfig.json >>"$LOG" 2>&1 || true
     # no reset --hard / clean: step off the branch, move its pointer back, return
     if G checkout --detach "$PREV_SHA" >>"$LOG" 2>&1; then
       if [ -n "$PREV_BRANCH" ]; then
@@ -148,7 +152,8 @@ rollback() {
     systemctl restart sg16-core >>"$LOG" 2>&1 || ok=0
     wait_for "core (after rollback)" "http://127.0.0.1:$CORE_PORT/api/health" 60 || ok=0
     systemctl restart sg16-web >>"$LOG" 2>&1 || ok=0
-    wait_for "platform (after rollback)" "http://127.0.0.1:$WEB_PORT/api/live" 90 || ok=0
+    # /api/health, not /api/live: the version being restored may predate /api/live
+    wait_for "platform (after rollback)" "http://127.0.0.1:$WEB_PORT/api/health" 90 || ok=0
   fi
 
   echo
@@ -176,6 +181,11 @@ done
 [ -f "$CADDYFILE" ] && { command -v caddy >/dev/null 2>&1 || die "Caddyfile exists but caddy is not installed"; }
 free_kb="$(df -Pk "$APP" | awk 'NR==2{print $4}')"
 [ "${free_kb:-0}" -ge "$MIN_KB" ] 2>/dev/null || die "not enough free disk (${free_kb:-?} KB free, need $MIN_KB KB)"
+
+if [ -r /proc/meminfo ]; then
+  avail_mb=$(( $(awk '/MemAvailable/ {print $2}' /proc/meminfo) / 1024 ))
+  [ "$avail_mb" -ge "$BUILD_HEAP_MB" ] || warn "only ${avail_mb} MB of memory available; the build may need ${BUILD_HEAP_MB} MB (stop other heavy jobs if it fails - a failed build rolls back safely)"
+fi
 
 PREV_BRANCH="$(G symbolic-ref -q --short HEAD || true)"
 PREV_SHA="$(G rev-parse HEAD)" || die "cannot read the current git state"
@@ -372,8 +382,9 @@ build_step() {
   say "npm ci --include=dev (log: $LOG)"
   (cd "$P" && npm ci --include=dev --ignore-scripts --no-audit --no-fund) >>"$LOG" 2>&1 || return 1
   (cd "$P" && npm run sync-onnx) >>"$LOG" 2>&1 || return 1
-  say "next build"
-  (cd "$P" && npx next build) >>"$LOG" 2>&1 || return 1
+  say "next build (heap limit ${BUILD_HEAP_MB} MB)"
+  # the default V8 heap ran out during the type-check step on the server; give the build more
+  (cd "$P" && NODE_OPTIONS="--max-old-space-size=$BUILD_HEAP_MB" npx next build) >>"$LOG" 2>&1 || return 1
   say "build ok"
 }
 

@@ -57,7 +57,7 @@ exit 0
 SH
 cat >"$T/bin/npx" <<SH
 #!/usr/bin/env bash
-echo "npx \$*" >>"$T/npm.log"
+echo "npx \$* [NODE_OPTIONS=\${NODE_OPTIONS:-}]" >>"$T/npm.log"
 touch "$T/building"
 [ "\${HANG_BUILD:-0}" = 1 ] && sleep 60
 [ "\${FAIL_BUILD:-0}" = 1 ] && { echo "build error (simulated)"; exit 1; }
@@ -80,7 +80,10 @@ branch="\$("$REAL_GIT" -C "$APPD" symbolic-ref --short HEAD 2>/dev/null)"
 code=200
 case "\$url" in
   *8080*/api/health) ;;
-  *3000*/api/live) [ "\${FAIL_LIVE:-0}" = 1 ] && [ "\$branch" = fixes ] && code=500 ;;
+  *3000*/api/live)
+    [ "\${FAIL_LIVE:-0}" = 1 ] && [ "\$branch" = fixes ] && code=500
+    # the old version has no /api/live route at all
+    [ "\$branch" = main ] && code=404 ;;
   *3000*/api/health) ;;
   *3000*/api/brain)
     if echo "\$body" | grep -q bomb; then json='{"assistantMessage":{"content":"refused"},"brain":"core-gate"}'
@@ -184,6 +187,7 @@ check "backup holds tar, .env, state/, Caddyfile and units" '[ -s "$BKD/app.tgz"
 check "the backed-up .env is the pre-deploy one" '[ "$(md5sum <"$BKD/env.backup")" = "$H_ENV" ]'
 check "the tar excludes node_modules and .venv" '! tar tzf "$BKD/app.tgz" | grep -Eq "node_modules|\.venv"'
 check "old build kept aside for rollback" '[ -f "$APPD/pointoni/node_modules.rollback/old.txt" ] && [ -f "$APPD/pointoni/.next.rollback/old.txt" ] && [ -f "$APPD/pointoni/node_modules/pkg/new.txt" ]'
+check "next build gets a raised heap limit" 'grep -q "npx next build \[NODE_OPTIONS=--max-old-space-size=[0-9]" "$T/npm.log"'
 check "npm ci --include=dev and next build ran" 'grep -q "npm ci --include=dev" "$T/npm.log" && grep -q "npx next build" "$T/npm.log"'
 check "units: operator-added Environment lines and bind address are kept" 'grep -q "SG16_CUSTOM_CORE=keepme" "$UNITS/sg16-core.service" && grep -q "serve.py 0.0.0.0 8080" "$UNITS/sg16-core.service" && grep -q "SG16_CUSTOM_WEB=keepme" "$UNITS/sg16-web.service" && grep -q -- "-H 0.0.0.0" "$UNITS/sg16-web.service" && grep -q "Restart=always" "$UNITS/sg16-core.service" && [ -f "$UNITS/sg16-healthcheck.timer" ]'
 check "core restarted before web, timer enabled last" 'c=$(grep -n "^restart sg16-core" "$T/systemctl.log" | head -1 | cut -d: -f1); w=$(grep -n "^restart sg16-web" "$T/systemctl.log" | head -1 | cut -d: -f1); t=$(grep -n "enable --now sg16-healthcheck.timer" "$T/systemctl.log" | cut -d: -f1); [ -n "$c" ] && [ "$c" -lt "$w" ] && [ "$w" -lt "$t" ]'
@@ -199,6 +203,7 @@ check "rollback: .env, Caddyfile and units are byte-identical to before" '[ "$(m
 check "rollback: previous node_modules and build are back" '[ -f "$APPD/pointoni/node_modules/old.txt" ] && [ ! -e "$APPD/pointoni/node_modules/pkg" ] && [ -f "$APPD/pointoni/.next/old.txt" ] && [ ! -e "$APPD/pointoni/.next/new.txt" ]'
 check "rollback: state/ and untracked files untouched" '[ "$(md5sum <"$APPD/state/billing_state.json")" = "$H_STATE" ] && [ -f "$APPD/stage-bg.jpg" ]'
 check "rollback: services restarted again, watchdog timer never enabled" '[ "$(grep -c "^restart sg16-core" "$T/systemctl.log")" -ge 2 ] && ! grep -q "enable --now sg16-healthcheck.timer" "$T/systemctl.log"'
+check "rollback verifies the OLD version on /api/health (it has no /api/live) and reports a clean ROLLED BACK" 'grep -qx "ROLLED BACK" "$T/out" && ! grep -q "WITH PROBLEMS" "$T/out" && grep -q "platform (after rollback) is up" "$T/out"'
 check "rollback printed no secret and ran no forbidden git" '! secret_in_output && ! forbidden_git'
 
 # 5 build failure -> rollback --------------------------------------------------------------
