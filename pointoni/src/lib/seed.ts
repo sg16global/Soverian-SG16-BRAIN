@@ -4,56 +4,24 @@ import { eq } from "drizzle-orm";
 
 export const DEFAULT_USER_HANDLE = "pilot@sovereign.sg16";
 
-const MODELS = [
-  {
-    id: "sg16-brain",
-    name: "SG16 Brain",
-    vendor: "Sovereign Systems",
-    role: "Configured structural core",
-    description:
-      "Deterministic structural gateway path with limited knowledge coverage; not a broad pretrained language model.",
-    glyph: "brain",
-    accent: "#22e08c",
-    status: "configured",
-    latencyMs: 0,
-    contextWindow: "8K chars",
-    selfHosted: true,
-    capabilities: ["Structure", "Arithmetic", "Safety gate"],
-    sortOrder: 0,
-  },
-  {
-    id: "mistral-x",
-    name: "Optional Ollama relay",
-    vendor: "Operator-configured",
-    role: "Optional local bridge",
-    description:
-      "Available only when the operator enables Ollama and a local model. Not enabled by default in this reference build.",
-    glyph: "flame",
-    accent: "#ff8a3d",
-    status: "standby",
-    latencyMs: 0,
-    contextWindow: "depends on model",
-    selfHosted: false,
-    capabilities: ["Optional local relay"],
-    sortOrder: 1,
-  },
-  {
-    id: "claude",
-    name: "External relay example",
-    vendor: "Operator-configured provider",
-    role: "Optional external path",
-    description:
-      "Illustrative provider slot. Availability requires operator-supplied credentials and provider connectivity; otherwise this row is not live.",
-    glyph: "sparkles",
-    accent: "#e0875a",
-    status: "not-configured",
-    latencyMs: 0,
-    contextWindow: "provider-dependent",
-    selfHosted: false,
-    capabilities: ["External relay example"],
-    sortOrder: 2,
-  },
-];
+// The only model on this platform. Status and latency are NOT stored here: they are
+// measured live (see /api/models), so nothing in this row can go stale or be invented.
+const SG16_MODEL = {
+  id: "sg16-brain",
+  name: "SG16 Brain",
+  vendor: "Sovereign Systems",
+  role: "Safety gate + local model",
+  description:
+    "Every message is screened by the SG16 safety gate, then answered by a local Ollama model (Mistral) when the operator has enabled it, falling back to the deterministic SG16 core.",
+  glyph: "brain",
+  accent: "#22e08c",
+  status: "configured",
+  latencyMs: 0,
+  contextWindow: "8K chars",
+  selfHosted: true,
+  capabilities: ["Safety gate", "Local model", "Deterministic core"],
+  sortOrder: 0,
+};
 
 const NEWS = [
   {
@@ -131,9 +99,11 @@ export async function ensureSeeded(): Promise<void> {
       });
     }
 
-    const existingModels = await db.select({ id: aiModels.id }).from(aiModels);
-    if (existingModels.length === 0) {
-      await db.insert(aiModels).values(MODELS);
+    // Chat sessions reference this row, so it must exist. Older databases may still hold
+    // rows for other models; they are left alone but never offered or used (see /api/models).
+    const sg16 = await db.select({ id: aiModels.id }).from(aiModels).where(eq(aiModels.id, SG16_MODEL.id)).limit(1);
+    if (sg16.length === 0) {
+      await db.insert(aiModels).values(SG16_MODEL);
     }
 
     const existingNews = await db.select({ id: newsItems.id }).from(newsItems).limit(1);

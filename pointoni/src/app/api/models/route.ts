@@ -1,34 +1,58 @@
 import { NextResponse } from "next/server";
 import { db } from "@/db";
 import { aiModels } from "@/db/schema";
-import { asc } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { ensureSeeded } from "@/lib/seed";
+import { brainHealth } from "@/lib/brain-gateway";
+import { ollamaEnabled, ollamaHealth } from "@/lib/ollama-brain";
+import { answerMetrics } from "@/lib/answer-ladder";
 
 export const dynamic = "force-dynamic";
 
+// GET /api/models - what this platform can really do right now.
+// One model (the SG16 brain). Its status comes from probing the core and the Ollama
+// daemon at request time, and its latency is the measured average of answers actually
+// given (null until there is one). The engines list names what is installed in Ollama.
 export async function GET() {
   await ensureSeeded();
-  const models = await db
-    .select({
-      id: aiModels.id,
-      name: aiModels.name,
-      vendor: aiModels.vendor,
-      role: aiModels.role,
-      description: aiModels.description,
-      glyph: aiModels.glyph,
-      accent: aiModels.accent,
-      status: aiModels.status,
-      latencyMs: aiModels.latencyMs,
-      contextWindow: aiModels.contextWindow,
-      selfHosted: aiModels.selfHosted,
-      capabilities: aiModels.capabilities,
-      sortOrder: aiModels.sortOrder,
-    })
-    .from(aiModels)
-    .orderBy(asc(aiModels.sortOrder));
+  const [row] = await db.select().from(aiModels).where(eq(aiModels.id, "sg16-brain")).limit(1);
+
+  const [core, heart] = await Promise.all([
+    brainHealth().then(() => true).catch(() => false),
+    ollamaHealth(),
+  ]);
+  const heartUp = ollamaEnabled() && heart.status === "online";
+  const status = core && heartUp ? "online" : core ? "core-only" : heartUp ? "degraded" : "offline";
+  const metrics = answerMetrics();
 
   return NextResponse.json({
-    models,
+    models: [
+      {
+        id: row?.id ?? "sg16-brain",
+        name: row?.name ?? "SG16 Brain",
+        vendor: row?.vendor ?? "Sovereign Systems",
+        role: row?.role ?? "Safety gate + local model",
+        description: row?.description ?? "",
+        glyph: row?.glyph ?? "brain",
+        accent: row?.accent ?? "#22e08c",
+        status,
+        latencyMs: metrics.avgMs,
+        contextWindow: row?.contextWindow ?? "8K chars",
+        selfHosted: true,
+        capabilities: row?.capabilities ?? [],
+        sortOrder: 0,
+      },
+    ],
+    engines: [
+      { id: "gate+core", status: core ? "online" : "offline" },
+      {
+        id: "ollama",
+        status: heartUp ? "online" : "offline",
+        model: heart.model,
+        installed: heart.models ?? [],
+        detail: heart.detail,
+      },
+    ],
     serverTime: new Date().toISOString(),
   });
 }

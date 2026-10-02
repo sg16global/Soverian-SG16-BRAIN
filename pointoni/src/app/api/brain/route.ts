@@ -27,6 +27,8 @@ import { childrenPreflight, isChildrenOrigin, withChildrenCors } from "@/lib/cor
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
+const SG16_MODEL_ID = "sg16-brain";
+
 function rateLimitedLine(child: boolean, scope: "visitor" | "global"): string {
   if (scope === "global") return "I'm very busy right now - please try again in a moment.";
   return child
@@ -47,7 +49,7 @@ const MAX_BODY_BYTES = 64 * 1024;
 // is still answered locally and flagged `brain: "fallback-local"` so the
 // interface never strands the pilot.
 
-type BrainSource = Engine | "relay";
+type BrainSource = Engine;
 
 // The ladder, top to bottom (see lib/answer-ladder.ts):
 //   core gate → screens the message first; blocked gets the core's refusal
@@ -246,8 +248,9 @@ export async function POST(req: NextRequest) {
   }
 
   const message = typeof body?.message === "string" ? body.message.trim() : "";
-  // a child is always answered by the sovereign model, whatever the client asked for
-  const modelId = !children && typeof body?.modelId === "string" ? body.modelId : "sg16-brain";
+  // Chat is locked to the SG16 brain. A modelId in the request is ignored: there is
+  // no relay to any other model, for anyone.
+  const modelId = SG16_MODEL_ID;
   if (!message) {
     return json({ error: "Message is required." }, { status: 400 });
   }
@@ -284,7 +287,7 @@ export async function POST(req: NextRequest) {
     return json({ error: "Unknown model." }, { status: 404 });
   }
   // Queue full: answer at once instead of hanging, and before anything is stored.
-  if (model.selfHosted && ollamaEnabled() && sharedLimiter().saturated()) {
+  if (ollamaEnabled() && sharedLimiter().saturated()) {
     recordAnswer("busy");
     return json({ error: BUSY_TEXT, busy: true, brain: "busy" }, { status: 503, headers: { "Retry-After": "3" } });
   }
@@ -297,24 +300,6 @@ export async function POST(req: NextRequest) {
     text: string,
     sessionId: string | null,
   ): Promise<{ content: string; brain: BrainSource; relay: boolean }> => {
-    if (!model.selfHosted) {
-      // External grid systems stay on the orchestrator relay path.
-      const historyRows = sessionId
-        ? await db
-            .select({ role: chatMessages.role, content: chatMessages.content })
-            .from(chatMessages)
-            .where(eq(chatMessages.sessionId, sessionId))
-            .orderBy(asc(chatMessages.createdAt))
-            .limit(20)
-        : [];
-      const local = await generateReply(
-        { id: model.id, name: model.name, vendor: model.vendor, selfHosted: false },
-        sessionId ? historyRows.slice(0, -1) : [],
-        text,
-      );
-      return { content: local.content, brain: "relay", relay: true };
-    }
-
     const passToken = (account?.identity && planActive(account.identity)
       ? account.identity.planToken
       : null) ?? tierInfo.passToken;
@@ -340,11 +325,7 @@ export async function POST(req: NextRequest) {
         (await brainChat(t, sessionId ?? `ephemeral-${randomUUID()}`, passToken)).reply,
       // 4. local guard engine so the pilot is never stranded
       local: async (t, detail) => {
-        const local = await generateReply(
-          { id: model.id, name: model.name, vendor: model.vendor, selfHosted: true },
-          [],
-          t,
-        );
+        const local = await generateReply(t);
         return [warmFallbackLine("fallback-local", detail), local.content].join("\n\n");
       },
       limiter: sharedLimiter(),
