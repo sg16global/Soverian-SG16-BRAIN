@@ -14,12 +14,13 @@ import {
   brainHealth,
   brainIntrospect,
 } from "@/lib/brain-gateway";
-import { ollamaChat, ollamaEnabled, ollamaHealth, ollamaTimeoutMs } from "@/lib/ollama-brain";
+import { ollamaChat, ollamaEnabled, ollamaHealth, ollamaMaxTokens, ollamaTimeoutMs } from "@/lib/ollama-brain";
 import { clientIdentity, directProbe, sharedRateLimiter } from "@/lib/rate-limit";
 import { publicEngine } from "@/lib/public-engine";
 import { isAdminRequest } from "@/lib/admin-gate";
 import { projectFromHeaders } from "@/lib/project-keys";
 import { gateTextFor, sanitizeHistory } from "@/lib/chat-history";
+import { CODE_HINT, codeTokenBudget, isTechnicalRequest } from "@/lib/code-mode";
 import { ENGLISH_FALLBACK_HINT, WEAK_LANGUAGE_NOTE, weakLanguage } from "@/lib/language";
 import { checkHuman, sharedHumanDeps, turnstileEnabled, turnstileSiteKey } from "@/lib/turnstile";
 import { BUSY_TEXT, answerDeadlineMs, answerMetrics, lastAnswer, queueWaitMs, recordAnswer, runLadder, sharedLimiter, type Engine } from "@/lib/answer-ladder";
@@ -240,6 +241,7 @@ export async function POST(req: NextRequest) {
   // The gate reads them together with the new message, so nothing can be smuggled in through them.
   const history = sanitizeHistory(body?.history);
   const gateText = gateTextFor(history, message);
+  const technical = isTechnicalRequest(message);
 
   await ensureSeeded();
   const modelRows = await db.select().from(aiModels).where(eq(aiModels.id, modelId)).limit(1);
@@ -276,7 +278,9 @@ export async function POST(req: NextRequest) {
             const weak = weakLanguage(t);
             if (weak) live?.onDelta?.(`${WEAK_LANGUAGE_NOTE[weak]}\n\n`);
             const turn = await ollamaChat({
-              message: weak ? t + ENGLISH_FALLBACK_HINT : t,
+              // raw scripts and build requests: code first, no chatter, room for a whole file
+              message: (weak ? t + ENGLISH_FALLBACK_HINT : t) + (technical ? CODE_HINT : ""),
+              maxTokens: technical ? codeTokenBudget(ollamaMaxTokens()) : undefined,
               history,
               body: bodyKind,
               onDelta: live?.onDelta,

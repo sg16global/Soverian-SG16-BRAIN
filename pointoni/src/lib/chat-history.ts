@@ -5,6 +5,8 @@
 // used for this one answer and forgotten. Everything in them is untrusted client data: it is trimmed,
 // size-capped, and screened by the safety gate together with the new message.
 
+import { turnLimit } from "./code-mode.ts";
+
 export type HistoryTurn = { role: "user" | "assistant"; content: string };
 
 // Measured on the CPU-only server: text the model has not seen before is read at ~20-40 tokens/s, so every
@@ -21,7 +23,7 @@ export function sanitizeHistory(raw: unknown): HistoryTurn[] {
     if (!item || typeof item !== "object") continue;
     const { role, content } = item as { role?: unknown; content?: unknown };
     if ((role !== "user" && role !== "assistant") || typeof content !== "string") continue;
-    const text = content.trim().slice(0, MAX_TURN_CHARS);
+    const text = content.trim().slice(0, turnLimit(content, MAX_TURN_CHARS));
     if (text) turns.push({ role, content: text });
   }
   return turns;
