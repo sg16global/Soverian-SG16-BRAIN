@@ -13,8 +13,21 @@ const nextConfig: NextConfig = {
   // cached at the edge for a year. The FRIEND engine runtime + model weights
   // and all imagery are immutable per version, so a visitor in any of the
   // 109 countries pays only the first trip through the closest edge.
+  // Baseline security headers on every route, including /api. HTTPS is the
+  // only way the site is served (Cloudflare + Caddy both redirect), so HSTS is
+  // safe from the first response.
   async headers() {
     return [
+      {
+        source: "/:path*",
+        headers: [
+          { key: "Strict-Transport-Security", value: "max-age=31536000; includeSubDomains" },
+          { key: "X-Content-Type-Options", value: "nosniff" },
+          { key: "X-Frame-Options", value: "DENY" },
+          { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
+          { key: "Permissions-Policy", value: "camera=(), microphone=(), geolocation=(), payment=()" },
+        ],
+      },
       {
         source: "/onnx/:path*",
         headers: [
