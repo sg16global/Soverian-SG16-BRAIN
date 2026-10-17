@@ -7,11 +7,11 @@
   "observability": { "enabled": true },
 
   "kv_namespaces": [
-    { "binding": "KEYS", "id": "__REPLACE_WITH_KV_ID__" }
+    { "binding": "KEYS", "id": "9a3ddaf967d843f18614ecd6b785a186" }
   ],
 
   "d1_databases": [
-    { "binding": "LOGS", "database_name": "sg16_logs", "database_id": "__REPLACE_WITH_D1_ID__" }
+    { "binding": "LOGS", "database_name": "sg16_logs", "database_id": "e0080774-8693-4841-9a5b-4d7e8cf3037c" }
   ],
 
   "durable_objects": {
@@ -25,6 +25,7 @@
   ],
 
   "vars": {
+    "MODEL_URL": "https://internal.mistralbrain.com",
     "MODEL_PROVIDER": "ollama",
     "MODEL_NAME": "devstral",
     "MODEL_HEALTH_PATH": "/api/tags",
