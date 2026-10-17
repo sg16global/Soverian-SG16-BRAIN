@@ -1,0 +1,37 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "sg16-brain-core",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-09-01",
+
+  "observability": { "enabled": true },
+
+  "kv_namespaces": [
+    { "binding": "KEYS", "id": "__REPLACE_WITH_KV_ID__" }
+  ],
+
+  "d1_databases": [
+    { "binding": "LOGS", "database_name": "sg16_logs", "database_id": "__REPLACE_WITH_D1_ID__" }
+  ],
+
+  "durable_objects": {
+    "bindings": [
+      { "name": "QUEUE", "class_name": "InferenceQueueDO" },
+      { "name": "MATRIX", "class_name": "MatrixDO" }
+    ]
+  },
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["InferenceQueueDO", "MatrixDO"] }
+  ],
+
+  "vars": {
+    "MODEL_PROVIDER": "ollama",
+    "MODEL_NAME": "devstral",
+    "MODEL_HEALTH_PATH": "/api/tags",
+    "MODEL_NUM_CTX": "8192",
+    "MISTRAL_MODEL": "mistral-small-latest",
+    "MAX_OUTPUT_CHARS": "16384",
+    "INFERENCE_TIMEOUT_MS": "60000",
+    "MAX_QUEUE_WAIT_MS": "45000"
+  }
+}

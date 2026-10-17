@@ -15,3 +15,7 @@ state/
 .env.*
 !.env.example
 .venv/
+
+# brain-core worker package
+brain-core/node_modules/
+brain-core/.wrangler/

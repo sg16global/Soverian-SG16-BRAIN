@@ -1,0 +1,73 @@
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { InferenceGate } from "../src/inference-gate.ts";
+import { KeyState, newRow } from "../src/matrix-do.ts";
+
+test("one slot: second caller queues, FIFO after release", () => {
+  let now = 1000;
+  const gate = new InferenceGate({ waitBudgetMs: 10000, leaseMs: 90000 }, () => now);
+
+  const a = gate.acquire();
+  assert.ok(a.granted);
+  const b = gate.acquire();
+  assert.ok(!b.granted && b.position === 1);
+  const c = gate.acquire();
+  assert.ok(!c.granted && c.position === 2);
+
+  assert.equal(gate.release(a.ticket), true);
+  now += 1;
+  const bPoll = gate.poll(b.ticket);
+  assert.ok(bPoll.granted);                 // FIFO: b before c
+  assert.ok(!gate.poll(c.ticket).granted);
+
+  assert.equal(gate.release(b.ticket), true);
+  assert.ok(gate.poll(c.ticket).granted);
+});
+
+test("release is idempotent for a wrong ticket", () => {
+  const gate = new InferenceGate();
+  const a = gate.acquire();
+  assert.equal(gate.release(a.ticket + 999), false);
+  assert.equal(gate.release(a.ticket), true);
+  assert.ok(gate.acquire().granted);
+});
+
+test("an expired lease reclaims the abandoned slot", () => {
+  let now = 1000;
+  const gate = new InferenceGate({ waitBudgetMs: 10000, leaseMs: 5000 }, () => now);
+  const a = gate.acquire();
+  const b = gate.acquire();
+  assert.ok(a.granted && !b.granted);
+  now += 6000;                                    // caller crashed, never released
+  const c = gate.acquire();
+  assert.ok(c.granted, "lease expiry must reclaim the slot");
+});
+
+test("waiting tickets past their deadline are dropped", () => {
+  let now = 1000;
+  const gate = new InferenceGate({ waitBudgetMs: 100, leaseMs: 90000 }, () => now);
+  gate.acquire();                                  // slot taken
+  const b = gate.acquire(50);                       // waits 50ms
+  now += 60;
+  const poll = gate.poll(b.ticket);
+  assert.ok(!poll.granted && poll.expired);
+});
+
+test("rate limit: fixed minute window, deterministic", () => {
+  const row = newRow("k_1", "platform", 1000);
+  const ks = new KeyState(row);
+  assert.ok(ks.check(1000, 2).allowed);
+  ks.consume(1000);
+  assert.ok(ks.check(1001, 2).allowed);
+  ks.consume(1001);
+  assert.equal(ks.check(1002, 2).allowed, false);       // third in the same minute
+  assert.ok(ks.check(61000, 2).allowed, "new window resets the counter");
+});
+
+test("score step clamps deterministically", () => {
+  const ks = new KeyState(newRow("k_1", "platform", 1000));
+  assert.equal(ks.step(5), 5);
+  assert.equal(ks.step(-2), 3);
+  assert.equal(ks.step(5_000_000), 1_000_000);
+  assert.equal(ks.step(-5_000_000), -1_000_000);
+});

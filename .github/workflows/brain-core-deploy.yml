@@ -1,0 +1,37 @@
+name: Deploy brain-core Worker
+
+# GitHub -> Cloudflare CI/CD for the deterministic brain core.
+# Deploys ONLY the brain-core package; the inference VPS is never touched.
+#
+# Required repository secrets (GitHub -> Settings -> Secrets):
+#   CLOUDFLARE_API_TOKEN    a token with Workers Scripts:Edit + KV:Edit + D1:Edit
+#   CLOUDFLARE_ACCOUNT_ID  your Cloudflare account id
+
+on:
+  push:
+    branches: [main]
+    paths: ["brain-core/**"]
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: brain-core
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Run the deterministic core tests
+        run: |
+          npm install --no-save typescript @cloudflare/workers-types || true
+          node --test "test/*.test.ts"
+      - name: Deploy Worker
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: brain-core
+          command: deploy

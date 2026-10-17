@@ -1,0 +1,473 @@
+// SG16 BRAIN CORE — Cloudflare Worker. The deterministic brain: keys, routing,
+// state matrix, scoring, verification, queue discipline, logging.
+//
+// Flow per request (see docs/BRAIN-CORE-REBUILD.md):
+//   1. hit this Worker on the brain domain
+//   2. validate the API key against KV (owner = user #1, same path as everyone)
+//   3. route: math/logic/state/scoring computed HERE; only language generation
+//      is forwarded to the inference-only VPS through the tunnel, one at a time
+//   4. verify every model output before accepting it; retry once, else reject
+//
+// All errors are machine codes with standard HTTP status; no human-language
+// sentences leave the core.
+
+import { authenticate, loadPolicy, parseAsk } from "./auth.ts";
+import { detectScript } from "./detect.ts";
+import { systemPrompt, messagesFor } from "./prompt.ts";
+import { verifyOutput, requestAllowed } from "./verify.ts";
+import { callModel, ModelError } from "./model-client.ts";
+import { callMistral } from "./mistral.ts";
+import { logRequest, logHistory } from "./d1.ts";
+import { newKey, keyHash, sha256 } from "./keys.ts";
+import type { AskMeta, ErrorBody, KeyRecord, Policy } from "./types.ts";
+
+// Durable Object classes must be exported from the worker entry point
+export { InferenceQueueDO } from "./inference-queue-do.ts";
+export { MatrixDO } from "./matrix-do.ts";
+
+export interface Env {
+  KEYS: KVNamespace;
+  LOGS: D1Database;
+  QUEUE: DurableObjectNamespace;
+  MATRIX: DurableObjectNamespace;
+
+  MODEL_PROVIDER: "ollama" | "llamacpp";
+  MODEL_URL: string;              // set via wrangler var after the tunnel exists
+  MODEL_HEALTH_PATH: string;      // ollama: /api/tags | llamacpp: /health
+  MODEL_NAME: string;
+  MODEL_NUM_CTX: string;
+  MAX_OUTPUT_CHARS: string;
+  INFERENCE_TIMEOUT_MS: string;
+  MAX_QUEUE_WAIT_MS: string;
+  MISTRAL_MODEL: string;
+
+  // secrets (wrangler secret put ...)
+  MODEL_SHARED_SECRET?: string;
+  CF_ACCESS_CLIENT_ID?: string;
+  CF_ACCESS_CLIENT_SECRET?: string;
+  MISTRAL_API_KEY?: string;
+}
+
+export default {
+  async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+    const started = Date.now();
+    const url = new URL(request.url);
+    const path = url.pathname;
+    try {
+      if (request.method === "GET" && path === "/v1/health") return await health(env, started);
+      if (request.method === "POST" && (path === "/v1/ask" || path === "/v1/keys")) {
+        return await withAuth(request, env, async (record) => {
+          if (path === "/v1/keys") return await rotateKey(request, env, ctx, record, started);
+          return await ask(request, env, ctx, record, started);
+        });
+      }
+      if (request.method === "GET" && path === "/v1/state") {
+        return await withAuth(request, env, async (record) => matrixState(env, record));
+      }
+      return jsonError(404, "E_NOT_FOUND");
+    } catch (e) {
+      if (e instanceof HttpError) return jsonError(e.status, e.code);
+      return jsonError(500, "E_INTERNAL");
+    }
+  },
+} satisfies ExportedHandler<Env>;
+
+// ---------------------------------------------------------------------------
+
+class HttpError extends Error {
+  status: number;
+  code: string;
+  constructor(status: number, code: string) { super(code); this.status = status; this.code = code; }
+}
+
+function jsonError(status: number, code: string): Response {
+  const body: ErrorBody = { ok: false, code };
+  return Response.json(body, { status, headers: { "content-type": "application/json" } });
+}
+
+async function withAuth(
+  request: Request,
+  env: Env,
+  handler: (record: KeyRecord) => Promise<Response>,
+): Promise<Response> {
+  const auth = await authenticate(request.headers.get("authorization"), env.KEYS);
+  if (!auth.ok) return jsonError(401, "E_UNAUTHORIZED");
+  return handler(auth.record);
+}
+
+async function ask(
+  request: Request,
+  env: Env,
+  ctx: ExecutionContext,
+  record: KeyRecord,
+  started: number,
+): Promise<Response> {
+  const body = await request.json().catch(() => null);
+  const parsed = parseAsk(body);
+  if (!parsed) return await finish(env, ctx, record, "chat", "none", 400, started, 0, false, "E_BAD_REQUEST",
+    jsonError(400, "E_BAD_REQUEST"));
+
+  const policy = await loadPolicy(env.KEYS, record.project);
+  const rate = await rateCheck(env, record, policy);
+  if (!rate.allowed) {
+    return await finish(env, ctx, record, parsed.kind, "none", 429, started, 0, false, "E_RATE_LIMIT",
+      jsonError(429, "E_RATE_LIMIT"));
+  }
+
+  if (parsed.kind === "state") {
+    const row = await matrixOp(env, record, body as Record<string, unknown>);
+    return await finish(env, ctx, record, "state", "core", 200, started, 0, true, undefined,
+      Response.json({ ok: true, state: row }));
+  }
+  if (parsed.kind === "compute") {
+    const answer = deterministicCompute(parsed.text);
+    if (answer === null) {
+      return await finish(env, ctx, record, "compute", "core", 400, started, 0, false, "E_BAD_REQUEST",
+        jsonError(400, "E_BAD_REQUEST"));
+    }
+    return await finish(env, ctx, record, "compute", "core", 200, started, 0, true, undefined,
+      Response.json({ ok: true, result: answer, meta: { engine: "core", verified: true } }));
+  }
+
+  // ---- chat: the only route that reaches the model ----
+  if (!requestAllowed(parsed.text, policy)) {
+    return await finish(env, ctx, record, "chat", "none", 403, started, 0, false, "E_FORBIDDEN",
+      jsonError(403, "E_FORBIDDEN"));
+  }
+
+  const detect = detectScript(parsed.text);
+  const prompt = systemPrompt(detect);
+  const messages = messagesFor(prompt, parsed.text);
+  const maxQueueMs = Math.min(policy.max_queue_ms, Number(env.MAX_QUEUE_WAIT_MS) || 45000);
+
+  const queueStarted = Date.now();
+  const grant = await acquireSlot(env, maxQueueMs);
+  if (!grant.granted) {
+    return await finish(env, ctx, record, "chat", "none", 429, started, 0, false, "E_RATE_LIMIT",
+      jsonError(429, "E_RATE_LIMIT"));
+  }
+  const queueMs = Date.now() - queueStarted;
+
+  const modelCfg = {
+    provider: env.MODEL_PROVIDER,
+    url: env.MODEL_URL,
+    model: env.MODEL_NAME,
+    numCtx: Number(env.MODEL_NUM_CTX) || 8192,
+    timeoutMs: Number(env.INFERENCE_TIMEOUT_MS) || 60000,
+    sharedSecret: env.MODEL_SHARED_SECRET ?? "",
+    accessClientId: env.CF_ACCESS_CLIENT_ID ?? "",
+    accessClientSecret: env.CF_ACCESS_CLIENT_SECRET ?? "",
+  };
+
+  try {
+    let text: string | null = null;
+    let engine: AskMeta["engine"] = "model-vps";
+    try {
+      text = await attempt(env, modelCfg, messages, policy);
+    } catch (e) {
+      if (e instanceof ModelError && env.MISTRAL_API_KEY) {
+        // the one permitted backup route — VPS inference failed
+        text = await attemptMistral(env, messages, policy);
+        engine = "mistral-backup";
+      } else {
+        throw e;
+      }
+    }
+    const meta: AskMeta = {
+      engine,
+      queue_ms: queueMs,
+      latency_ms: Date.now() - started,
+      verified: true,
+      script: detect.script,
+    };
+    const response = Response.json({ ok: true, answer: text, meta });
+    return await finish(env, ctx, record, "chat", engine, 200, started, queueMs, true, undefined, response,
+      parsed.text, text);
+  } catch (e) {
+    if (e instanceof HttpError) {
+      return await finish(env, ctx, record, "chat", "none", e.status, started, queueMs, false, e.code,
+        jsonError(e.status, e.code));
+    }
+    const code = e instanceof ModelError ? "E_UPSTREAM" : "E_INTERNAL";
+    const status = e instanceof ModelError ? 502 : 500;
+    return await finish(env, ctx, record, "chat", "none", status, started, queueMs, false, code,
+      jsonError(status, code));
+  } finally {
+    await releaseSlot(env, grant.ticket);
+  }
+}
+
+// one retry inside the model call, then the caller decides (mistral backup / reject)
+async function attempt(env: Env, cfg: ReturnType<typeof modelCfgOf>, messages: unknown, policy: Policy): Promise<string> {
+  for (let i = 0; i < 2; i++) {
+    const text = await callModel(cfg, messages as never);
+    const v = verifyOutput({
+      text,
+      requireJson: policy.require_json,
+      maxOutputChars: Number(env.MAX_OUTPUT_CHARS) || 16384,
+      blockedPatterns: policy.blocked_patterns,
+    });
+    if (v.ok) return text;
+    if (i === 1) throw new HttpError(502, "E_UNVERIFIED");
+  }
+  throw new HttpError(502, "E_UNVERIFIED");
+}
+
+function modelCfgOf(env: Env) {
+  return {
+    provider: env.MODEL_PROVIDER,
+    url: env.MODEL_URL,
+    model: env.MODEL_NAME,
+    numCtx: Number(env.MODEL_NUM_CTX) || 8192,
+    timeoutMs: Number(env.INFERENCE_TIMEOUT_MS) || 60000,
+    sharedSecret: env.MODEL_SHARED_SECRET ?? "",
+    accessClientId: env.CF_ACCESS_CLIENT_ID ?? "",
+    accessClientSecret: env.CF_ACCESS_CLIENT_SECRET ?? "",
+  };
+}
+
+async function attemptMistral(env: Env, messages: unknown, policy: Policy): Promise<string> {
+  const text = await callMistral(
+    { apiKey: env.MISTRAL_API_KEY ?? "", model: env.MISTRAL_MODEL || "mistral-small-latest", timeoutMs: 30000 },
+    messages as never,
+  );
+  const v = verifyOutput({
+    text,
+    requireJson: policy.require_json,
+    maxOutputChars: Number(env.MAX_OUTPUT_CHARS) || 16384,
+    blockedPatterns: policy.blocked_patterns,
+  });
+  if (!v.ok) throw new HttpError(502, "E_UNVERIFIED");
+  return text;
+}
+
+// ---------------------------------------------------------------------------
+// queue plumbing (single Durable Object, name "global")
+
+interface Grant { granted: true; ticket: number }
+
+async function queueDo(env: Env, path: string, body?: unknown): Promise<Record<string, unknown>> {
+  const id = env.QUEUE.idFromName("global");
+  const stub = env.QUEUE.get(id);
+  const response = await stub.fetch("https://do" + path, {
+    method: body === undefined ? "GET" : "POST",
+    headers: { "content-type": "application/json" },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  return (await response.json()) as Record<string, unknown>;
+}
+
+async function acquireSlot(env: Env, maxQueueMs: number): Promise<Grant> {
+  const first = await queueDo(env, "/acquire", { waitBudgetMs: maxQueueMs });
+  if (first.granted) return { granted: true, ticket: first.ticket as number };
+  const ticket = first.ticket as number;
+  const deadline = Date.now() + maxQueueMs;
+  while (Date.now() < deadline) {
+    await sleep(200);
+    const poll = await queueDo(env, "/poll", { ticket });
+    if (poll.granted) return { granted: true, ticket };
+    if (poll.expired) break;
+  }
+  await queueDo(env, "/abandon", { ticket });
+  return { granted: false, ticket };
+}
+
+async function releaseSlot(env: Env, ticket: number): Promise<void> {
+  await queueDo(env, "/release", { ticket });
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+// ---------------------------------------------------------------------------
+// matrix plumbing (shard one DO per key id)
+
+async function matrixDo(env: Env, keyId: string, path: string, method: string, body?: unknown): Promise<Record<string, unknown>> {
+  const id = env.MATRIX.idFromName("m:" + keyId);
+  const stub = env.MATRIX.get(id);
+  const response = await stub.fetch("https://do" + path, {
+    method,
+    headers: { "content-type": "application/json" },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  return (await response.json()) as Record<string, unknown>;
+}
+
+async function rateCheck(env: Env, record: KeyRecord, policy: Policy): Promise<{ allowed: boolean }> {
+  const verdict = await matrixDo(env, record.id, "/check", "POST", {
+    key_id: record.id,
+    project: record.project,
+    rpm: policy.rpm,
+    now: Date.now(),
+  });
+  return { allowed: Boolean(verdict.allowed) };
+}
+
+async function matrixOp(env: Env, record: KeyRecord, body: Record<string, unknown>): Promise<unknown> {
+  if (body.op === "score.step") {
+    const out = await matrixDo(env, record.id, "/step", "POST", {
+      key_id: record.id,
+      project: record.project,
+      delta: Number(body.delta ?? 0),
+      now: Date.now(),
+    });
+    return out;
+  }
+  const out = await matrixDo(env, record.id, "/state", "GET");
+  return out;
+}
+
+async function matrixState(env: Env, record: KeyRecord): Promise<Response> {
+  const row = await matrixDo(env, record.id, "/state", "GET");
+  return Response.json({ ok: true, state: row });
+}
+
+// ---------------------------------------------------------------------------
+// key rotation — the same endpoint for every consumer, owner included
+
+async function rotateKey(
+  request: Request,
+  env: Env,
+  ctx: ExecutionContext,
+  record: KeyRecord,
+  started: number,
+): Promise<Response> {
+  // a key can only rotate itself; the owner rotates like everyone else
+  const { key } = newKey();
+  const id = "k_" + (await sha256(key)).slice(0, 12);
+  const nextRecord: KeyRecord = {
+    id,
+    user: record.user,
+    project: record.project,
+    created: Date.now(),
+    revoked: false,
+  };
+  await env.KEYS.put(await keyHash(key), JSON.stringify(nextRecord));
+  const oldKey = keyFromAuth(request);
+  if (oldKey) await env.KEYS.put(await keyHash(oldKey), JSON.stringify({ ...record, revoked: true }));
+  return await finish(env, ctx, record, "chat", "none", 200, started, 0, true, undefined,
+    Response.json({ ok: true, key, record: { id, user: record.user, project: record.project } }));
+}
+
+function keyFromAuth(request: Request): string {
+  return request.headers.get("authorization")?.split(" ")[1] ?? "";
+}
+
+// ---------------------------------------------------------------------------
+// health — component probes, machine-readable
+
+async function health(env: Env, started: number): Promise<Response> {
+  const out: Record<string, unknown> = { ok: false, ts: started };
+  try {
+    await env.KEYS.get("health:sentinel");
+    out.kv = true;
+  } catch { out.kv = false; }
+  try {
+    await env.LOGS.prepare("SELECT 1").first();
+    out.d1 = true;
+  } catch { out.d1 = false; }
+  try {
+    const stats = await queueDo(env, "/stats");
+    out.queue = { waiting: stats.waiting, busy: stats.busy };
+  } catch { out.queue = false; }
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 5000);
+    const response = await fetch(env.MODEL_URL + (env.MODEL_HEALTH_PATH || "/api/tags"), {
+      headers: {
+        "authorization": `Bearer ${env.MODEL_SHARED_SECRET ?? ""}`,
+        "CF-Access-Client-Id": env.CF_ACCESS_CLIENT_ID ?? "",
+        "CF-Access-Client-Secret": env.CF_ACCESS_CLIENT_SECRET ?? "",
+      },
+      signal: controller.signal,
+    });
+    clearTimeout(timer);
+    out.model = response.ok;
+  } catch { out.model = false; }
+  out.ok = out.kv === true && out.d1 === true;
+  return Response.json(out, { status: out.ok ? 200 : 503 });
+}
+
+// ---------------------------------------------------------------------------
+// D1 logging + response wrapper
+
+async function finish(
+  env: Env,
+  ctx: ExecutionContext,
+  record: KeyRecord,
+  kind: string,
+  engine: AskMeta["engine"] | "none",
+  http: number,
+  started: number,
+  queueMs: number,
+  verified: boolean,
+  errCode: string | undefined,
+  response: Response,
+  userText?: string,
+  answerText?: string,
+): Promise<Response> {
+  ctx.waitUntil((async () => {
+    try {
+      logRequest(env.LOGS, {
+        keyId: record.id, userId: record.user, project: record.project, kind, engine,
+        http, latencyMs: Date.now() - started, queueMs, verified, errCode,
+      }, Date.now());
+      if (userText && answerText && http === 200) {
+        logHistory(env.LOGS, {
+          keyId: record.id, project: record.project,
+          requestDigest: await sha256(userText),
+          responseDigest: await sha256(answerText),
+          engine: engine as AskMeta["engine"], verified,
+        }, Date.now());
+      }
+    } catch {
+      // logging is best-effort
+    }
+  })());
+  return response;
+}
+
+// ---------------------------------------------------------------------------
+// deterministic compute — safe arithmetic inside the Worker (no eval)
+
+export function deterministicCompute(expr: string): number | null {
+  const s = expr.replace(/\s+/g, "");
+  if (!s || s.length > 512 || !/^[0-9+\-*/().]+$/.test(s)) return null;
+  let pos = 0;
+  const peek = () => s[pos];
+  const eat = (ch: string) => (s[pos] === ch ? (pos += 1, true) : false);
+
+  function parseExpr(): number | null {
+    let left = parseTerm();
+    if (left === null) return null;
+    for (;;) {
+      if (eat("+")) { const r = parseTerm(); if (r === null) return null; left += r; }
+      else if (eat("-")) { const r = parseTerm(); if (r === null) return null; left -= r; }
+      else return left;
+    }
+  }
+  function parseTerm(): number | null {
+    let left = parseFactor();
+    if (left === null) return null;
+    for (;;) {
+      if (eat("*")) { const r = parseFactor(); if (r === null) return null; left *= r; }
+      else if (eat("/")) { const r = parseFactor(); if (r === null) return null; if (r === 0) return null; left /= r; }
+      else return left;
+    }
+  }
+  function parseFactor(): number | null {
+    if (eat("+")) return parseFactor();
+    if (eat("-")) { const v = parseFactor(); return v === null ? null : -v; }
+    if (eat("(")) { const v = parseExpr(); if (v === null || !eat(")")) return null; return v; }
+    const start = pos;
+    while (pos < s.length && /[0-9.]/.test(peek())) pos += 1;
+    if (start === pos) return null;
+    const num = Number(s.slice(start, pos));
+    return Number.isFinite(num) ? num : null;
+  }
+
+  const value = parseExpr();
+  if (value === null || pos !== s.length || !Number.isFinite(value)) return null;
+  return Math.round(value * 1e9) / 1e9;
+}
