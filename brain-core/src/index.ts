@@ -21,7 +21,7 @@ import { logRequest, logHistory } from "./d1.ts";
 import { newKey, keyHash, sha256 } from "./keys.ts";
 import { billingRoute } from "./billing-routes.ts";
 import { clientRoute, resolvePass, passKeyRecord, refuseStage } from "./client-routes.ts";
-import { designCompatRoute } from "./design-compat.ts";
+import { designCompatRoute, designRscRoute } from "./design-compat.ts";
 import { projectScanRoute } from "./project-scan.ts";
 import type { AskMeta, ErrorBody, KeyRecord, Policy } from "./types.ts";
 
@@ -112,6 +112,8 @@ export default {
         return await withAuth(request, env, async (record) => matrixState(env, record));
       }
       if (path.startsWith("/api/") || path.startsWith("/v1/")) return jsonError(404, "E_NOT_FOUND");
+      const rsc = await designRscRoute(request, path, env.ASSETS);
+      if (rsc) return rsc;
       return env.ASSETS.fetch(request); // the staged web client (static assets)
     } catch (e) {
       if (e instanceof HttpError) return jsonError(e.status, e.code);

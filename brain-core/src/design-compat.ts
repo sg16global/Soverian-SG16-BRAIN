@@ -511,3 +511,45 @@ function revokedProjects(env: DesignEnv): string[] {
     .map((p) => p.trim().toLowerCase())
     .filter(Boolean);
 }
+
+// ------------------------------------------------------------------ rsc routes
+// Next.js client-side navigation asks the origin for a flight payload
+// (header rsc: 1, response content-type text/x-component). The mirrored
+// design is a static export, so those requests used to fall through to the
+// page HTML and the router died with "This page couldn't load" (E394) —
+// every in-site link, and the post-login jump to /admin, was broken.
+// The payload the router expects is the same flight stream embedded in each
+// page's own HTML, extracted once into site/rsc/<route>.txt by
+// scripts/extract-rsc.mjs and staged by sync-web.mjs. Serve it with the same
+// headers the old host sent.
+
+const RSC_ROUTES = new Set([
+  "", "/admin", "/api-access", "/chat", "/contact", "/files", "/history",
+  "/login", "/services", "/signed-out", "/subscription", "/support", "/vision",
+]);
+
+export async function designRscRoute(
+  request: Request,
+  path: string,
+  assets: Fetcher,
+): Promise<Response | null> {
+  if (request.method !== "GET") return null;
+  if (!request.headers.get("rsc")) return null;
+  if (request.headers.get("next-action")) return null; // server actions are not part of the design
+  const route = path === "/" ? "" : path.length > 1 && path.endsWith("/") ? path.slice(0, -1) : path;
+  if (route.includes("/", 1)) return null; // the design's routes are flat
+  if (!RSC_ROUTES.has(route)) return null;
+  const assetPath = route === "" ? "/rsc/index.txt" : "/rsc" + route + ".txt";
+  const asset = await assets.fetch("https://assets.local" + assetPath);
+  if (!asset.ok) return null;
+  return new Response(asset.body, {
+    status: 200,
+    headers: {
+      "content-type": "text/x-component",
+      "cache-control": "public, max-age=300, stale-while-revalidate=86400",
+      "vary": "rsc, next-router-state-tree, next-router-prefetch, next-router-segment-prefetch",
+      "x-nextjs-prerender": "1",
+      "x-nextjs-stale-time": "300",
+    },
+  });
+}

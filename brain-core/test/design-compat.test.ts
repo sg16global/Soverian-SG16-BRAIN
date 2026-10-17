@@ -15,6 +15,7 @@ import {
   createProjectKey,
   verifyProjectKey,
   designCompatRoute,
+  designRscRoute,
   type DesignEnv,
 } from "../src/design-compat.ts";
 import { authenticate } from "../src/auth.ts";
@@ -329,4 +330,63 @@ test("GET /api/models: one honest model; engines only for the operator", async (
   );
   const adminBody = (await admin?.json()) as { engines: unknown[] };
   assert.ok(Array.isArray(adminBody.engines) && adminBody.engines.length > 0);
+});
+
+// ---------------------------------------------------------------- rsc routes
+
+const rscPayloads: Record<string, string> = {
+  "/rsc/index.txt": "1:\"$Sreact.fragment\"\n0:{\"c\":[\"\"],\"b\":\"build\"}",
+  "/rsc/admin.txt": "1:\"$Sreact.fragment\"\n0:{\"c\":[\"\",\"admin\"],\"b\":\"build\"}",
+  "/rsc/vision.txt": "1:\"$Sreact.fragment\"\n0:{\"c\":[\"\",\"vision\"],\"b\":\"build\"}",
+};
+
+function fakeAssets(paths: Record<string, string>): { fetch: (input: string) => Promise<Response> } {
+  return {
+    fetch: async (input: string) => {
+      const path = new URL(input).pathname;
+      const body = paths[path];
+      if (body === undefined) return new Response("Not Found", { status: 404 });
+      return new Response(body, { status: 200 });
+    },
+  };
+}
+
+const rscRequest = (path: string, headers: Record<string, string> = {}) =>
+  new Request("https://mistralbrain.com" + path, { headers });
+
+test("rsc route serves the flight payload for a navigation request", async () => {
+  const assets = fakeAssets(rscPayloads);
+  const res = await designRscRoute(rscRequest("/admin", { rsc: "1" }), "/admin", assets as never);
+  assert.ok(res);
+  assert.equal(res.status, 200);
+  assert.equal(res.headers.get("content-type"), "text/x-component");
+  assert.equal(res.headers.get("x-nextjs-stale-time"), "300");
+  assert.equal(await res.text(), rscPayloads["/rsc/admin.txt"]);
+});
+
+test("rsc route normalizes trailing slashes and serves the root payload", async () => {
+  const assets = fakeAssets(rscPayloads);
+  const slash = await designRscRoute(rscRequest("/admin/", { rsc: "1" }), "/admin/", assets as never);
+  assert.ok(slash && (await slash.text()) === rscPayloads["/rsc/admin.txt"]);
+  const root = await designRscRoute(rscRequest("/", { rsc: "1" }), "/", assets as never);
+  assert.ok(root && (await root.text()) === rscPayloads["/rsc/index.txt"]);
+});
+
+test("rsc route ignores non-navigation requests", async () => {
+  const assets = fakeAssets(rscPayloads);
+  // no rsc header: a normal browser page load
+  assert.equal(await designRscRoute(rscRequest("/admin"), "/admin", assets as never), null);
+  // server actions are not part of the static design
+  assert.equal(await designRscRoute(rscRequest("/admin", { rsc: "1", "next-action": "x" }), "/admin", assets as never), null);
+  // POST navigations do not exist
+  const post = new Request("https://mistralbrain.com/admin", { method: "POST", headers: { rsc: "1" } });
+  assert.equal(await designRscRoute(post, "/admin", assets as never), null);
+});
+
+test("rsc route declines unknown and nested routes, and missing payloads", async () => {
+  const assets = fakeAssets(rscPayloads);
+  assert.equal(await designRscRoute(rscRequest("/secret", { rsc: "1" }), "/secret", assets as never), null);
+  assert.equal(await designRscRoute(rscRequest("/admin/nested", { rsc: "1" }), "/admin/nested", assets as never), null);
+  const empty = fakeAssets({});
+  assert.equal(await designRscRoute(rscRequest("/vision", { rsc: "1" }), "/vision", empty as never), null);
 });
