@@ -19,3 +19,4 @@ state/
 # brain-core worker package
 brain-core/node_modules/
 brain-core/.wrangler/
+.claude/
