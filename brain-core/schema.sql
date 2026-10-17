@@ -31,3 +31,29 @@ CREATE TABLE IF NOT EXISTS history (
   verified         INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_history_key ON history(key_id, ts);
+
+-- Payment pipeline (Dodo Payments MoR). checkouts = in-flight checkout
+-- sessions; passes = issued pass records (the signed record itself is
+-- stateless, the row is for pickup/admin and legacy 64-hex tokens);
+-- webhook_events = replay dedupe.
+CREATE TABLE IF NOT EXISTS checkouts (
+  ref                 TEXT PRIMARY KEY,    -- host checkout ref
+  pass_id             TEXT NOT NULL,
+  region              TEXT,
+  status              TEXT NOT NULL,       -- pending | paid | expired
+  opened_at           INTEGER NOT NULL,    -- unix s
+  gateway_session_id  TEXT,
+  record_token        TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_checkouts_gateway ON checkouts(gateway_session_id);
+
+CREATE TABLE IF NOT EXISTS passes (
+  token      TEXT PRIMARY KEY,
+  record     TEXT NOT NULL,
+  created_at INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS webhook_events (
+  webhook_id TEXT PRIMARY KEY,
+  seen_at    INTEGER NOT NULL
+);

@@ -19,6 +19,7 @@ import { callModel, ModelError } from "./model-client.ts";
 import { callMistral } from "./mistral.ts";
 import { logRequest, logHistory } from "./d1.ts";
 import { newKey, keyHash, sha256 } from "./keys.ts";
+import { billingRoute } from "./billing-routes.ts";
 import type { AskMeta, ErrorBody, KeyRecord, Policy } from "./types.ts";
 
 // Durable Object classes must be exported from the worker entry point
@@ -41,6 +42,14 @@ export interface Env {
   MAX_QUEUE_WAIT_MS: string;
   MISTRAL_MODEL: string;
 
+  // billing (Dodo Payments MoR pipeline — see billing-routes.ts)
+  DODO_TEST_MODE?: string;
+  DODO_PRODUCT_IDS?: string;
+  ALLOWED_RETURN_ORIGINS?: string;
+  DODO_API_KEY?: string;
+  DODO_WEBHOOK_SECRET?: string;
+  BILLING_SECRET?: string;
+
   // secrets (wrangler secret put ...)
   MODEL_SHARED_SECRET?: string;
   CF_ACCESS_CLIENT_ID?: string;
@@ -55,6 +64,10 @@ export default {
     const path = url.pathname;
     try {
       if (request.method === "GET" && path === "/v1/health") return await health(env, started);
+      if (path.startsWith("/api/")) {
+        const billed = await billingRoute(request, env, path);
+        if (billed) return billed;
+      }
       if (request.method === "POST" && (path === "/v1/ask" || path === "/v1/keys")) {
         return await withAuth(request, env, async (record) => {
           if (path === "/v1/keys") return await rotateKey(request, env, ctx, record, started);
@@ -245,6 +258,7 @@ async function attemptMistral(env: Env, messages: unknown, policy: Policy): Prom
 // queue plumbing (single Durable Object, name "global")
 
 interface Grant { granted: true; ticket: number }
+type SlotResult = Grant | { granted: false; ticket: number };
 
 async function queueDo(env: Env, path: string, body?: unknown): Promise<Record<string, unknown>> {
   const id = env.QUEUE.idFromName("global");
@@ -257,7 +271,7 @@ async function queueDo(env: Env, path: string, body?: unknown): Promise<Record<s
   return (await response.json()) as Record<string, unknown>;
 }
 
-async function acquireSlot(env: Env, maxQueueMs: number): Promise<Grant> {
+async function acquireSlot(env: Env, maxQueueMs: number): Promise<SlotResult> {
   const first = await queueDo(env, "/acquire", { waitBudgetMs: maxQueueMs });
   if (first.granted) return { granted: true, ticket: first.ticket as number };
   const ticket = first.ticket as number;

@@ -27,7 +27,7 @@ export interface HistoryLog {
 }
 
 export interface LogDb {
-  prepare(sql: string): { bind(...values: unknown[]): void; run(): Promise<unknown> };
+  prepare(sql: string): { bind(...values: unknown[]): { run(): Promise<unknown> } };
 }
 
 export function logRequest(db: LogDb, row: RequestLog, now: number): void {
