@@ -6,7 +6,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { createHmac, randomBytes } from "node:crypto";
 
-import { INVARIANTS, resolvePass, passKeyRecord, refuseStage } from "../src/client-routes.ts";
+import { INVARIANTS, resolvePass, passKeyRecord, refuseStage, clientRoute } from "../src/client-routes.ts";
 
 const SECRET = "test-billing-secret-0123456789";
 const stubDb = {
@@ -62,4 +62,26 @@ test("the charter keeps the eight published invariants", () => {
   for (const inv of INVARIANTS) {
     assert.ok(inv.text.length > 40, `${inv.key} text must carry substance`);
   }
+});
+
+test("GET /api/health includes the fields the design's admin console renders", async () => {
+  const env = { LOGS: stubDb, MODEL_NAME: "devstral", MISTRAL_MODEL: "mistral-small-latest" } as never;
+  const probe = async () => ({ d1: true, model: true });
+  const res = await clientRoute(new Request("https://mistralbrain.com/api/health"), env, "/api/health", probe);
+  assert.ok(res);
+  assert.equal(res.status, 200);
+  const body = await res.json() as Record<string, unknown>;
+  // pre-existing shape (panel consumers)
+  assert.equal(body.ok, true);
+  assert.equal(body.database, true);
+  assert.equal(body.brain, "online");
+  assert.equal(typeof body.gate_weights_sha256, "string");
+  // admin console fields — the pointoni admin page reads these without guards
+  assert.ok(Array.isArray(body.engines) && (body.engines as string[]).length > 0, "engines must be a non-empty array");
+  assert.equal(typeof body.persistence, "string");
+  assert.equal(typeof body.answering, "string");
+  const heart = body.heart as { status: string; model?: string };
+  assert.equal(heart.status, "online");
+  assert.equal(heart.model, "devstral");
+  assert.equal(body.lastAnswered, null);
 });

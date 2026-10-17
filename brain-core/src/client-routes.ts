@@ -29,6 +29,8 @@ export interface ClientEnv {
   QUEUE: DurableObjectNamespace;
   MATRIX: DurableObjectNamespace;
   BILLING_SECRET?: string;
+  MODEL_NAME?: string;
+  MISTRAL_MODEL?: string;
 }
 
 // The eight published charter invariants (sg16/charter.py, carried over
@@ -86,12 +88,27 @@ export async function clientRoute(
 ): Promise<Response | null> {
   if (request.method === "GET" && path === "/api/health") {
     const probe = await healthProbe();
+    const digest = await gateWeightsSha256();
+    const model = env.MODEL_NAME || "devstral";
+    const backup = env.MISTRAL_MODEL || "mistral-small-latest";
     return Response.json({
       ok: true,
       database: probe.d1,
       brain: probe.model ? "online" : "offline",
       transport: "cloudflare-worker",
-      gate_weights_sha256: await gateWeightsSha256(),
+      gate_weights_sha256: digest,
+      // fields the design's admin console renders (pointoni admin page reads
+      // engines/heart/answering/persistence without guards):
+      persistence: "cloudflare-d1",
+      answering: "sg16-brain",
+      engines: ["core", model, backup],
+      heart: {
+        status: probe.model ? "online" : "offline",
+        model,
+        detail: "self-hosted inference VPS through the tunnel",
+      },
+      lastAnswered: null,
+      charter: { laws: 16, bodies: 3, digest },
     });
   }
   if (request.method === "GET" && path === "/api/identity") {
