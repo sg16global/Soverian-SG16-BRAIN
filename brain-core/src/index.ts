@@ -20,7 +20,8 @@ import { callMistral } from "./mistral.ts";
 import { logRequest, logHistory } from "./d1.ts";
 import { newKey, keyHash, sha256 } from "./keys.ts";
 import { billingRoute } from "./billing-routes.ts";
-import { clientRoute, resolvePass, passKeyRecord, refuseStage } from "./client-routes.ts";
+import { clientRoute, resolvePass, passKeyRecord, refuseStage } from "./client-routes.ts";
+import { designCompatRoute } from "./design-compat.ts";
 import type { AskMeta, ErrorBody, KeyRecord, Policy } from "./types.ts";
 
 // Durable Object classes must be exported from the worker entry point
@@ -57,7 +58,14 @@ export interface Env {
   MODEL_SHARED_SECRET?: string;
   CF_ACCESS_CLIENT_ID?: string;
   CF_ACCESS_CLIENT_SECRET?: string;
-  MISTRAL_API_KEY?: string;
+  MISTRAL_API_KEY?: string;
+
+  // legacy design-page secrets (see design-compat.ts) - same values the old host used
+  SG16_IDENTITY_SECRET?: string;
+  SG16_ADMIN_EMAILS?: string;
+  SG16_ADMIN_PASSWORD_HASH?: string;
+  SG16_PROJECT_KEY_SECRET?: string;
+  SG16_REVOKED_PROJECTS?: string;
 }
 
 export default {
@@ -71,6 +79,15 @@ export default {
     try {
       if (request.method === "GET" && path === "/v1/health") return await health(env, started);
       if (path.startsWith("/api/")) {
+        const design = await designCompatRoute(request, path, {
+          env,
+          chatDoor: (payload, record) => askParsed(payload, env, ctx, record, started),
+          healthProbe: async () => {
+            const probe = await healthProbe(env);
+            return { d1: probe.d1, model: probe.model };
+          },
+        });
+        if (design) return design;
         const billed = await billingRoute(request, env, path);
         if (billed) return billed;
         const client = await clientRoute(request, env, path, async () => {
@@ -118,7 +135,12 @@ async function withAuth(
   env: Env,
   handler: (record: KeyRecord) => Promise<Response>,
 ): Promise<Response> {
-  const auth = await authenticate(request.headers.get("authorization"), env.KEYS);
+  const auth = await authenticate(
+    request.headers.get("authorization"),
+    env.KEYS,
+    env.SG16_PROJECT_KEY_SECRET,
+    (env.SG16_REVOKED_PROJECTS ?? "").split(",").map((p) => p.trim().toLowerCase()).filter(Boolean),
+  );
   if (!auth.ok) return jsonError(401, "E_UNAUTHORIZED");
   return handler(auth.record);
 }

@@ -1,0 +1,476 @@
+// SG16 BRAIN CORE — legacy design-API compatibility routes.
+//
+// The public design (brain-core/site, mirrored from the pointoni app) is a
+// static export whose pages still speak the old host's API. This module
+// implements those endpoints on the Worker, wired to the same pipelines the
+// panel and /v1 already use, so the design's chat, operator sign-in, admin
+// console, model list and payment pages work again without a single visual
+// change to the protected design:
+//
+//   GET  /api/identity            service description
+//   POST /api/identity            action=admin-login | me (operator token)
+//   GET  /api/admin/project-keys  operator only: key config state
+//   POST /api/admin/project-keys  operator only: mint one sg16p_ project key
+//   GET  /api/brain?probe=...     turnstile probe / health probe / session note
+//   POST /api/brain               pass-gated chat (X-SG16-Pass), ChatReply or
+//                                 x-ndjson delta/done stream, old shapes
+//   GET  /api/models              the one model, honest status
+//
+// Legacy payment aliases (/api/billing, /api/billing/confirm, /api/pass-check)
+// live in billing-routes.ts next to the Dodo pipeline they wrap.
+//
+// Operator auth is the old stateless scheme, unchanged: email listed in
+// SG16_ADMIN_EMAILS plus the password whose scrypt hash is in
+// SG16_ADMIN_PASSWORD_HASH, verified against the SAME hash format the old
+// host used, so the operator's existing password keeps working. Tokens and
+// project keys are signed with the SAME secrets (SG16_IDENTITY_SECRET,
+// SG16_PROJECT_KEY_SECRET) so records issued by the old host still verify.
+
+import { scryptSync, timingSafeEqual } from "node:crypto";
+import type { KeyRecord } from "./types.ts";
+import { resolvePass, passKeyRecord } from "./client-routes.ts";
+
+export interface DesignEnv {
+  KEYS: KVNamespace;
+  LOGS: D1Database;
+  QUEUE: DurableObjectNamespace;
+  MATRIX: DurableObjectNamespace;
+  SG16_IDENTITY_SECRET?: string;
+  SG16_ADMIN_EMAILS?: string;
+  SG16_ADMIN_PASSWORD_HASH?: string;
+  SG16_PROJECT_KEY_SECRET?: string;
+  SG16_REVOKED_PROJECTS?: string;
+  BILLING_SECRET?: string;
+}
+
+// ------------------------------------------------------------------ encoding
+
+const encoder = new TextEncoder();
+const decoder = new TextDecoder();
+
+function bytesToB64u(bytes: Uint8Array): string {
+  let binary = "";
+  for (const b of bytes) binary += String.fromCharCode(b);
+  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+function b64uToBytes(value: string): Uint8Array {
+  const normalized = value.replace(/-/g, "+").replace(/_/g, "/");
+  const padded = normalized + "=".repeat((4 - (normalized.length % 4)) % 4);
+  const binary = atob(padded);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return bytes;
+}
+
+function b64uText(value: string): string {
+  return decoder.decode(b64uToBytes(value));
+}
+
+async function hmacB64u(secret: string, message: string): Promise<string> {
+  const key = await crypto.subtle.importKey(
+    "raw",
+    encoder.encode(secret),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"],
+  );
+  const sig = await crypto.subtle.sign("HMAC", key, encoder.encode(message));
+  return bytesToB64u(new Uint8Array(sig));
+}
+
+/** Constant-time equality for equal-length base64url strings. */
+function safeEqual(a: string, b: string): boolean {
+  if (a.length !== b.length) return false;
+  let diff = 0;
+  for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return diff === 0;
+}
+
+function json(payload: unknown, status = 200, headers: Record<string, string> = {}): Response {
+  return Response.json(payload, { status, headers: { "cache-control": "no-store", ...headers } });
+}
+
+// ------------------------------------------------------------ identity token
+// Format identical to the old host: b64url(JSON {email, exp, v:1}).b64url(HMAC)
+// signed with SG16_IDENTITY_SECRET, so tokens issued before the cutover still
+// verify and the design's admin console keeps accepting this browser's login.
+
+const TOKEN_TTL_MS = 30 * 24 * 3600_000;
+const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
+
+export async function signIdentityToken(email: string, secret: string): Promise<string> {
+  const normalized = email.trim().toLowerCase();
+  if (!EMAIL_PATTERN.test(normalized)) throw new Error("Cannot issue a token for an invalid email.");
+  const body = bytesToB64u(encoder.encode(JSON.stringify({ email: normalized, exp: Date.now() + TOKEN_TTL_MS, v: 1 })));
+  return `${body}.${await hmacB64u(secret, body)}`;
+}
+
+export async function verifyIdentityToken(
+  token: string | null,
+  secret: string | undefined,
+): Promise<{ email: string } | null> {
+  if (!secret || typeof token !== "string" || token.length > 4096) return null;
+  const match = /^([A-Za-z0-9_-]+)\.([A-Za-z0-9_-]+)$/.exec(token.trim());
+  if (!match) return null;
+  const [, body, sig] = match;
+  if (!safeEqual(sig, await hmacB64u(secret, body))) return null;
+  try {
+    const payload = JSON.parse(b64uText(body)) as { email?: unknown; exp?: unknown; v?: unknown };
+    if (payload.v !== 1 || typeof payload.email !== "string" || !EMAIL_PATTERN.test(payload.email)) return null;
+    if (typeof payload.exp !== "number" || !Number.isSafeInteger(payload.exp) || payload.exp <= Date.now()) return null;
+    return { email: payload.email.toLowerCase() };
+  } catch {
+    return null;
+  }
+}
+
+// ------------------------------------------------------------- operator auth
+
+export function adminEmails(env: DesignEnv): string[] {
+  return (env.SG16_ADMIN_EMAILS ?? "")
+    .split(",")
+    .map((e) => e.trim().toLowerCase())
+    .filter((e) => e.length > 0 && e.includes("@"));
+}
+
+export function isAdminEmail(email: string | null, env: DesignEnv): boolean {
+  if (!email) return false;
+  return adminEmails(env).includes(email.trim().toLowerCase());
+}
+
+export function operatorConfigured(env: DesignEnv): boolean {
+  return Boolean(env.SG16_ADMIN_PASSWORD_HASH?.trim() && (env.SG16_ADMIN_EMAILS ?? "").includes("@"));
+}
+
+/** Verify against the old host's scrypt:N:r:p:salt:hash format. */
+export function verifyPasswordScrypt(password: string, stored: string): boolean {
+  const parts = stored.split(":");
+  if (parts.length !== 6 || parts[0] !== "scrypt") return false;
+  const n = Number(parts[1]);
+  const r = Number(parts[2]);
+  const p = Number(parts[3]);
+  if (![n, r, p].every(Number.isInteger) || n < 1024 || n > 1 << 20 || r < 1 || r > 16 || p < 1 || p > 4) return false;
+  try {
+    const salt = b64uToBytes(parts[4]);
+    const expected = b64uToBytes(parts[5]);
+    if (salt.length < 8 || expected.length < 16 || expected.length > 128) return false;
+    const actual = scryptSync(password, salt, expected.length, { N: n, r, p, maxmem: 128 * 1024 * 1024 });
+    return timingSafeEqual(actual, expected);
+  } catch {
+    return false;
+  }
+}
+
+// A fixed dummy check so a wrong email costs the same time as a wrong password.
+const DUMMY_HASH = (() => {
+  const salt = new Uint8Array(16).fill(7);
+  const hash = scryptSync("this-is-not-a-real-password", salt, 32, { N: 32768, r: 8, p: 1, maxmem: 128 * 1024 * 1024 });
+  return ["scrypt", 32768, 8, 1, bytesToB64u(salt), bytesToB64u(hash)].join(":");
+})();
+
+// Per-isolate guess throttling, same policy as the old host (best effort).
+const WINDOW_MS = 10 * 60_000;
+const PER_VISITOR = 5;
+const GLOBAL_LIMIT = 40;
+const attempts = new Map<string, { count: number; resetAt: number }>();
+let globalCounter = { count: 0, resetAt: 0 };
+
+function attemptAllowed(key: string, now: number): boolean {
+  const c = attempts.get(key);
+  if (!c || c.resetAt <= now) {
+    attempts.set(key, { count: 1, resetAt: now + WINDOW_MS });
+    return true;
+  }
+  if (c.count >= PER_VISITOR) return false;
+  c.count += 1;
+  return true;
+}
+
+export async function adminLogin(
+  email: unknown,
+  password: unknown,
+  networkKey: string,
+  env: DesignEnv,
+): Promise<{ ok: true; token: string; email: string } | { ok: false; status: number; error: string }> {
+  const configuredHash = env.SG16_ADMIN_PASSWORD_HASH?.trim();
+  if (!configuredHash || !operatorConfigured(env) || !(env.SG16_IDENTITY_SECRET ?? "").trim()) {
+    return { ok: false, status: 503, error: "Operator login is not set up on this server." };
+  }
+  const normalizedEmail = typeof email === "string" ? email.trim().toLowerCase() : "";
+  const pass = typeof password === "string" ? password : "";
+  if (!normalizedEmail || !pass || normalizedEmail.length > 254 || pass.length > 256) {
+    return { ok: false, status: 400, error: "Enter your email and password." };
+  }
+  const now = Date.now();
+  if (globalCounter.resetAt <= now) globalCounter = { count: 0, resetAt: now + WINDOW_MS };
+  const visitorKey = `${normalizedEmail}|${networkKey}`;
+  if (globalCounter.count >= GLOBAL_LIMIT || !attemptAllowed(visitorKey, now)) {
+    return { ok: false, status: 429, error: "Too many attempts. Wait ten minutes and try again." };
+  }
+  globalCounter.count += 1;
+  const admin = isAdminEmail(normalizedEmail, env);
+  const passwordOk = verifyPasswordScrypt(pass, admin ? configuredHash : DUMMY_HASH);
+  if (!admin || !passwordOk) return { ok: false, status: 401, error: "Email or password is wrong." };
+  return { ok: true, token: await signIdentityToken(normalizedEmail, env.SG16_IDENTITY_SECRET ?? ""), email: normalizedEmail };
+}
+
+async function operatorBearer(
+  request: Request,
+  env: DesignEnv,
+): Promise<{ email: string } | null> {
+  const match = /^Bearer\s+([^\s]+)$/i.exec(request.headers.get("authorization") ?? "");
+  const payload = match ? await verifyIdentityToken(match[1], env.SG16_IDENTITY_SECRET) : null;
+  return payload && isAdminEmail(payload.email, env) ? payload : null;
+}
+
+// ------------------------------------------------------------- project keys
+// Stateless sg16p_ keys, byte-for-byte the old host's scheme (same secret =>
+// every key the operator already issued keeps working against /v1/ask).
+
+export const PROJECT_KEY_PREFIX = "sg16p_";
+const PROJECT_NAME = /^[a-z0-9][a-z0-9-]{0,39}$/;
+
+export function isValidProjectName(name: string): boolean {
+  return PROJECT_NAME.test(name);
+}
+
+function randomNonceB64u(): string {
+  const bytes = new Uint8Array(6);
+  crypto.getRandomValues(bytes);
+  return bytesToB64u(bytes);
+}
+
+export async function createProjectKey(project: string, secret: string, now = Date.now()): Promise<string> {
+  const payload = bytesToB64u(
+    encoder.encode(JSON.stringify({ v: 1, p: project, iat: Math.floor(now / 1000), n: randomNonceB64u() })),
+  );
+  return `${PROJECT_KEY_PREFIX}${payload}.${await hmacB64u(secret, `sg16-project-key-v1|${payload}`)}`;
+}
+
+export async function verifyProjectKey(
+  key: string,
+  secret: string | undefined,
+  revoked: string[] = [],
+): Promise<{ project: string; issuedAt: number } | null> {
+  if (!secret || typeof key !== "string" || key.length > 400 || !key.startsWith(PROJECT_KEY_PREFIX)) return null;
+  const match = /^([A-Za-z0-9_-]+)\.([A-Za-z0-9_-]+)$/.exec(key.slice(PROJECT_KEY_PREFIX.length));
+  if (!match) return null;
+  const [, payload, sig] = match;
+  if (!safeEqual(sig, await hmacB64u(secret, `sg16-project-key-v1|${payload}`))) return null;
+  try {
+    const parsed = JSON.parse(b64uText(payload)) as { v?: unknown; p?: unknown; iat?: unknown };
+    if (parsed.v !== 1 || typeof parsed.p !== "string" || !isValidProjectName(parsed.p)) return null;
+    if (revoked.includes(parsed.p)) return null;
+    return { project: parsed.p, issuedAt: typeof parsed.iat === "number" ? parsed.iat * 1000 : 0 };
+  } catch {
+    return null;
+  }
+}
+
+/** A sg16p_ project key as a /v1 key record (same shape the pass door uses). */
+export function projectKeyRecord(key: string, project: string, issuedAt: number): KeyRecord {
+  return { id: `sg16p_${project}_${key.slice(-12)}`, user: 0, project, created: issuedAt, revoked: false };
+}
+
+// ------------------------------------------------------------------ routes
+
+export interface DesignCompatDeps {
+  env: DesignEnv;
+  /** Run one chat turn through the /v1/ask pipeline with a derived record. */
+  chatDoor: (payload: unknown, record: KeyRecord) => Promise<Response>;
+  /** Probe D1 and the inference VPS. */
+  healthProbe: () => Promise<{ d1: boolean; model: boolean }>;
+}
+
+export async function designCompatRoute(
+  request: Request,
+  path: string,
+  deps: DesignCompatDeps,
+): Promise<Response | null> {
+  const { env } = deps;
+
+  // ---- /api/identity: the design's operator sign-in --------------------
+  if (path === "/api/identity" && request.method === "GET") {
+    return json({
+      service: "SG16 operator sign-in",
+      accounts: "none",
+      storage:
+        "Nothing about visitors is stored on the server. History and files stay on the visitor's device; a subscription is a signed pass held on the device.",
+      operatorLogin: operatorConfigured(env),
+    });
+  }
+  if (path === "/api/identity" && request.method === "POST") {
+    const body = await request.json().catch(() => null) as Record<string, unknown> | null;
+    if (!body || typeof body !== "object") return json({ ok: false, error: "JSON object required" }, 400);
+    const action = String(body.action ?? "");
+    if (action === "admin-login") {
+      const networkKey = request.headers.get("cf-connecting-ip") ?? "unverified-network";
+      const result = await adminLogin(body.email, body.password, networkKey, env);
+      if (!result.ok) return json({ ok: false, error: result.error }, result.status);
+      return json({ ok: true, token: result.token, email: result.email, admin: true });
+    }
+    if (action === "me") {
+      const match = /^Bearer\s+([^\s]+)$/i.exec(request.headers.get("authorization") ?? "");
+      const payload = match ? await verifyIdentityToken(match[1], env.SG16_IDENTITY_SECRET) : null;
+      if (!payload) return json({ ok: false, error: "invalid token" }, 401);
+      return json({ ok: true, email: payload.email, plan: null, tier: "work", admin: isAdminEmail(payload.email, env) });
+    }
+    if (action === "request" || action === "verify" || action === "bind") {
+      return json(
+        {
+          ok: false,
+          error:
+            "This platform has no user accounts. You can chat and subscribe without signing in; nothing about you is stored here.",
+        },
+        410,
+      );
+    }
+    return json({ ok: false, error: "unknown action" }, 400);
+  }
+
+  // ---- /api/admin/project-keys: the operator's key mint ----------------
+  if (path === "/api/admin/project-keys" && (request.method === "GET" || request.method === "POST")) {
+    const signedIn = Boolean(request.headers.get("authorization"));
+    const operator = await operatorBearer(request, env);
+    if (!operator) {
+      return json(
+        { error: signedIn ? "This account is not an operator." : "Operator sign-in required." },
+        signedIn ? 403 : 401,
+      );
+    }
+    if (request.method === "GET") {
+      return json({ configured: Boolean(env.SG16_PROJECT_KEY_SECRET?.trim()), revoked: revokedProjects(env) });
+    }
+    const secret = env.SG16_PROJECT_KEY_SECRET?.trim();
+    if (!secret || secret.length < 32) {
+      return json({ error: "SG16_PROJECT_KEY_SECRET is not set on this server (32+ characters)." }, 503);
+    }
+    const body = await request.json().catch(() => null) as { project?: unknown } | null;
+    const project = typeof body?.project === "string" ? body.project.trim().toLowerCase() : "";
+    if (!isValidProjectName(project)) {
+      return json({ error: "Project name: 1-40 characters, lowercase letters, digits and dashes." }, 400);
+    }
+    return json({ project, key: await createProjectKey(project, secret), shownOnce: true });
+  }
+
+  // ---- /api/brain: the design's chat panel ------------------------------
+  if (path === "/api/brain" && request.method === "GET") {
+    const probe = new URL(request.url).searchParams.get("probe");
+    if (probe === "turnstile") return json({ enabled: false, siteKey: null });
+    if (probe === "health") {
+      const health = await deps.healthProbe();
+      const up = health.d1 && health.model;
+      return json({ ok: up, brain: up ? "online" : "offline" }, up ? 200 : 503);
+    }
+    return json(
+      { error: "Conversation history is kept on your device, not on this server.", stored: false, storedOn: "device" },
+      404,
+    );
+  }
+  if (path === "/api/brain" && request.method === "POST") {
+    const body = await request.json().catch(() => null) as Record<string, unknown> | null;
+    if (!body || typeof body !== "object") return json({ error: "The SG16 core is unreachable. Try again." }, 400);
+    if (typeof body.forgetSessionId === "string" && body.forgetSessionId) {
+      return json({ ok: true, forgotten: true });
+    }
+    const message = typeof body.message === "string" ? body.message.trim() : "";
+    if (!message) return json({ error: "Enter a message." }, 400);
+    if (message.length > 8192) return json({ error: "A chat message is at most 8K characters." }, 400);
+    const pass = await resolvePass(request.headers.get("x-sg16-pass"), env);
+    if (!pass) {
+      return json(
+        { error: "A pass is required to chat. Get one on the Subscription page; it is stored on this device only." },
+        402,
+      );
+    }
+    const record = await passKeyRecord(pass.pass, pass.activatedAt);
+    const res = await deps.chatDoor({ kind: "chat", text: message }, record);
+    const out = await res.json().catch(() => null) as Record<string, unknown> | null;
+    if (res.ok && out && out.ok === true && typeof out.answer === "string") {
+      const meta = (out.meta ?? {}) as Record<string, unknown>;
+      const sessionId =
+        typeof body.sessionId === "string" && body.sessionId ? body.sessionId : crypto.randomUUID();
+      const createdAt = new Date().toISOString();
+      const reply = {
+        sessionId,
+        userMessage: {
+          id: crypto.randomUUID(), sessionId, role: "user", content: message,
+          modelId: "sg16-brain", relay: false, latencyMs: 0, createdAt,
+        },
+        assistantMessage: {
+          id: crypto.randomUUID(), sessionId, role: "assistant", content: out.answer,
+          modelId: "sg16-brain", relay: false,
+          latencyMs: typeof meta.latency_ms === "number" ? meta.latency_ms : 0, createdAt,
+        },
+        brain: typeof meta.engine === "string" ? meta.engine : "sg16",
+      };
+      if (body.stream === true) {
+        const ndjson =
+          JSON.stringify({ type: "delta", text: out.answer }) + "\n" + JSON.stringify({ type: "done", ...reply }) + "\n";
+        return new Response(ndjson, {
+          headers: { "content-type": "application/x-ndjson", "cache-control": "no-store" },
+        });
+      }
+      return json(reply);
+    }
+    const code = String(out?.code ?? "E_INTERNAL");
+    if (res.status === 429) {
+      return json(
+        { error: "You're sending messages very quickly - please wait a few seconds and try again.", rateLimited: true, retryAt: Date.now() + 60_000 },
+        429,
+      );
+    }
+    if (code === "E_QUEUE_TIMEOUT") {
+      return json({ error: "The SG16 core is busy right now. Try again shortly.", busy: true }, 503);
+    }
+    if (code === "E_FORBIDDEN") {
+      return json({ error: "The request is not allowed by the SG16 policy." }, 403);
+    }
+    if (code === "E_UPSTREAM_TIMEOUT" || code === "E_UPSTREAM_STATUS" || code === "E_UNVERIFIED") {
+      return json({ error: "The SG16 core is unreachable. Try again." }, 503);
+    }
+    return json({ error: "The SG16 core is unreachable. Try again." }, 503);
+  }
+
+  // ---- /api/models: the one honest model ---------------------------------
+  if (path === "/api/models" && request.method === "GET") {
+    const health = await deps.healthProbe();
+    const status = health.model ? "online" : "offline";
+    const models = [{
+      id: "sg16-brain",
+      name: "SG16 Brain",
+      vendor: "Sovereign Systems",
+      role: "Open, independent and friendly to everyone",
+      description: "",
+      glyph: "brain",
+      accent: "#22e08c",
+      status,
+      latencyMs: null,
+      contextWindow: "8K chars",
+      selfHosted: true,
+      capabilities: [],
+      sortOrder: 0,
+    }];
+    const operator = await operatorBearer(request, env);
+    if (operator) {
+      return json({
+        models,
+        engines: [
+          { id: "devstral", label: "self-hosted inference VPS through the tunnel", primary: true },
+          { id: "mistral-small-latest", label: "the one permitted backup route", primary: false },
+        ],
+      });
+    }
+    return json({ models });
+  }
+
+  return null;
+}
+
+function revokedProjects(env: DesignEnv): string[] {
+  return (env.SG16_REVOKED_PROJECTS ?? "")
+    .split(",")
+    .map((p) => p.trim().toLowerCase())
+    .filter(Boolean);
+}

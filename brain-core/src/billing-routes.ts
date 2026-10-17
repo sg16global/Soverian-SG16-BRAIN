@@ -125,6 +125,10 @@ export async function billingRoute(request: Request, env: BillingEnv, path: stri
   if (request.method === "POST" && path === "/api/dodo/webhook") return dodoWebhook(request, env);
   if (request.method === "POST" && path === "/api/dodo/confirm") return dodoConfirm(request, env, cors);
   if (request.method === "POST" && path === "/api/pass/verify") return passVerify(request, env, cors);
+  // legacy paths the design pages still call (old host contract)
+  if (request.method === "POST" && path === "/api/billing") return dodoCheckout(request, env, cors);
+  if (request.method === "POST" && path === "/api/billing/confirm") return dodoConfirm(request, env, cors);
+  if (request.method === "POST" && path === "/api/pass-check") return passCheck(request, env, cors);
   return null; // unknown path: let the /v1 router answer with E_NOT_FOUND
 }
 
@@ -132,7 +136,10 @@ function billingInfo(env: BillingEnv, cors: string | null): Response {
   const mode = env.DODO_API_KEY ? (env.DODO_TEST_MODE === "true" ? "test-mor" : "live-mor") : "disabled";
   return legacyJson(
     {
-      currency: "USD",
+      ok: true,
+      source: "core",
+      billing: {
+        currency: "USD",
       humanitarian_region: HUMANITARIAN_REGION,
       passes: Object.fromEntries(
         Object.entries(PASSES).map(([id, spec]) => [id, { label: spec.label, price: spec.price, hours: spec.hours }]),
@@ -150,6 +157,7 @@ function billingInfo(env: BillingEnv, cors: string | null): Response {
         humanitarian_intercept:
           "A zero-rate record is available only when the Cloudflare edge geo-country header verifies eligibility. Client region claims are ignored.",
         paid_checkout_without_gateway: "disabled; no local paid passes are issued",
+      },
       },
     },
     200,
@@ -470,4 +478,48 @@ function base64UrlToBytes(value: string): Uint8Array {
   const bytes = new Uint8Array(binary.length);
   for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
   return bytes;
+}
+
+// ------------------------------------------------------------ legacy pass-check
+// POST /api/pass-check {pass} - the design subscription page's pass-restore
+// probe (old host response shape: {valid, pass, expires_at}).
+
+async function passCheck(request: Request, env: BillingEnv, cors: string | null): Promise<Response> {
+  const body = await request.json().catch(() => null);
+  const value =
+    body && typeof body === "object"
+      ? String((body as Record<string, unknown>).pass ?? "")
+      : "";
+  const trimmed = value.trim();
+  if (!LEGACY_TOKEN.test(trimmed) && !/^[A-Za-z0-9_-]{40,3000}$/.test(trimmed)) {
+    return legacyJson({ valid: false, error: "That is not a pass." }, 400, cors);
+  }
+  const secret = env.BILLING_SECRET ?? "";
+  try {
+    if (LEGACY_TOKEN.test(trimmed)) {
+      const stored = await env.LOGS.prepare("SELECT record FROM passes WHERE token = ?").bind(trimmed).first();
+      if (!stored) throw new VerificationError("pass token was not issued by this host");
+      const record = JSON.parse(stored.record as string) as Record<string, unknown>;
+      return legacyJson({ valid: true, pass: record.pass, expires_at: record.expires_at }, 200, cors);
+    }
+    let record: unknown;
+    try {
+      record = JSON.parse(new TextDecoder().decode(base64UrlToBytes(trimmed)));
+    } catch {
+      throw new VerificationError("pass is not a signed record");
+    }
+    if (!record || typeof record !== "object") throw new VerificationError("pass is not a signed record");
+    const verified = await verifyRecord(record as Record<string, unknown>, secret);
+    return legacyJson({ valid: true, pass: verified.pass, expires_at: verified.expires_at }, 200, cors);
+  } catch (e) {
+    const bad = e instanceof VerificationError;
+    return legacyJson(
+      {
+        valid: false,
+        error: bad ? "This pass is not valid, or it has expired." : "The host could not check the pass right now.",
+      },
+      bad ? 403 : 503,
+      cors,
+    );
+  }
 }

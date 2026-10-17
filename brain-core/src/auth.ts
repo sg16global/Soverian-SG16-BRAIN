@@ -5,6 +5,7 @@
 import type { KeyRecord, Policy, AskRequest } from "./types.ts";
 import { DEFAULT_POLICY } from "./types.ts";
 import { bearer, keyHash, isKeyShape } from "./keys.ts";
+import { verifyProjectKey, projectKeyRecord } from "./design-compat.ts";
 
 export interface KeyStore {
   get(key: string): Promise<string | null>;
@@ -17,19 +18,31 @@ export type AuthResult =
 export async function authenticate(
   authorization: string | null,
   store: KeyStore,
+  projectSecret?: string,
+  revokedProjects: string[] = [],
 ): Promise<AuthResult> {
   const key = bearer(authorization);
-  if (!key || !isKeyShape(key)) return { ok: false };
-  const raw = await store.get(await keyHash(key));
-  if (!raw) return { ok: false };
-  let record: KeyRecord;
-  try {
-    record = JSON.parse(raw) as KeyRecord;
-  } catch {
-    return { ok: false };
+  if (key && isKeyShape(key)) {
+    // the KV path: only the SHA-256 of a key is ever stored
+    const raw = await store.get(await keyHash(key));
+    if (!raw) return { ok: false };
+    let record: KeyRecord;
+    try {
+      record = JSON.parse(raw) as KeyRecord;
+    } catch {
+      return { ok: false };
+    }
+    if (!record || record.revoked || typeof record.user !== "number") return { ok: false };
+    return { ok: true, record };
   }
-  if (!record || record.revoked || typeof record.user !== "number") return { ok: false };
-  return { ok: true, record };
+  // the old host's stateless sg16p_ project keys (same secret => old keys keep working)
+  const match = /^Bearer\s+(sg16p_[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+)$/i.exec((authorization ?? "").trim());
+  if (match) {
+    const project = await verifyProjectKey(match[1], projectSecret, revokedProjects);
+    if (!project) return { ok: false };
+    return { ok: true, record: projectKeyRecord(match[1], project.project, project.issuedAt) };
+  }
+  return { ok: false };
 }
 
 export async function loadPolicy(store: KeyStore, project: string): Promise<Policy> {
