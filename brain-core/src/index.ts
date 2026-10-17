@@ -20,6 +20,7 @@ import { callMistral } from "./mistral.ts";
 import { logRequest, logHistory } from "./d1.ts";
 import { newKey, keyHash, sha256 } from "./keys.ts";
 import { billingRoute } from "./billing-routes.ts";
+import { clientRoute, resolvePass, passKeyRecord, refuseStage } from "./client-routes.ts";
 import type { AskMeta, ErrorBody, KeyRecord, Policy } from "./types.ts";
 
 // Durable Object classes must be exported from the worker entry point
@@ -67,6 +68,14 @@ export default {
       if (path.startsWith("/api/")) {
         const billed = await billingRoute(request, env, path);
         if (billed) return billed;
+        const client = await clientRoute(request, env, path, async () => {
+          const probe = await healthProbe(env);
+          return { d1: probe.d1, model: probe.model };
+        });
+        if (client) return client;
+      }
+      if (request.method === "POST" && path === "/api/ingest") {
+        return await ingest(request, env, ctx, started);
       }
       if (request.method === "POST" && (path === "/v1/ask" || path === "/v1/keys")) {
         return await withAuth(request, env, async (record) => {
@@ -116,6 +125,18 @@ async function ask(
   started: number,
 ): Promise<Response> {
   const body = await request.json().catch(() => null);
+  return askParsed(body, env, ctx, record, started);
+}
+
+// The chat pipeline, shared by /v1/ask and the panel's pass-gated
+// /api/ingest door (client-routes.ts feeds it a pass-derived record).
+async function askParsed(
+  body: unknown,
+  env: Env,
+  ctx: ExecutionContext,
+  record: KeyRecord,
+  started: number,
+): Promise<Response> {
   const parsed = parseAsk(body);
   if (!parsed) return await finish(env, ctx, record, "chat", "none", 400, started, 0, false, "E_BAD_REQUEST",
     jsonError(400, "E_BAD_REQUEST"));
@@ -368,23 +389,55 @@ function keyFromAuth(request: Request): string {
   return request.headers.get("authorization")?.split(" ")[1] ?? "";
 }
 
+// --------------------------------------------------------------------------- 
+// panel ingest door — pass-gated chat into the same pipeline as /v1/ask
+
+async function ingest(
+  request: Request,
+  env: Env,
+  ctx: ExecutionContext,
+  started: number,
+): Promise<Response> {
+  const body = await request.json().catch(() => null);
+  if (!body || typeof body !== "object") {
+    return Response.json({ stage: "refused", reply: refuseStage("E_BAD_REQUEST") });
+  }
+  const payload = body as Record<string, unknown>;
+  if (typeof payload.audio_b64 === "string" && payload.audio_b64) {
+    return Response.json({ stage: "refused", reply: "audio ingest is not supported on this core" });
+  }
+  const pass = await resolvePass(request.headers.get("x-sg16-pass"), env);
+  if (!pass) {
+    return Response.json({ stage: "refused", reply: "a valid pass is required; subscribe in the panel to chat" });
+  }
+  const record = await passKeyRecord(pass.pass, pass.activatedAt);
+  const res = await askParsed(payload, env, ctx, record, started);
+  const out = await res.json().catch(() => null) as Record<string, unknown> | null;
+  if (res.ok && out && typeof out.answer === "string") {
+    return Response.json({ stage: "neutral", reply: out.answer, meta: out.meta ?? null });
+  }
+  return Response.json({ stage: "refused", reply: refuseStage(String(out?.code ?? "E_INTERNAL")) });
+}
+
 // ---------------------------------------------------------------------------
 // health — component probes, machine-readable
 
-async function health(env: Env, started: number): Promise<Response> {
-  const out: Record<string, unknown> = { ok: false, ts: started };
+interface HealthProbe { kv: boolean; d1: boolean; model: boolean; queue: unknown }
+
+async function healthProbe(env: Env): Promise<HealthProbe> {
+  const probe: HealthProbe = { kv: false, d1: false, model: false, queue: false };
   try {
     await env.KEYS.get("health:sentinel");
-    out.kv = true;
-  } catch { out.kv = false; }
+    probe.kv = true;
+  } catch { /* kv stays false */ }
   try {
     await env.LOGS.prepare("SELECT 1").first();
-    out.d1 = true;
-  } catch { out.d1 = false; }
+    probe.d1 = true;
+  } catch { /* d1 stays false */ }
   try {
     const stats = await queueDo(env, "/stats");
-    out.queue = { waiting: stats.waiting, busy: stats.busy };
-  } catch { out.queue = false; }
+    probe.queue = { waiting: stats.waiting, busy: stats.busy };
+  } catch { /* queue stays false */ }
   try {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 5000);
@@ -397,9 +450,15 @@ async function health(env: Env, started: number): Promise<Response> {
       signal: controller.signal,
     });
     clearTimeout(timer);
-    out.model = response.ok;
-  } catch { out.model = false; }
-  out.ok = out.kv === true && out.d1 === true;
+    probe.model = response.ok;
+  } catch { /* model stays false */ }
+  return probe;
+}
+
+async function health(env: Env, started: number): Promise<Response> {
+  const probe = await healthProbe(env);
+  const out: Record<string, unknown> = { ok: probe.kv === true && probe.d1 === true, ts: started,
+    kv: probe.kv, d1: probe.d1, queue: probe.queue, model: probe.model };
   return Response.json(out, { status: out.ok ? 200 : 503 });
 }
 

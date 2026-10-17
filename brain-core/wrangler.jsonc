@@ -6,6 +6,11 @@
 
   "observability": { "enabled": true },
 
+  "assets": {
+    "directory": "./client",
+    "run_worker_first": ["/api/*", "/v1/*"]
+  },
+
   "kv_namespaces": [
     { "binding": "KEYS", "id": "9a3ddaf967d843f18614ecd6b785a186" }
   ],
