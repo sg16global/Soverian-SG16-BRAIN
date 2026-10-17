@@ -6,9 +6,12 @@
 
   "observability": { "enabled": true },
 
+  "routes": ["mistralbrain.com/*", "www.mistralbrain.com/*"],
+
   "assets": {
     "directory": "./client",
-    "run_worker_first": ["/api/*", "/v1/*"]
+    "binding": "ASSETS",
+    "run_worker_first": ["/*"]
   },
 
   "kv_namespaces": [
@@ -38,7 +41,7 @@
     "MISTRAL_MODEL": "mistral-small-latest",
     "MAX_OUTPUT_CHARS": "16384",
     "INFERENCE_TIMEOUT_MS": "60000",
-    "MAX_QUEUE_WAIT_MS": "45000",
+    "MAX_QUEUE_WAIT_MS": "120000",
     "DODO_TEST_MODE": "false",
     "DODO_PRODUCT_IDS": "{\"day\":\"pdt_0NoUNgIwv3XfCVptVxLaa\",\"week\":\"pdt_0NoUNgD5Yjz1cRYOwIixQ\",\"half\":\"pdt_0NoUNg8AK64S8TkG2b5tK\",\"month\":\"pdt_0NoUNg3MglpZRU2yPvduq\"}",
     "ALLOWED_RETURN_ORIGINS": "https://mistralbrain.com"

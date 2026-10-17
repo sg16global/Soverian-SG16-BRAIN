@@ -33,6 +33,8 @@ export interface Env {
   QUEUE: DurableObjectNamespace;
   MATRIX: DurableObjectNamespace;
 
+  ASSETS: Fetcher;              // the staged web client (scripts/sync-web.mjs)
+
   MODEL_PROVIDER: "ollama" | "llamacpp";
   MODEL_URL: string;              // set via wrangler var after the tunnel exists
   MODEL_HEALTH_PATH: string;      // ollama: /api/tags | llamacpp: /health
@@ -63,6 +65,9 @@ export default {
     const started = Date.now();
     const url = new URL(request.url);
     const path = url.pathname;
+    if (url.hostname === "www.mistralbrain.com") {
+      return Response.redirect("https://mistralbrain.com" + path + url.search, 308);
+    }
     try {
       if (request.method === "GET" && path === "/v1/health") return await health(env, started);
       if (path.startsWith("/api/")) {
@@ -86,7 +91,8 @@ export default {
       if (request.method === "GET" && path === "/v1/state") {
         return await withAuth(request, env, async (record) => matrixState(env, record));
       }
-      return jsonError(404, "E_NOT_FOUND");
+      if (path.startsWith("/api/") || path.startsWith("/v1/")) return jsonError(404, "E_NOT_FOUND");
+      return env.ASSETS.fetch(request); // the staged web client (static assets)
     } catch (e) {
       if (e instanceof HttpError) return jsonError(e.status, e.code);
       return jsonError(500, "E_INTERNAL");
