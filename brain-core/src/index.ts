@@ -21,7 +21,8 @@ import { logRequest, logHistory } from "./d1.ts";
 import { newKey, keyHash, sha256 } from "./keys.ts";
 import { billingRoute } from "./billing-routes.ts";
 import { clientRoute, resolvePass, passKeyRecord, refuseStage } from "./client-routes.ts";
-import { designCompatRoute } from "./design-compat.ts";
+import { designCompatRoute } from "./design-compat.ts";
+import { projectScanRoute } from "./project-scan.ts";
 import type { AskMeta, ErrorBody, KeyRecord, Policy } from "./types.ts";
 
 // Durable Object classes must be exported from the worker entry point
@@ -87,7 +88,9 @@ export default {
             return { d1: probe.d1, model: probe.model };
           },
         });
-        if (design) return design;
+        if (design) return design;
+        const scan = await projectScanRoute(request, path);
+        if (scan) return scan;
         const billed = await billingRoute(request, env, path);
         if (billed) return billed;
         const client = await clientRoute(request, env, path, async () => {

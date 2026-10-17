@@ -235,14 +235,25 @@ test("POST /api/brain: pass-gated ChatReply, ndjson stream, honest refusals", as
   assert.match((await noPass?.json()).error, /pass is required/i);
 
   // with a pass -> old ChatReply shape
+  let doorPayload: unknown = null;
   const reply = await designCompatRoute(
     new Request("https://x/api/brain", {
       method: "POST",
       headers: { "content-type": "application/json", "x-sg16-pass": passHeader() },
-      body: JSON.stringify({ sessionId: "s-1", message: "hi", history: [] }),
+      body: JSON.stringify({
+        sessionId: "s-1",
+        message: "what did I just say?",
+        history: [
+          { role: "user", content: "I said hello world" },
+          { role: "assistant", content: "You said hello world" },
+        ],
+      }),
     }),
     "/api/brain",
-    deps(e),
+    deps(e, async (payload: unknown, _record: unknown) => {
+      doorPayload = payload;
+      return Response.json({ ok: true, answer: "hello world", meta: { engine: "model-vps", latency_ms: 7 } });
+    }),
   );
   const body = (await reply?.json()) as {
     sessionId: string; brain: string;
@@ -253,9 +264,14 @@ test("POST /api/brain: pass-gated ChatReply, ndjson stream, honest refusals", as
   assert.equal(body.sessionId, "s-1");
   assert.equal(body.brain, "model-vps");
   assert.equal(body.userMessage.role, "user");
-  assert.equal(body.userMessage.content, "hi");
-  assert.equal(body.assistantMessage.content, "hello");
+  assert.equal(body.userMessage.content, "what did I just say?");
+  assert.equal(body.assistantMessage.content, "hello world");
   assert.equal(body.assistantMessage.latencyMs, 7);
+  // the remembered turns must reach the pipeline folded into the text
+  const doorText = (doorPayload as { text: string }).text;
+  assert.match(doorText, /earlier in this conversation/);
+  assert.match(doorText, /user: I said hello world/);
+  assert.match(doorText, /what did I just say\?$/);
 
   // stream:true -> x-ndjson with one delta then done
   const stream = await designCompatRoute(

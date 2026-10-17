@@ -275,6 +275,43 @@ export function projectKeyRecord(key: string, project: string, issuedAt: number)
 
 // ------------------------------------------------------------------ routes
 
+interface HistoryTurn {
+  role: string;
+  content: string;
+}
+
+/**
+ * Fold the device's remembered turns into the one text the core accepts, so
+ * follow-up questions ("continue", "what did you just say") keep their context.
+ * The core keeps no host-side history; the design panel re-sends the last few
+ * finished turns with every message and the server folds them in here.
+ * Capped so the folded text always fits the core's 8K chat budget.
+ */
+export function foldHistory(history: unknown, message: string): string {
+  if (!Array.isArray(history)) return message;
+  const turns: HistoryTurn[] = [];
+  for (const item of history.slice(-6)) {
+    if (!item || typeof item !== "object") continue;
+    const { role, content } = item as { role?: unknown; content?: unknown };
+    if ((role !== "user" && role !== "assistant") || typeof content !== "string") continue;
+    const text = content.trim();
+    if (text) turns.push({ role, content: text.slice(0, 800) });
+  }
+  const MESSAGE_BUDGET = 8192;
+  let used = message.length + 80; // the wrapper lines
+  const kept: HistoryTurn[] = [];
+  for (let i = turns.length - 1; i >= 0; i--) {
+    const cost = turns[i].content.length + turns[i].role.length + 4;
+    if (used + cost > MESSAGE_BUDGET) break;
+    kept.unshift(turns[i]);
+    used += cost;
+  }
+  if (kept.length === 0) return message;
+  const nl = "\n";
+  const earlier = kept.map((t) => t.role + ": " + t.content).join(nl);
+  return "[earlier in this conversation]" + nl + earlier + nl + "[end of earlier conversation]" + nl + nl + message;
+}
+
 export interface DesignCompatDeps {
   env: DesignEnv;
   /** Run one chat turn through the /v1/ask pipeline with a derived record. */
@@ -385,7 +422,7 @@ export async function designCompatRoute(
       );
     }
     const record = await passKeyRecord(pass.pass, pass.activatedAt);
-    const res = await deps.chatDoor({ kind: "chat", text: message }, record);
+    const res = await deps.chatDoor({ kind: "chat", text: foldHistory(body.history, message) }, record);
     const out = await res.json().catch(() => null) as Record<string, unknown> | null;
     if (res.ok && out && out.ok === true && typeof out.answer === "string") {
       const meta = (out.meta ?? {}) as Record<string, unknown>;
