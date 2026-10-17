@@ -178,6 +178,22 @@ export async function passKeyRecord(pass: string, activatedAt: number): Promise<
   };
 }
 
+// The design's own contract for the chat panel: a device-held pass is
+// verified server-side; absent or expired -> free tier under the standard
+// host limits. One rate bucket per connecting address, so one stranger
+// cannot spend everyone else's free chat.
+export async function freeKeyRecord(request: Request): Promise<KeyRecord> {
+  const ip = request.headers.get("cf-connecting-ip")?.trim() || "local";
+  const hash = await sha256("free|" + ip);
+  return {
+    id: "free_" + hash.slice(0, 12),
+    user: 0,
+    project: "web",
+    created: 0,
+    revoked: false,
+  };
+}
+
 /** Map the core's machine codes to the panel's refusal transaction. */
 export function refuseStage(code: string): string {
   const known: Record<string, string> = {

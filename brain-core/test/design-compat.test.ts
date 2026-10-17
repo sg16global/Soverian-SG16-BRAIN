@@ -226,14 +226,28 @@ function passHeader(): string {
 test("POST /api/brain: pass-gated ChatReply, ndjson stream, honest refusals", async () => {
   const e = env({ LOGS: { prepare: () => ({ bind: () => ({ first: async () => null }) }) } as never });
 
-  // no pass -> clear message, not a silent unreachable
+  // no pass -> the design's free tier: ChatReply under the standard host limits
+  let freeRecord: unknown = null;
   const noPass = await designCompatRoute(
-    new Request("https://x/api/brain", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ message: "hi" }) }),
+    new Request("https://x/api/brain", {
+      method: "POST",
+      headers: { "content-type": "application/json", "cf-connecting-ip": "203.0.113.7" },
+      body: JSON.stringify({ message: "hi" }),
+    }),
     "/api/brain",
-    deps(e),
+    deps(e, async (_payload: unknown, record: unknown) => {
+      freeRecord = record;
+      return Response.json({ ok: true, answer: "hello free", meta: { engine: "model-vps", latency_ms: 7 } });
+    }),
   );
-  assert.equal(noPass?.status, 402);
-  assert.match((await noPass?.json()).error, /pass is required/i);
+  assert.equal(noPass?.status, 200);
+  const freeBody = (await noPass?.json()) as { assistantMessage: { content: string } };
+  assert.equal(freeBody.assistantMessage.content, "hello free");
+  // the free tier rides its own per-address key record, project "web"
+  const fr = freeRecord as { id: string; project: string; revoked: boolean };
+  assert.match(fr.id, /^free_[0-9a-f]{12}$/);
+  assert.equal(fr.project, "web");
+  assert.equal(fr.revoked, false);
 
   // with a pass -> old ChatReply shape
   let doorPayload: unknown = null;

@@ -6,7 +6,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { createHmac, randomBytes } from "node:crypto";
 
-import { INVARIANTS, resolvePass, passKeyRecord, refuseStage, clientRoute } from "../src/client-routes.ts";
+import { INVARIANTS, resolvePass, passKeyRecord, freeKeyRecord, refuseStage, clientRoute } from "../src/client-routes.ts";
 
 const SECRET = "test-billing-secret-0123456789";
 const stubDb = {
@@ -44,6 +44,25 @@ test("passKeyRecord derives a stable matrix key id from the pass", async () => {
   assert.equal(again.id, record.id);
   const other = await passKeyRecord("other", 1_800_000_000);
   assert.notEqual(other.id, record.id);
+});
+
+test("freeKeyRecord: stable per connecting address, never collides with a pass bucket", async () => {
+  const req = (ip: string | null) =>
+    new Request("https://x/api/brain", ip ? { headers: { "cf-connecting-ip": ip } } : undefined);
+  const a = await freeKeyRecord(req("203.0.113.7"));
+  assert.equal(a.project, "web");
+  assert.equal(a.user, 0);
+  assert.equal(a.revoked, false);
+  assert.match(a.id, /^free_[0-9a-f]{12}$/);
+  // same address -> same bucket, so the standard host limits apply per device
+  assert.equal((await freeKeyRecord(req("203.0.113.7"))).id, a.id);
+  // a different address -> a different bucket
+  assert.notEqual((await freeKeyRecord(req("198.51.100.9"))).id, a.id);
+  // no address header (local dev) -> one shared local bucket
+  assert.equal((await freeKeyRecord(req(null))).id, (await freeKeyRecord(req(null))).id);
+  // a free bucket can never collide with a paid pass bucket
+  const paid = await passKeyRecord("sg16-pass-value", 1_800_000_000);
+  assert.notEqual(a.id, paid.id);
 });
 
 test("refuseStage maps known machine codes, keeps unknown ones honest", () => {

@@ -28,7 +28,7 @@
 
 import { scryptSync, timingSafeEqual } from "node:crypto";
 import type { KeyRecord } from "./types.ts";
-import { resolvePass, passKeyRecord } from "./client-routes.ts";
+import { resolvePass, passKeyRecord, freeKeyRecord } from "./client-routes.ts";
 
 export interface DesignEnv {
   KEYS: KVNamespace;
@@ -414,14 +414,12 @@ export async function designCompatRoute(
     const message = typeof body.message === "string" ? body.message.trim() : "";
     if (!message) return json({ error: "Enter a message." }, 400);
     if (message.length > 8192) return json({ error: "A chat message is at most 8K characters." }, 400);
+    // The design's own contract: a device-held pass is verified server-side;
+    // absent or expired -> free tier under the standard host limits.
     const pass = await resolvePass(request.headers.get("x-sg16-pass"), env);
-    if (!pass) {
-      return json(
-        { error: "A pass is required to chat. Get one on the Subscription page; it is stored on this device only." },
-        402,
-      );
-    }
-    const record = await passKeyRecord(pass.pass, pass.activatedAt);
+    const record = pass
+      ? await passKeyRecord(pass.pass, pass.activatedAt)
+      : await freeKeyRecord(request);
     const res = await deps.chatDoor({ kind: "chat", text: foldHistory(body.history, message) }, record);
     const out = await res.json().catch(() => null) as Record<string, unknown> | null;
     if (res.ok && out && out.ok === true && typeof out.answer === "string") {
