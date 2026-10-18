@@ -59,6 +59,7 @@ command -v cloudflared >/dev/null 2>&1 || {
   curl -fL "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-${arch}.deb" -o /tmp/cloudflared.deb
   dpkg -i /tmp/cloudflared.deb
 }
+mkdir -p "$HOME/.cloudflared"   # 'cloudflared login' writes its cert.pem here
 cloudflared tunnel list >/dev/null 2>&1 \
   || die "cloudflared is not authenticated. Run 'cloudflared login' once (it prints a URL — open it in your browser and pick the mistralbrain.com zone), then re-run this script. No models pulled yet, old brain untouched."
 
@@ -84,7 +85,8 @@ Environment="OLLAMA_CONTEXT_LENGTH=$CTX"
 Environment="OLLAMA_KEEP_ALIVE=30m"
 Environment="OLLAMA_MAX_LOADED_MODELS=2"
 UNIT
-  systemctl daemon-reload && systemctl enable --now ollama
+  export OLLAMA_HOST="127.0.0.1:$MODEL_PORT"   # the CLI (pull/show/rm) must reach the daemon
+  systemctl daemon-reload && systemctl enable ollama && systemctl restart ollama
   say "pulling the chat brain: $MODEL_CHAT (~7.7 GB fp16) — this takes a while"
   ollama pull "$MODEL_CHAT"
   say "pulling the coding brain: $MODEL_CODER (~6.2 GB fp16) — this takes a while"
@@ -159,6 +161,10 @@ CODER_INGRESS_PORT="$MODEL_PORT"
 if [ "$MODE" = "llamacpp" ]; then CODER_INGRESS_PORT="$CODER_PORT"; fi
 
 mkdir -p /etc/cloudflared
+# 'cloudflared tunnel create' writes the credentials JSON to ~/.cloudflared;
+# the service config below reads it from /etc/cloudflared — copy it into place.
+cp -f "$HOME/.cloudflared/$TUNNEL_ID.json" "/etc/cloudflared/$TUNNEL_ID.json" \
+  || die "no credentials for tunnel '$TUNNEL_NAME' at $HOME/.cloudflared/$TUNNEL_ID.json — delete the tunnel in Zero Trust (Networks -> Tunnels) and re-run this script"
 cat > /etc/cloudflared/config.yml <<EOF
 tunnel: $TUNNEL_ID
 credentials-file: /etc/cloudflared/$TUNNEL_ID.json
