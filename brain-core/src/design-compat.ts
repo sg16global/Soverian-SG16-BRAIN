@@ -9,8 +9,9 @@
 //
 //   GET  /api/identity            service description
 //   POST /api/identity            action=admin-login | me (operator token)
-//   GET  /api/admin/project-keys  operator only: key config state
-//   POST /api/admin/project-keys  operator only: mint one sg16p_ project key
+//   GET  /api/admin/project-keys  operator only: key config state + minted-key records
+//   POST /api/admin/project-keys  operator only: mint one sg16p_ project key (recorded)
+//   DELETE /api/admin/project-keys  operator only: revoke one key (?key=<sg16p_ key> or ?id=<fingerprint>)
 //   GET  /api/brain?probe=...     turnstile probe / health probe / session note
 //   POST /api/brain               pass-gated chat (X-SG16-Pass), ChatReply or
 //                                 x-ndjson delta/done stream, old shapes
@@ -29,6 +30,7 @@
 import { scryptSync, timingSafeEqual } from "node:crypto";
 import type { KeyRecord } from "./types.ts";
 import { resolvePass, passKeyRecord, freeKeyRecord } from "./client-routes.ts";
+import { keyHash } from "./keys.ts";
 
 export interface DesignEnv {
   KEYS: KVNamespace;
@@ -273,6 +275,77 @@ export function projectKeyRecord(key: string, project: string, issuedAt: number)
   return { id: `sg16p_${project}_${key.slice(-12)}`, user: 0, project, created: issuedAt, revoked: false };
 }
 
+// ------------------------------------------- project-key records (KV)
+// Minting records a fingerprint of every key so the operator can later list
+// and revoke keys one by one. Only the SHA-256 of a key is stored, never the
+// key itself, so the public promise ("no list of keys, only signatures")
+// stays literally true: the server keeps fingerprints, not keys.
+
+const PROJECT_KEY_RECORD_PREFIX = "projkey:";
+
+export interface ProjectKeyRecord {
+  /** sha256(key), hex: a fingerprint, never the key. */
+  id: string;
+  project: string;
+  created: number;
+  /** Last 12 characters of the key, so the operator can recognize it. */
+  last12: string;
+  revoked: boolean;
+}
+
+async function recordProjectKey(env: DesignEnv, key: string, project: string, now: number): Promise<ProjectKeyRecord> {
+  const record: ProjectKeyRecord = { id: await keyHash(key), project, created: now, last12: key.slice(-12), revoked: false };
+  await env.KEYS.put(PROJECT_KEY_RECORD_PREFIX + record.id, JSON.stringify(record));
+  return record;
+}
+
+async function listProjectKeyRecords(env: DesignEnv): Promise<ProjectKeyRecord[]> {
+  const records: ProjectKeyRecord[] = [];
+  let cursor: string | undefined;
+  do {
+    const page = await env.KEYS.list(cursor ? { prefix: PROJECT_KEY_RECORD_PREFIX, cursor } : { prefix: PROJECT_KEY_RECORD_PREFIX });
+    for (const item of page.keys) {
+      const raw = await env.KEYS.get(item.name);
+      if (!raw) continue;
+      try {
+        records.push(JSON.parse(raw) as ProjectKeyRecord);
+      } catch {
+        continue;
+      }
+    }
+    cursor = page.list_complete ? undefined : page.cursor;
+  } while (cursor);
+  records.sort((a, b) => b.created - a.created); // newest first
+  return records;
+}
+
+async function revokeProjectKeyRecord(env: DesignEnv, id: string): Promise<ProjectKeyRecord | null> {
+  const raw = await env.KEYS.get(PROJECT_KEY_RECORD_PREFIX + id);
+  if (!raw) return null;
+  let record: ProjectKeyRecord;
+  try {
+    record = JSON.parse(raw) as ProjectKeyRecord;
+  } catch {
+    return null;
+  }
+  // a tombstone, not a delete: removing the record would un-revoke the key
+  record.revoked = true;
+  await env.KEYS.put(PROJECT_KEY_RECORD_PREFIX + id, JSON.stringify(record));
+  return record;
+}
+
+/** Per-key revocation for /v1. A key with no record is not managed by the
+ * record system (every key minted before this feature) and keeps working. */
+export async function isProjectKeyRevoked(store: { get(key: string): Promise<string | null> }, key: string): Promise<boolean> {
+  const raw = await store.get(PROJECT_KEY_RECORD_PREFIX + (await keyHash(key)));
+  if (!raw) return false;
+  try {
+    return (JSON.parse(raw) as ProjectKeyRecord).revoked === true;
+  } catch {
+    return true; // unreadable record: fail closed
+  }
+}
+
 // ------------------------------------------------------------------ routes
 
 interface HistoryTurn {
@@ -367,7 +440,7 @@ export async function designCompatRoute(
   }
 
   // ---- /api/admin/project-keys: the operator's key mint ----------------
-  if (path === "/api/admin/project-keys" && (request.method === "GET" || request.method === "POST")) {
+  if (path === "/api/admin/project-keys" && (request.method === "GET" || request.method === "POST" || request.method === "DELETE")) {
     const signedIn = Boolean(request.headers.get("authorization"));
     const operator = await operatorBearer(request, env);
     if (!operator) {
@@ -377,7 +450,33 @@ export async function designCompatRoute(
       );
     }
     if (request.method === "GET") {
-      return json({ configured: Boolean(env.SG16_PROJECT_KEY_SECRET?.trim()), revoked: revokedProjects(env) });
+      return json({
+        configured: Boolean(env.SG16_PROJECT_KEY_SECRET?.trim()),
+        revoked: revokedProjects(env),
+        keys: await listProjectKeyRecords(env),
+      });
+    }
+    if (request.method === "DELETE") {
+      const params = new URL(request.url).searchParams;
+      const keyParam = (params.get("key") ?? "").trim();
+      const idParam = (params.get("id") ?? "").trim();
+      let id: string;
+      if (keyParam) {
+        if (!keyParam.startsWith(PROJECT_KEY_PREFIX)) {
+          return json({ error: "key must be a sg16p_ project key." }, 400);
+        }
+        id = await keyHash(keyParam);
+      } else if (idParam) {
+        if (!/^[0-9a-f]{64}$/.test(idParam)) {
+          return json({ error: "id must be the 64-hex fingerprint of a project key." }, 400);
+        }
+        id = idParam;
+      } else {
+        return json({ error: "Pass ?id=<64-hex fingerprint> or ?key=<sg16p_ key>." }, 400);
+      }
+      const revoked = await revokeProjectKeyRecord(env, id);
+      if (!revoked) return json({ error: "No project-key record with that id." }, 404);
+      return json({ ok: true, id: revoked.id, project: revoked.project, revoked: true });
     }
     const secret = env.SG16_PROJECT_KEY_SECRET?.trim();
     if (!secret || secret.length < 32) {
@@ -388,7 +487,11 @@ export async function designCompatRoute(
     if (!isValidProjectName(project)) {
       return json({ error: "Project name: 1-40 characters, lowercase letters, digits and dashes." }, 400);
     }
-    return json({ project, key: await createProjectKey(project, secret), shownOnce: true });
+    const key = await createProjectKey(project, secret);
+    // Record the fingerprint BEFORE the key is disclosed: if the put throws,
+    // the key is never shown, so no valid key is left unmanaged.
+    await recordProjectKey(env, key, project, Date.now());
+    return json({ project, key, shownOnce: true });
   }
 
   // ---- /api/brain: the design's chat panel ------------------------------

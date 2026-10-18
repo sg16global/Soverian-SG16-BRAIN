@@ -19,6 +19,7 @@ import {
   type DesignEnv,
 } from "../src/design-compat.ts";
 import { authenticate } from "../src/auth.ts";
+import { keyHash } from "../src/keys.ts";
 
 const IDENTITY_SECRET = "identity-secret-0123456789-identity-secret";
 const PROJECT_SECRET = "project-key-secret-0123456789abcdef";
@@ -30,9 +31,25 @@ const ADMIN_HASH = (() => {
   return ["scrypt", 32768, 8, 1, salt.toString("base64url"), hash.toString("base64url")].join(":");
 })();
 
+// in-memory KV: the project-key record store (and anything else) sees a Map
+function kvStub(): DesignEnv["KEYS"] {
+  const map = new Map<string, string>();
+  return {
+    get: async (key: string) => map.get(key) ?? null,
+    put: async (key: string, value: string) => void map.set(key, value),
+    list: async (options?: { prefix?: string }) => ({
+      keys: [...map.keys()]
+        .filter((k) => !options?.prefix || k.startsWith(options.prefix))
+        .map((name) => ({ name })),
+      list_complete: true,
+      cursor: "",
+    }),
+  } as never;
+}
+
 function env(overrides: Partial<DesignEnv> = {}): DesignEnv {
   return {
-    KEYS: {} as never,
+    KEYS: kvStub(),
     LOGS: {} as never,
     QUEUE: {} as never,
     MATRIX: {} as never,
@@ -208,6 +225,96 @@ test("operator sign-in via POST /api/identity, then me, then project-key minting
     deps(e),
   );
   assert.equal((await state?.json()).configured, true);
+});
+
+test("project-key records: mint saves a fingerprint (never the key), GET lists, DELETE revokes", async () => {
+  const e = env();
+  const store = { get: async (k: string) => await e.KEYS.get(k) };
+  const login = await designCompatRoute(
+    new Request("https://x/api/identity", {
+      method: "POST",
+      headers: { "content-type": "application/json", "cf-connecting-ip": "5.5.5.5" },
+      body: JSON.stringify({ action: "admin-login", email: "sg16global@gmail.com", password: "operator-password-123" }),
+    }),
+    "/api/identity",
+    deps(e),
+  );
+  const { token } = (await login?.json()) as { token: string };
+  const auth = { "content-type": "application/json", authorization: `Bearer ${token}` };
+
+  const mint = async (project: string) => {
+    const res = await designCompatRoute(
+      new Request("https://x/api/admin/project-keys", { method: "POST", headers: auth, body: JSON.stringify({ project }) }),
+      "/api/admin/project-keys",
+      deps(e),
+    );
+    return (await res?.json()) as { key: string };
+  };
+  const keyA = (await mint("shop-a")).key;
+  const keyB = (await mint("shop-b")).key;
+
+  // two fingerprint records exist, and neither contains the key itself
+  const rawA = await store.get("projkey:" + (await keyHash(keyA)));
+  const rawB = await store.get("projkey:" + (await keyHash(keyB)));
+  assert.ok(rawA && rawB);
+  assert.equal(rawA.includes(keyA), false);
+  assert.equal(rawB.includes(keyB), false);
+
+  // GET lists both, with the last-12 the operator recognizes
+  const list = await designCompatRoute(
+    new Request("https://x/api/admin/project-keys", { headers: auth }),
+    "/api/admin/project-keys",
+    deps(e),
+  );
+  const listBody = (await list?.json()) as { keys: { id: string; project: string; last12: string; revoked: boolean }[] };
+  assert.equal(listBody.keys.length, 2);
+  assert.deepEqual(listBody.keys.map((k) => k.project).sort(), ["shop-a", "shop-b"]);
+  const recA = listBody.keys.find((k) => k.project === "shop-a");
+  assert.equal(recA?.last12, keyA.slice(-12));
+  assert.equal(recA?.revoked, false);
+
+  // both keys authenticate on /v1 while unrevoked
+  assert.ok((await authenticate(`Bearer ${keyA}`, store, PROJECT_SECRET, [])).ok);
+  assert.ok((await authenticate(`Bearer ${keyB}`, store, PROJECT_SECRET, [])).ok);
+
+  // DELETE by the full key: keyB dies, keyA lives
+  const delB = await designCompatRoute(
+    new Request(`https://x/api/admin/project-keys?key=${encodeURIComponent(keyB)}`, { method: "DELETE", headers: auth }),
+    "/api/admin/project-keys",
+    deps(e),
+  );
+  assert.equal(delB?.status, 200);
+  assert.equal((await authenticate(`Bearer ${keyB}`, store, PROJECT_SECRET, [])).ok, false);
+  assert.ok((await authenticate(`Bearer ${keyA}`, store, PROJECT_SECRET, [])).ok);
+
+  // DELETE by fingerprint: keyA dies too
+  const delA = await designCompatRoute(
+    new Request(`https://x/api/admin/project-keys?id=${recA?.id}`, { method: "DELETE", headers: auth }),
+    "/api/admin/project-keys",
+    deps(e),
+  );
+  assert.equal(delA?.status, 200);
+  assert.equal((await authenticate(`Bearer ${keyA}`, store, PROJECT_SECRET, [])).ok, false);
+
+  // guards: no params 400, unknown fingerprint 404, no token 401
+  const noParams = await designCompatRoute(
+    new Request("https://x/api/admin/project-keys", { method: "DELETE", headers: auth }),
+    "/api/admin/project-keys",
+    deps(e),
+  );
+  assert.equal(noParams?.status, 400);
+  const unknown = await designCompatRoute(
+    new Request(`https://x/api/admin/project-keys?id=${"a".repeat(64)}`, { method: "DELETE", headers: auth }),
+    "/api/admin/project-keys",
+    deps(e),
+  );
+  assert.equal(unknown?.status, 404);
+  const noToken = await designCompatRoute(
+    new Request("https://x/api/admin/project-keys", { method: "DELETE" }),
+    "/api/admin/project-keys",
+    deps(e),
+  );
+  assert.equal(noToken?.status, 401);
 });
 
 // a pass record in exactly the shape the design pages send (X-SG16-Pass)

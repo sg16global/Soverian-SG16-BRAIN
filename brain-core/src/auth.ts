@@ -5,7 +5,7 @@
 import type { KeyRecord, Policy, AskRequest } from "./types.ts";
 import { DEFAULT_POLICY } from "./types.ts";
 import { bearer, keyHash, isKeyShape } from "./keys.ts";
-import { verifyProjectKey, projectKeyRecord } from "./design-compat.ts";
+import { verifyProjectKey, projectKeyRecord, isProjectKeyRevoked } from "./design-compat.ts";
 
 export interface KeyStore {
   get(key: string): Promise<string | null>;
@@ -40,6 +40,9 @@ export async function authenticate(
   if (match) {
     const project = await verifyProjectKey(match[1], projectSecret, revokedProjects);
     if (!project) return { ok: false };
+    // per-key revocation: a minted key with a revoked record dies here; a key
+    // with no record is not managed by the record system and keeps working
+    if (await isProjectKeyRevoked(store, match[1])) return { ok: false };
     return { ok: true, record: projectKeyRecord(match[1], project.project, project.issuedAt) };
   }
   return { ok: false };
