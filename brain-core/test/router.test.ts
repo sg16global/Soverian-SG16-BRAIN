@@ -312,3 +312,20 @@ test("security headers ride on every response: api, errors, redirects, static as
   assert.equal(redirect.headers.get("location"), "https://mistralbrain.com/x?y=1");
   check(redirect, "www redirect");
 });
+
+test("queue wait: MAX_QUEUE_WAIT_MS is the default and the ceiling; a project policy may only lower it", async () => {
+  const waits: number[] = [];
+  const waitFor = async (policy: unknown) => {
+    const { env, key, kv, gate } = await makeEnv({ MAX_QUEUE_WAIT_MS: "120000" });
+    const acquire = gate.acquire.bind(gate);
+    gate.acquire = ((ms?: number) => { waits.push(ms ?? -1); return acquire(ms); }) as typeof gate.acquire;
+    if (policy) kv.map.set("policy:platform", JSON.stringify(policy));
+    modelHandler = async () => json({ message: { content: "ok" } });
+    assert.equal((await call(env, "/v1/ask", "POST", key, { text: "hi" })).status, 200);
+    return waits.at(-1);
+  };
+  assert.equal(await waitFor(null), 120000, "no stored policy: the env wait applies (was capped at 45s)");
+  assert.equal(await waitFor({ rpm: 60 }), 120000, "a policy without max_queue_ms keeps the env wait");
+  assert.equal(await waitFor({ max_queue_ms: 30000 }), 30000, "a project may ask for a shorter wait");
+  assert.equal(await waitFor({ max_queue_ms: 600000 }), 120000, "but never a longer one than the env ceiling");
+});

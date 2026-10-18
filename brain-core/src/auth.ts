@@ -48,19 +48,21 @@ export async function authenticate(
   return { ok: false };
 }
 
-export async function loadPolicy(store: KeyStore, project: string): Promise<Policy> {
+/** A project's stored policy over the given defaults (the Worker passes its
+ * env-configured queue wait as the default max_queue_ms). */
+export async function loadPolicy(store: KeyStore, project: string, defaults: Policy = DEFAULT_POLICY): Promise<Policy> {
   const raw = await store.get(`policy:${project}`);
-  if (!raw) return DEFAULT_POLICY;
+  if (!raw) return defaults;
   try {
     const p = JSON.parse(raw) as Partial<Policy>;
     return {
-      rpm: typeof p.rpm === "number" && p.rpm > 0 ? Math.floor(p.rpm) : DEFAULT_POLICY.rpm,
-      max_queue_ms: typeof p.max_queue_ms === "number" && p.max_queue_ms >= 0 ? p.max_queue_ms : DEFAULT_POLICY.max_queue_ms,
-      require_json: typeof p.require_json === "boolean" ? p.require_json : DEFAULT_POLICY.require_json,
-      blocked_patterns: Array.isArray(p.blocked_patterns) ? p.blocked_patterns.filter((x) => typeof x === "string") : DEFAULT_POLICY.blocked_patterns,
+      rpm: typeof p.rpm === "number" && p.rpm > 0 ? Math.floor(p.rpm) : defaults.rpm,
+      max_queue_ms: typeof p.max_queue_ms === "number" && p.max_queue_ms >= 0 ? p.max_queue_ms : defaults.max_queue_ms,
+      require_json: typeof p.require_json === "boolean" ? p.require_json : defaults.require_json,
+      blocked_patterns: Array.isArray(p.blocked_patterns) ? p.blocked_patterns.filter((x) => typeof x === "string") : defaults.blocked_patterns,
     };
   } catch {
-    return DEFAULT_POLICY;
+    return defaults;
   }
 }
 

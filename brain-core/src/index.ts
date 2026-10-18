@@ -24,6 +24,7 @@ import { clientRoute, resolvePass, passKeyRecord, refuseStage } from "./client-r
 import { designCompatRoute, designRscRoute, PROJECT_KEY_PREFIX, revokeProjectKey } from "./design-compat.ts";
 import { projectScanRoute } from "./project-scan.ts";
 import type { AskMeta, ErrorBody, KeyRecord, Policy } from "./types.ts";
+import { DEFAULT_POLICY } from "./types.ts";
 
 // Durable Object classes must be exported from the worker entry point
 export { InferenceQueueDO } from "./inference-queue-do.ts";
@@ -206,7 +207,10 @@ async function askParsed(
   if (!parsed) return await finish(env, ctx, record, "chat", "none", 400, started, 0, false, "E_BAD_REQUEST",
     jsonError(400, "E_BAD_REQUEST"));
 
-  const policy = await loadPolicy(env.KEYS, record.project);
+  // MAX_QUEUE_WAIT_MS is both the default wait and the ceiling; a project's
+  // stored policy may only lower it (before, the 45s policy default always won)
+  const queueCeilingMs = Number(env.MAX_QUEUE_WAIT_MS) || DEFAULT_POLICY.max_queue_ms;
+  const policy = await loadPolicy(env.KEYS, record.project, { ...DEFAULT_POLICY, max_queue_ms: queueCeilingMs });
   const rate = await rateCheck(env, record, policy);
   if (!rate.allowed) {
     return await finish(env, ctx, record, parsed.kind, "none", 429, started, 0, false, "E_RATE_LIMIT",
@@ -237,7 +241,7 @@ async function askParsed(
   const detect = detectScript(parsed.text);
   const prompt = systemPrompt(detect);
   const messages = messagesFor(prompt, parsed.text);
-  const maxQueueMs = Math.min(policy.max_queue_ms, Number(env.MAX_QUEUE_WAIT_MS) || 45000);
+  const maxQueueMs = Math.min(policy.max_queue_ms, queueCeilingMs);
 
   const queueStarted = Date.now();
   const grant = await acquireSlot(env, maxQueueMs);
