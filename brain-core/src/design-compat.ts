@@ -340,6 +340,28 @@ async function revokeProjectKeyRecord(env: DesignEnv, id: string): Promise<Proje
   return record;
 }
 
+/** Revoke one sg16p_ key by its fingerprint (key rotation on /v1/keys). Keeps
+ * the existing record when there is one; writes a tombstone when there is not
+ * (keys minted before records existed). */
+export async function revokeProjectKey(
+  store: { get(key: string): Promise<string | null>; put(key: string, value: string): Promise<void> },
+  key: string,
+  project: string,
+  now = Date.now(),
+): Promise<void> {
+  const id = await keyHash(key);
+  let record: ProjectKeyRecord = { id, project, created: now, last12: key.slice(-12), revoked: true };
+  const raw = await store.get(PROJECT_KEY_RECORD_PREFIX + id);
+  if (raw) {
+    try {
+      record = { ...(JSON.parse(raw) as ProjectKeyRecord), revoked: true };
+    } catch {
+      // unreadable record: overwrite with a clean tombstone
+    }
+  }
+  await store.put(PROJECT_KEY_RECORD_PREFIX + id, JSON.stringify(record));
+}
+
 /** Per-key revocation for /v1. A key with no record is not managed by the
  * record system (every key minted before this feature) and keeps working. */
 export async function isProjectKeyRevoked(store: { get(key: string): Promise<string | null> }, key: string): Promise<boolean> {

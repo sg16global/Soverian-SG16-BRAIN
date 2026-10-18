@@ -266,3 +266,27 @@ test("unknown route => 404 machine code", async () => {
   const res = await call(env, "/v1/nope", "GET", null);
   assert.equal(res.status, 404);
 });
+
+test("key rotation: the new key works and the old one is dead (sg16_ KV keys)", async () => {
+  const { env, key } = await makeEnv();
+  const res = await call(env, "/v1/keys", "POST", key);
+  assert.equal(res.status, 200);
+  const out = await res.json() as { key: string };
+  assert.match(out.key, /^sg16_[0-9a-f]{32}$/);
+  assert.equal((await call(env, "/v1/state", "GET", out.key)).status, 200);
+  assert.equal((await call(env, "/v1/state", "GET", key)).status, 401);
+});
+
+test("key rotation: a stateless sg16p_ project key is revoked through its fingerprint record", async () => {
+  const { createProjectKey } = await import("../src/design-compat.ts");
+  const secret = "project-key-secret-0123456789abcdef";
+  const { env } = await makeEnv({ SG16_PROJECT_KEY_SECRET: secret });
+  const projectKey = await createProjectKey("sg16finance", secret);
+  assert.equal((await call(env, "/v1/state", "GET", projectKey)).status, 200);
+  const res = await call(env, "/v1/keys", "POST", projectKey);
+  assert.equal(res.status, 200);
+  const out = await res.json() as { key: string; record: { project: string } };
+  assert.equal(out.record.project, "sg16finance");
+  assert.equal((await call(env, "/v1/state", "GET", out.key)).status, 200, "the replacement key works");
+  assert.equal((await call(env, "/v1/state", "GET", projectKey)).status, 401, "the rotated project key is dead");
+});

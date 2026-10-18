@@ -21,7 +21,7 @@ import { logRequest, logHistory } from "./d1.ts";
 import { newKey, keyHash, sha256 } from "./keys.ts";
 import { billingRoute } from "./billing-routes.ts";
 import { clientRoute, resolvePass, passKeyRecord, refuseStage } from "./client-routes.ts";
-import { designCompatRoute, designRscRoute } from "./design-compat.ts";
+import { designCompatRoute, designRscRoute, PROJECT_KEY_PREFIX, revokeProjectKey } from "./design-compat.ts";
 import { projectScanRoute } from "./project-scan.ts";
 import type { AskMeta, ErrorBody, KeyRecord, Policy } from "./types.ts";
 
@@ -422,13 +422,18 @@ async function rotateKey(
   };
   await env.KEYS.put(await keyHash(key), JSON.stringify(nextRecord));
   const oldKey = keyFromAuth(request);
-  if (oldKey) await env.KEYS.put(await keyHash(oldKey), JSON.stringify({ ...record, revoked: true }));
+  if (oldKey.startsWith(PROJECT_KEY_PREFIX)) {
+    // a stateless sg16p_ key dies through its fingerprint record, the store /v1 auth reads
+    await revokeProjectKey(env.KEYS, oldKey, record.project);
+  } else if (oldKey) {
+    await env.KEYS.put(await keyHash(oldKey), JSON.stringify({ ...record, revoked: true }));
+  }
   return await finish(env, ctx, record, "chat", "none", 200, started, 0, true, undefined,
     Response.json({ ok: true, key, record: { id, user: record.user, project: record.project } }));
 }
 
 function keyFromAuth(request: Request): string {
-  return request.headers.get("authorization")?.split(" ")[1] ?? "";
+  return /^Bearer\s+(\S+)$/i.exec((request.headers.get("authorization") ?? "").trim())?.[1] ?? "";
 }
 
 // --------------------------------------------------------------------------- 
