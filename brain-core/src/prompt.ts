@@ -34,3 +34,25 @@ export function messagesFor(prompt: string, userText: string, history: readonly 
   messages.push({ role: "user", content: userText });
   return messages;
 }
+
+// The self-check pass — the brain re-reads its own draft and corrects it
+// before the user sees anything. Language-neutral like every prompt here:
+// the checker recomputes arithmetic and checks facts and logic, and it
+// answers in the draft's own language.
+
+export function checkerPrompt(): string {
+  return [
+    "You are a strict verifier. You receive one question and one draft answer.",
+    "Recompute every arithmetic step from scratch. Check the facts you can check and the logic from end to end.",
+    "If the draft answer is fully correct, reply with exactly: OK",
+    "If anything in the draft answer is wrong, incomplete or misleading, reply with only the corrected full answer — no explanations, no commentary, no greetings.",
+    "Reply in the same language as the draft answer.",
+  ].join(" ");
+}
+
+export function checkMessages(question: string, draft: string): ChatTurn[] {
+  return [
+    { role: "system", content: checkerPrompt() },
+    { role: "user", content: "Question:\n" + question + "\n\nDraft answer:\n" + draft },
+  ];
+}

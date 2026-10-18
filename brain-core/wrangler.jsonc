@@ -37,10 +37,10 @@
   "vars": {
     "MODEL_URL": "https://internal.mistralbrain.com",
     "MODEL_PROVIDER": "ollama",
-    "MODEL_NAME": "devstral",
+    "MODEL_NAME": "ministral-3:3b-instruct-2512-fp16",
+    "MODEL_NAME_CODER": "qwen2.5-coder:3b-instruct-fp16",
     "MODEL_HEALTH_PATH": "/api/tags",
     "MODEL_NUM_CTX": "8192",
-    "MISTRAL_MODEL": "mistral-small-latest",
     "MAX_OUTPUT_CHARS": "16384",
     "INFERENCE_TIMEOUT_MS": "60000",
     "MAX_QUEUE_WAIT_MS": "120000",

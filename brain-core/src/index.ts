@@ -6,17 +6,19 @@
 //   2. validate the API key against KV (owner = user #1, same path as everyone)
 //   3. route: math/logic/state/scoring computed HERE; only language generation
 //      is forwarded to the inference-only VPS through the tunnel, one at a time
-//   4. verify every model output before accepting it; retry once, else reject
+//   4. self-check every model output first — the model re-reads its own
+//      draft and corrects wrong output before the user sees it — then the
+//      core verifies it; retry once, else reject
 //
 // All errors are machine codes with standard HTTP status; no human-language
 // sentences leave the core.
 
 import { authenticate, loadPolicy, parseAsk } from "./auth.ts";
 import { detectScript } from "./detect.ts";
-import { systemPrompt, messagesFor } from "./prompt.ts";
+import { systemPrompt, messagesFor, checkMessages } from "./prompt.ts";
+import { isCodeRequest } from "./intent.ts";
 import { verifyOutput, requestAllowed } from "./verify.ts";
 import { callModel, ModelError } from "./model-client.ts";
-import { callMistral } from "./mistral.ts";
 import { logRequest, logHistory } from "./d1.ts";
 import { newKey, keyHash, sha256 } from "./keys.ts";
 import { billingRoute } from "./billing-routes.ts";
@@ -41,12 +43,13 @@ export interface Env {
   MODEL_PROVIDER: "ollama" | "llamacpp";
   MODEL_URL: string;              // set via wrangler var after the tunnel exists
   MODEL_HEALTH_PATH: string;      // ollama: /api/tags | llamacpp: /health
-  MODEL_NAME: string;
+  MODEL_NAME: string;            // chat brain (Ministral 3B, full true weights)
+  MODEL_NAME_CODER: string;      // coding brain (Qwen 2.5 Coder 3B, full true weights)
+  MODEL_URL_CODER?: string;      // llamacpp mode only; unset => same server as MODEL_URL
   MODEL_NUM_CTX: string;
   MAX_OUTPUT_CHARS: string;
   INFERENCE_TIMEOUT_MS: string;
   MAX_QUEUE_WAIT_MS: string;
-  MISTRAL_MODEL: string;
 
   // billing (Dodo Payments MoR pipeline — see billing-routes.ts)
   DODO_TEST_MODE?: string;
@@ -56,11 +59,11 @@ export interface Env {
   DODO_WEBHOOK_SECRET?: string;
   BILLING_SECRET?: string;
 
-  // secrets (wrangler secret put ...)
+  // secrets (wrangler secret put ...) — no third-party AI API secret exists;
+  // every inference is self-hosted on the VPS
   MODEL_SHARED_SECRET?: string;
   CF_ACCESS_CLIENT_ID?: string;
   CF_ACCESS_CLIENT_SECRET?: string;
-  MISTRAL_API_KEY?: string;
 
   // legacy design-page secrets (see design-compat.ts) - same values the old host used
   SG16_IDENTITY_SECRET?: string;
@@ -251,41 +254,28 @@ async function askParsed(
   }
   const queueMs = Date.now() - queueStarted;
 
-  const modelCfg = {
-    provider: env.MODEL_PROVIDER,
-    url: env.MODEL_URL,
-    model: env.MODEL_NAME,
-    numCtx: Number(env.MODEL_NUM_CTX) || 8192,
-    timeoutMs: Number(env.INFERENCE_TIMEOUT_MS) || 60000,
-    sharedSecret: env.MODEL_SHARED_SECRET ?? "",
-    accessClientId: env.CF_ACCESS_CLIENT_ID ?? "",
-    accessClientSecret: env.CF_ACCESS_CLIENT_SECRET ?? "",
-  };
+  // Two self-hosted brains, one system: the chat brain answers conversation,
+  // the coding brain answers programming. There is no third-party AI API in
+  // this system — if the VPS is down, the request fails honestly (502).
+  const coding = isCodeRequest(parsed.text);
+  const model = coding ? (env.MODEL_NAME_CODER || env.MODEL_NAME) : env.MODEL_NAME;
+  const modelCfg = modelCfgOf(env, model, coding ? env.MODEL_URL_CODER : undefined);
 
   try {
-    let text: string | null = null;
-    let engine: AskMeta["engine"] = "model-vps";
-    try {
-      text = await attempt(env, modelCfg, messages, policy);
-    } catch (e) {
-      if (e instanceof ModelError && env.MISTRAL_API_KEY) {
-        // the one permitted backup route — VPS inference failed
-        text = await attemptMistral(env, messages, policy);
-        engine = "mistral-backup";
-      } else {
-        throw e;
-      }
-    }
+    const draft = await attempt(env, modelCfg, messages, policy);
+    const checked = await selfCheck(env, modelCfg, parsed.text, draft, policy);
     const meta: AskMeta = {
-      engine,
+      engine: "model-vps",
+      model: modelCfg.model,
+      checked: checked.ok,
       queue_ms: queueMs,
       latency_ms: Date.now() - started,
       verified: true,
       script: detect.script,
     };
-    const response = Response.json({ ok: true, answer: text, meta });
-    return await finish(env, ctx, record, "chat", engine, 200, started, queueMs, true, undefined, response,
-      parsed.text, text, detect.script);
+    const response = Response.json({ ok: true, answer: checked.text, meta });
+    return await finish(env, ctx, record, "chat", "model-vps", 200, started, queueMs, true, undefined, response,
+      parsed.text, checked.text, detect.script);
   } catch (e) {
     if (e instanceof HttpError) {
       return await finish(env, ctx, record, "chat", "none", e.status, started, queueMs, false, e.code,
@@ -300,7 +290,8 @@ async function askParsed(
   }
 }
 
-// one retry inside the model call, then the caller decides (mistral backup / reject)
+// one retry inside the draft call; the draft must pass verification before
+// the self-check pass ever runs
 async function attempt(env: Env, cfg: ReturnType<typeof modelCfgOf>, messages: unknown, policy: Policy): Promise<string> {
   for (let i = 0; i < 2; i++) {
     const text = await callModel(cfg, messages as never);
@@ -316,11 +307,11 @@ async function attempt(env: Env, cfg: ReturnType<typeof modelCfgOf>, messages: u
   throw new HttpError(502, "E_UNVERIFIED");
 }
 
-function modelCfgOf(env: Env) {
+function modelCfgOf(env: Env, model: string, url?: string) {
   return {
     provider: env.MODEL_PROVIDER,
-    url: env.MODEL_URL,
-    model: env.MODEL_NAME,
+    url: url ?? env.MODEL_URL,
+    model,
     numCtx: Number(env.MODEL_NUM_CTX) || 8192,
     timeoutMs: Number(env.INFERENCE_TIMEOUT_MS) || 60000,
     sharedSecret: env.MODEL_SHARED_SECRET ?? "",
@@ -329,19 +320,31 @@ function modelCfgOf(env: Env) {
   };
 }
 
-async function attemptMistral(env: Env, messages: unknown, policy: Policy): Promise<string> {
-  const text = await callMistral(
-    { apiKey: env.MISTRAL_API_KEY ?? "", model: env.MISTRAL_MODEL || "mistral-small-latest", timeoutMs: 30000 },
-    messages as never,
-  );
-  const v = verifyOutput({
-    text,
-    requireJson: policy.require_json,
-    maxOutputChars: Number(env.MAX_OUTPUT_CHARS) || 16384,
-    blockedPatterns: policy.blocked_patterns,
-  });
-  if (!v.ok) throw new HttpError(502, "E_UNVERIFIED");
-  return text;
+// The self-check pass: the same model re-reads its own draft and either
+// confirms it (exactly "OK") or returns a corrected answer. The user only
+// ever sees the checked text. A failed check never takes the verified draft
+// away — the answer simply goes out unchecked (checked: false in meta).
+async function selfCheck(
+  env: Env,
+  cfg: ReturnType<typeof modelCfgOf>,
+  question: string,
+  draft: string,
+  policy: Policy,
+): Promise<{ text: string; ok: boolean }> {
+  try {
+    const verdict = await callModel(cfg, checkMessages(question, draft) as never);
+    if (/^ok[.!]?$/i.test(verdict.trim())) return { text: draft, ok: true };
+    const v = verifyOutput({
+      text: verdict,
+      requireJson: policy.require_json,
+      maxOutputChars: Number(env.MAX_OUTPUT_CHARS) || 16384,
+      blockedPatterns: policy.blocked_patterns,
+    });
+    if (!v.ok) return { text: draft, ok: false };
+    return { text: verdict, ok: true };
+  } catch {
+    return { text: draft, ok: false };
+  }
 }
 
 // ---------------------------------------------------------------------------

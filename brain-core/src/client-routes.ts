@@ -30,7 +30,7 @@ export interface ClientEnv {
   MATRIX: DurableObjectNamespace;
   BILLING_SECRET?: string;
   MODEL_NAME?: string;
-  MISTRAL_MODEL?: string;
+  MODEL_NAME_CODER?: string;
 }
 
 // The eight published charter invariants (sg16/charter.py, carried over
@@ -89,8 +89,8 @@ export async function clientRoute(
   if (request.method === "GET" && path === "/api/health") {
     const probe = await healthProbe();
     const digest = await gateWeightsSha256();
-    const model = env.MODEL_NAME || "devstral";
-    const backup = env.MISTRAL_MODEL || "mistral-small-latest";
+    const model = env.MODEL_NAME || "ministral-3:3b-instruct-2512-fp16";
+    const coder = env.MODEL_NAME_CODER || model;
     return Response.json({
       ok: true,
       database: probe.d1,
@@ -101,7 +101,7 @@ export async function clientRoute(
       // engines/heart/answering/persistence without guards):
       persistence: "cloudflare-d1",
       answering: "sg16-brain",
-      engines: ["core", model, backup],
+      engines: ["core", model, coder],
       heart: {
         status: probe.model ? "online" : "offline",
         model,

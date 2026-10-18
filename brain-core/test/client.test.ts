@@ -115,7 +115,7 @@ test("the charter keeps the eight published invariants", () => {
 });
 
 test("GET /api/health includes the fields the design's admin console renders", async () => {
-  const env = { LOGS: stubDb, MODEL_NAME: "devstral", MISTRAL_MODEL: "mistral-small-latest" } as never;
+  const env = { LOGS: stubDb, MODEL_NAME: "ministral-3:3b-instruct-2512-fp16", MODEL_NAME_CODER: "qwen2.5-coder:3b-instruct-fp16" } as never;
   const probe = async () => ({ d1: true, model: true });
   const res = await clientRoute(new Request("https://mistralbrain.com/api/health"), env, "/api/health", probe);
   assert.ok(res);
@@ -132,6 +132,7 @@ test("GET /api/health includes the fields the design's admin console renders", a
   assert.equal(typeof body.answering, "string");
   const heart = body.heart as { status: string; model?: string };
   assert.equal(heart.status, "online");
-  assert.equal(heart.model, "devstral");
+  assert.equal(heart.model, "ministral-3:3b-instruct-2512-fp16");
+  assert.ok((body.engines as string[]).includes("qwen2.5-coder:3b-instruct-fp16"), "the coder brain is listed too");
   assert.equal(body.lastAnswered, null);
 });

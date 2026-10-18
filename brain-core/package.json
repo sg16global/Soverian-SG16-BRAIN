@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "private": true,
   "type": "module",
-  "description": "Sovereign SG16 Brain — deterministic mathematical core on Cloudflare Workers. Inference-only VPS behind Cloudflare Tunnel; no third-party AI APIs except Mistral as backup.",
+  "description": "Sovereign SG16 Brain — deterministic mathematical core on Cloudflare Workers. Inference-only VPS behind Cloudflare Tunnel; no third-party AI APIs — every answer is self-hosted and self-checked.",
   "scripts": {
     "test": "node --test \"test/*.test.ts\"",
     "typecheck": "tsc --noEmit",

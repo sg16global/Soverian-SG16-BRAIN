@@ -7,9 +7,10 @@ deterministic logic, with an inference-only VPS behind a Cloudflare Tunnel.
 visitor/project ──▶ Worker (this package)          [deterministic: keys, routing, state, scoring, verification, queue]
                         │  one at a time, FIFO queue (Durable Object)
                         ▼
-                   VPS model server (Ollama/llama.cpp, 127.0.0.1 only, zero open ports)
+                   VPS model servers (Ollama/llama.cpp, 127.0.0.1 only, zero open ports)
                         via https://model.internal.mistralbrain.com  (Cloudflare Tunnel + Access)
-                        fallback: Mistral API — the ONLY third-party route, used only if the VPS fails
+                        two self-hosted brains: chat (Ministral 3B fp16) + coding (Qwen 2.5 Coder 3B fp16)
+                        every answer is self-checked before the user sees it; no third-party AI API exists
 ```
 
 ## Bindings
@@ -25,7 +26,7 @@ visitor/project ──▶ Worker (this package)          [deterministic: keys, r
 
 | Route | Purpose |
 |---|---|
-| `POST /v1/ask` `{kind:"chat", text}` | gate -> queue -> VPS inference -> verify -> answer |
+| `POST /v1/ask` `{kind:"chat", text}` | gate -> queue -> VPS inference -> self-check -> verify -> answer |
 | `POST /v1/ask` `{kind:"compute", op:"2+3*4"}` | deterministic arithmetic inside the Worker — no model involved |
 | `POST /v1/ask` `{kind:"state", op:"score.step", delta}` | matrix state transition |
 | `GET /v1/state` | the caller's own matrix row |
@@ -40,7 +41,7 @@ anywhere; the model receives one universal rule and the detected script.
 ## Tests
 
 ```bash
-node --test "test/*.test.ts"     # 31 tests: auth, detect, prompt, verify, queue, matrix, router e2e
+node --test "test/*.test.ts"     # 83 tests: auth, billing, client, d1, design-compat, intent, language, project-scan, queue-matrix, router, verify
 ```
 
 ## Deploy order (exact)
@@ -52,7 +53,8 @@ node --test "test/*.test.ts"     # 31 tests: auth, detect, prompt, verify, queue
 4. VPS: `bash scripts/vps-setup-model.sh` (model server + tunnel)
 5. Cloudflare Access app on the tunnel hostname, service token only
 6. Secrets: `npx wrangler secret put MODEL_SHARED_SECRET`,
-   `CF_ACCESS_CLIENT_ID`, `CF_ACCESS_CLIENT_SECRET`, `MISTRAL_API_KEY`
+   `CF_ACCESS_CLIENT_ID`, `CF_ACCESS_CLIENT_SECRET`
+   (no third-party AI API secret exists — there is no backup route)
 7. `npx wrangler deploy`, then attach the `mistralbrain.com` route to this
    worker in the Cloudflare dashboard (Workers -> Triggers)
 8. Keys: `node scripts/make-key.mjs` + the printed `wrangler kv key put`

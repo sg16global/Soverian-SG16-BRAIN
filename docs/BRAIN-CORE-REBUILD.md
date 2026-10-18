@@ -15,15 +15,21 @@ one-at-a-time queue discipline. Code: `brain-core/`. This is the runbook.
                                                 │ semaphore = 1, FIFO, lease expiry
                                                 │ Cloudflare Tunnel + Access service token
                                                 ▼
-                                   VPS (24 GB): Ollama/llama.cpp, Devstral Small Q4_K_M,
+                                   VPS (24 GB): Ollama/llama.cpp, two small brains at full
+                                   true weights (fp16): chat = Ministral 3 3B (~7.7 GB),
+                                   coding = Qwen 2.5 Coder 3B (~6.2 GB), both resident,
                                    bound to 127.0.0.1, ctx 8192, zero open ports
-                                                │ if the VPS fails (and only then)
+                                                │ if the VPS fails, the request fails honestly (502)
                                                 ▼
-                                   Mistral API — the ONLY third-party route
+                                   (no third-party AI API exists in this system)
 ```
 
-RAM budget on the 24 GB VPS: 14 GB Q4_K_M weights + ~2–3 GB KV cache (8K ctx)
-+ ~2 GB OS/runtime ≈ 19 GB, with headroom. Q6 or higher is never loaded.
+RAM budget on the 24 GB VPS: two fp16 3B brains (~14 GB weights) + ~1 GB KV
+cache (8K ctx, both) + ~2 GB OS/runtime ≈ 17 GB, with headroom. Full true
+weights (fp16) are preferred — the owner's weights principle; both models are
+small enough to stay loaded (OLLAMA_MAX_LOADED_MODELS=2, OLLAMA_KEEP_ALIVE=30m,
+never -1). The old brain (devstral, Q4_K_M ~14 GB) is removed by the setup
+script.
 
 ## Language sovereignty (what changed)
 
@@ -52,9 +58,12 @@ new model writes a language badly, that becomes visible instead of masked.
    ```
    Ollama is bound to 127.0.0.1:8081 (8080 is still held by the old
    sg16-core until cutover), `OLLAMA_CONTEXT_LENGTH=8192`,
-   `OLLAMA_MAX_LOADED_MODELS=1`, `OLLAMA_KEEP_ALIVE=30m`.
-   `MODE=llamacpp` builds llama.cpp and downloads Devstral-Small-2507
-   Q4_K_M instead.
+   `OLLAMA_MAX_LOADED_MODELS=2` (both small brains stay resident),
+   `OLLAMA_KEEP_ALIVE=30m` (finite default — never -1). The script pulls
+   `ministral-3:3b-instruct-2512-fp16` (chat) and
+   `qwen2.5-coder:3b-instruct-fp16` (coding) and removes the old brain
+   (`ollama rm devstral`). `MODE=llamacpp` builds llama.cpp, downloads both
+   fp16 GGUFs and runs one llama-server per brain (chat on 8081, coder on 8082).
 2. **VPS — tunnel**: the script installs cloudflared, creates tunnel
    `sg16-model`, maps `model.internal.mistralbrain.com` to
    `http://127.0.0.1:8081` and enables it as a service.
@@ -69,12 +78,11 @@ new model writes a language badly, that becomes visible instead of masked.
    npx wrangler d1 create sg16_logs             # id -> wrangler.jsonc
    npx wrangler d1 execute sg16_logs --file schema.sql
    ```
-   Secrets:
+   Secrets (no third-party AI API secret exists — there is no backup route):
    ```bash
    npx wrangler secret put MODEL_SHARED_SECRET
    npx wrangler secret put CF_ACCESS_CLIENT_ID
    npx wrangler secret put CF_ACCESS_CLIENT_SECRET
-   npx wrangler secret put MISTRAL_API_KEY     # backup route only
    ```
    `npx wrangler deploy`, then attach the `mistralbrain.com` hostname to the
    Worker (Workers -> Triggers -> Add custom domain).
@@ -103,16 +111,21 @@ either the slot or a FIFO position plus a per-request deadline
 (`min(policy.max_queue_ms, MAX_QUEUE_WAIT_MS)`). The Worker polls until
 granted or expired, then calls the VPS exactly once. `release` frees the slot
 and grants the next ticket. If a caller dies without releasing, the lease
-expires (`leaseMs`, default 90 s) and the next acquire reclaims the slot —
+expires (`leaseMs`, default 240 s — two 60 s draft attempts plus the 60 s
+self-check pass, with headroom) and the next acquire reclaims the slot —
 no deadlock, no flood, no OOM from concurrency.
 
 ## Verification (the core never trusts the model)
 
-Every model output passes `verify.ts` before it is accepted: structure
-(JSON `{answer}` when the project requires it), size cap, control-character
-check, and the project's blocked regex patterns. One retry on failure; a
-second failure rejects with `E_UNVERIFIED` (or falls to the Mistral backup
-route). Compute and state routes never touch the model at all.
+Every model output is self-checked before the user sees it: the same model
+re-reads its own draft (`prompt.ts` `checkMessages`) and either confirms it
+(exactly "OK") or returns a corrected answer; the correction must pass
+`verify.ts` too, and a failed check never takes the verified draft away
+(`meta.checked` reports which happened). The draft itself passes `verify.ts`
+before it is accepted: structure (JSON `{answer}` when the project requires
+it), size cap, control-character check, and the project's blocked regex
+patterns. One retry on failure; a second failure rejects with
+`E_UNVERIFIED`. Compute and state routes never touch the model at all.
 
 ## Zero open ports (cutover)
 
@@ -132,9 +145,9 @@ After the Worker serves `mistralbrain.com` and the load test passes:
 
 ## Constraints honored
 
-- No OpenAI, Google, or any third-party AI API. `mistral.ts` is the single
-  backup route and only runs when VPS inference fails with `MISTRAL_API_KEY`
-  present.
+- No OpenAI, Google, or any third-party AI API — none exists in this system.
+  The former `mistral.ts` backup route was removed (owner decision
+  2026-10-19); if the VPS is down, chat fails honestly with 502.
 - Everything real: D1 stores real request rows and history digests only —
   no synthetic metrics, no fake counters.
 - Owner's only role: security — Access policies, WAF, key rotation. The

@@ -108,12 +108,12 @@ async function makeEnv(overrides: Partial<Env> = {}) {
     MATRIX: matrix as unknown as DurableObjectNamespace,
     MODEL_PROVIDER: "ollama",
     MODEL_URL: "https://model.internal.mistralbrain.com",
-    MODEL_NAME: "devstral",
+    MODEL_NAME: "ministral-3:3b-instruct-2512-fp16",
+    MODEL_NAME_CODER: "qwen2.5-coder:3b-instruct-fp16",
     MODEL_NUM_CTX: "8192",
     MAX_OUTPUT_CHARS: "1000",
     INFERENCE_TIMEOUT_MS: "5000",
     MAX_QUEUE_WAIT_MS: "5000",
-    MISTRAL_MODEL: "mistral-small-latest",
     ...overrides,
   } as Env;
 
@@ -152,19 +152,31 @@ test("no key => 401 with a machine code", async () => {
   assert.deepEqual(await res.json(), { ok: false, code: "E_UNAUTHORIZED" });
 });
 
-test("chat happy path: model output verified and returned", async () => {
+test("chat happy path: draft passes the self-check, model and checked flag reported", async () => {
   const { env, key } = await makeEnv();
-  modelHandler = async (url) => {
+  const bodies: Array<{ model?: string; messages?: Array<{ role: string; content: string }> }> = [];
+  let calls = 0;
+  modelHandler = async (url, init) => {
     assert.equal(new URL(url).pathname, "/api/chat");
-    return json({ message: { content: "the answer" } });
+    calls += 1;
+    bodies.push(JSON.parse(String(init?.body)) as never);
+    return json({ message: { content: calls === 1 ? "the answer" : "OK" } });
   };
   const res = await call(env, "/v1/ask", "POST", key, { text: "how are you today" });
   assert.equal(res.status, 200);
-  const data = await res.json() as { ok: boolean; answer: string; meta: { engine: string; verified: boolean; script: string | null } };
+  const data = await res.json() as {
+    ok: boolean; answer: string;
+    meta: { engine: string; model: string; checked: boolean; verified: boolean; script: string | null };
+  };
   assert.equal(data.answer, "the answer");
   assert.equal(data.meta.engine, "model-vps");
+  assert.equal(data.meta.model, "ministral-3:3b-instruct-2512-fp16");
+  assert.equal(data.meta.checked, true);
   assert.equal(data.meta.verified, true);
   assert.equal(data.meta.script, "latin");
+  assert.equal(calls, 2, "one draft call + one self-check call");
+  assert.equal(bodies[0].model, "ministral-3:3b-instruct-2512-fp16");
+  assert.ok((bodies[1].messages?.at(-1)?.content ?? "").includes("the answer"), "the checker must see the draft");
 });
 
 test("unverifiable model output: one retry, then E_UNVERIFIED", async () => {
@@ -177,19 +189,65 @@ test("unverifiable model output: one retry, then E_UNVERIFIED", async () => {
   assert.equal(calls, 2);
 });
 
-test("Mistral backup answers when the VPS model is down", async () => {
-  const { env, key } = await makeEnv({ MISTRAL_API_KEY: "test-mistral-key" });
+test("self-check corrects a wrong draft before the user sees it", async () => {
+  const { env, key } = await makeEnv();
+  let calls = 0;
+  modelHandler = async () => {
+    calls += 1;
+    return json({ message: { content: calls === 1 ? "2+2=5" : "2+2=4" } });
+  };
+  const res = await call(env, "/v1/ask", "POST", key, { text: "what is 2+2?" });
+  assert.equal(res.status, 200);
+  const data = await res.json() as { answer: string; meta: { checked: boolean } };
+  assert.equal(data.answer, "2+2=4", "the user only ever sees the corrected answer");
+  assert.equal(data.meta.checked, true);
+});
+
+test("a failed self-check keeps the verified draft (checked: false)", async () => {
+  const { env, key } = await makeEnv();
+  let calls = 0;
+  modelHandler = async () => {
+    calls += 1;
+    if (calls === 1) return json({ message: { content: "the draft" } });
+    throw new Error("check timed out");
+  };
+  const res = await call(env, "/v1/ask", "POST", key, { text: "hi" });
+  assert.equal(res.status, 200);
+  const data = await res.json() as { answer: string; meta: { checked: boolean } };
+  assert.equal(data.answer, "the draft");
+  assert.equal(data.meta.checked, false);
+});
+
+test("routing: coding intent goes to the coder brain, chat to the chat brain", async () => {
+  const { env, key } = await makeEnv();
+  const models: string[] = [];
+  let calls = 0;
+  modelHandler = async (_url, init) => {
+    calls += 1;
+    models.push((JSON.parse(String(init?.body)) as { model: string }).model);
+    return json({ message: { content: calls % 2 === 1 ? "draft" : "OK" } });
+  };
+  const code = await call(env, "/v1/ask", "POST", key, { text: "fix this bug:\n```js\nconst x = 1\nconsole.log(y)\n```" });
+  assert.equal(code.status, 200);
+  const chat = await call(env, "/v1/ask", "POST", key, { text: "how are you today" });
+  assert.equal(chat.status, 200);
+  assert.equal(models[0], "qwen2.5-coder:3b-instruct-fp16", "code request -> coder brain");
+  assert.equal(models[1], "qwen2.5-coder:3b-instruct-fp16", "the coder brain also self-checks");
+  assert.equal(models[2], "ministral-3:3b-instruct-2512-fp16", "chat request -> chat brain");
+});
+
+test("VPS model down: no third-party AI API exists — honest 502, nothing else is called", async () => {
+  const { env, key } = await makeEnv();
+  let calls = 0;
   modelHandler = async (url) => {
-    if (url.startsWith("https://api.mistral.ai")) {
-      return json({ choices: [{ message: { content: "backup answer" } }] });
-    }
+    calls += 1;
+    assert.ok(!url.startsWith("https://api.mistral.ai"), "no third-party AI API may be called");
     throw new Error("tunnel down");
   };
   const res = await call(env, "/v1/ask", "POST", key, { text: "hi there" });
-  assert.equal(res.status, 200);
-  const data = await res.json() as { answer: string; meta: { engine: string } };
-  assert.equal(data.answer, "backup answer");
-  assert.equal(data.meta.engine, "mistral-backup");
+  assert.equal(res.status, 502);
+  assert.deepEqual(await res.json(), { ok: false, code: "E_UPSTREAM" });
+  assert.equal(calls, 1, "upstream failure propagates immediately — no backup route exists");
 });
 
 test("compute is deterministic inside the Worker — no model involved", async () => {

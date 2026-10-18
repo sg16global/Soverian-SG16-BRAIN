@@ -43,6 +43,8 @@ export interface DesignEnv {
   SG16_PROJECT_KEY_SECRET?: string;
   SG16_REVOKED_PROJECTS?: string;
   BILLING_SECRET?: string;
+  MODEL_NAME?: string;
+  MODEL_NAME_CODER?: string;
 }
 
 // ------------------------------------------------------------------ encoding
@@ -627,11 +629,13 @@ export async function designCompatRoute(
     }];
     const operator = await operatorBearer(request, env);
     if (operator) {
+      const chat = env.MODEL_NAME || "ministral-3:3b-instruct-2512-fp16";
+      const coder = env.MODEL_NAME_CODER || chat;
       return json({
         models,
         engines: [
-          { id: "devstral", label: "self-hosted inference VPS through the tunnel", primary: true },
-          { id: "mistral-small-latest", label: "the one permitted backup route", primary: false },
+          { id: chat, label: "self-hosted inference VPS through the tunnel (chat brain)", primary: true },
+          { id: coder, label: "self-hosted inference VPS through the tunnel (coding)", primary: coder !== chat },
         ],
       });
     }

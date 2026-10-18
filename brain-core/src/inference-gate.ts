@@ -12,11 +12,12 @@ export interface QueueConfig {
 }
 
 // The lease must outlast the longest legitimate hold, or a second inference
-// starts on the one-slot VPS while the first is still running: two model
-// attempts (INFERENCE_TIMEOUT_MS 60s each) plus the Mistral backup (30s) =
-// 150s. Waiters poll every 200ms; one silent for 10s has gone away (client
-// disconnected) and must not hold the head of the queue until its deadline.
-export const DEFAULT_QUEUE_CONFIG: QueueConfig = { waitBudgetMs: 45000, leaseMs: 180000, staleMs: 10000 };
+// starts on the one-slot VPS while the first is still running: two draft
+// attempts (INFERENCE_TIMEOUT_MS 60s each) plus the self-check pass (60s) =
+// 180s; 240s leaves headroom. Waiters poll every 200ms; one silent for 10s
+// has gone away (client disconnected) and must not hold the head of the
+// queue until its deadline.
+export const DEFAULT_QUEUE_CONFIG: QueueConfig = { waitBudgetMs: 45000, leaseMs: 240000, staleMs: 10000 };
 
 interface Waiting {
   id: number;

@@ -12,7 +12,7 @@ import type { ChatTurn } from "./prompt.ts";
 export interface ModelConfig {
   provider: "ollama" | "llamacpp";
   url: string;              // https://model.internal.mistralbrain.com
-  model: string;            // devstral
+  model: string;            // chat brain or coding brain, e.g. ministral-3:3b-instruct-2512-fp16
   numCtx: number;           // 8192 — hard context cap
   timeoutMs: number;
   sharedSecret: string;
