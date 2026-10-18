@@ -12,7 +12,8 @@ requested repeatedly: **do not destroy or replace the public design.**
 - No change to the homepage or any public page's look without the owner's
   explicit approval on the specific change.
 - Deploys must stage the design via `brain-core/scripts/sync-web.mjs`
-  (`site/` is the front-end; the pass-gated chat panel lives at `/panel/`).
+  (`site/` is the whole front-end; the old `web/` chat panel at `/panel/`
+  was removed at the owner's request on 2026-10-18 and is no longer staged).
 - A change is "approved" only when the owner has seen and accepted it —
   never assume visual changes are wanted as part of backend work.
 - If a task would alter what visitors see, stop and ask first.
