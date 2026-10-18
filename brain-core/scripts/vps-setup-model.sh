@@ -14,7 +14,7 @@
 #
 # What this script does:
 #   1. binds the model server(s) to 127.0.0.1 ONLY (never a public port)
-#   2. installs cloudflared and creates the tunnel model.internal.mistrelbrain.com
+#   2. installs cloudflared and creates the tunnel model.internal.mistralbrain.com
 #      (mistralbrain.com) -> http://127.0.0.1:$MODEL_PORT
 #      (a second hostname coder.internal... is routed too — llamacpp mode maps
 #      it to the coding server's port; Ollama mode maps it to the same server)
@@ -52,8 +52,20 @@ die()  { echo "[vps-setup] ERROR: $*" >&2; exit 1; }
 [ "$(id -u)" = 0 ] || die "run as root"
 free -m | awk 'NR==2{ if ($2 < 20000) exit 1 }' || die "this box needs ~24 GB RAM for two fp16 3B brains + 8K KV caches"
 
+# Preflight: cloudflared must be installed and authenticated BEFORE the ~14 GB
+# of pulls and before the old brain is removed — fail fast, not half-swapped.
+command -v cloudflared >/dev/null 2>&1 || {
+  arch="$(dpkg --print-architecture)"
+  curl -fL "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-${arch}.deb" -o /tmp/cloudflared.deb
+  dpkg -i /tmp/cloudflared.deb
+}
+cloudflared tunnel list >/dev/null 2>&1 \
+  || die "cloudflared is not authenticated. Run 'cloudflared login' once (it prints a URL — open it in your browser and pick the mistralbrain.com zone), then re-run this script. No models pulled yet, old brain untouched."
+
 if ss -ltn "sport = :$MODEL_PORT" | grep -q LISTEN; then
-  die "port $MODEL_PORT already in use — pick another MODEL_PORT"
+  ss -ltnp "sport = :$MODEL_PORT" 2>/dev/null | grep -q ollama \
+    && say "re-run: ollama already listens on $MODEL_PORT" \
+    || die "port $MODEL_PORT already in use — pick another MODEL_PORT"
 fi
 if [ "$MODE" = "llamacpp" ] && ss -ltn "sport = :$CODER_PORT" | grep -q LISTEN; then
   die "port $CODER_PORT already in use — pick another CODER_PORT"
@@ -130,19 +142,14 @@ fi
 if [ "$MODE" = "ollama" ] && ollama show "$OLD_MODEL" >/dev/null 2>&1; then
   say "removing the old brain: $OLD_MODEL"
   ollama rm "$OLD_MODEL"
-  say "old brain removed. The live Worker still points at it until you deploy
-       the Worker update — push right after this script finishes."
+  say "old brain removed. The live Worker already points at the new brains;"
+  say "chat answers as soon as the tunnel + Access steps at the end are done."
 fi
 
-# ---- 3. cloudflare tunnel ---------------------------------------------------
-command -v cloudflared >/dev/null 2>&1 || {
-  arch="$(dpkg --print-architecture)"
-  curl -fL "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-${arch}.deb" -o /tmp/cloudflared.deb
-  dpkg -i /tmp/cloudflared.deb
-}
+# ---- 3. cloudflare tunnel (cloudflared installed + authed in the preflight) --
 cloudflared tunnel list 2>/dev/null | grep -q "$TUNNEL_NAME" || cloudflared tunnel create "$TUNNEL_NAME"
 
-TUNNEL_ID="$(cloudflared tunnel list -o json | grep -o '"id":"[^"]*"' | head -1 | cut -d'"' -f4)"
+TUNNEL_ID="$(cloudflared tunnel list | awk -v n="$TUNNEL_NAME" '$2 == n { print $1; exit }')"
 [ -n "$TUNNEL_ID" ] || die "could not read tunnel id"
 cloudflared tunnel route dns "$TUNNEL_NAME" "$DOMAIN_INTERNAL" 2>/dev/null || true
 cloudflared tunnel route dns "$TUNNEL_NAME" "$DOMAIN_CODER_INTERNAL" 2>/dev/null || true
@@ -162,7 +169,7 @@ ingress:
     service: http://127.0.0.1:$CODER_INGRESS_PORT
   - service: http_status:404
 EOF
-cloudflared service install "$TUNNEL_ID"
+cloudflared service install 2>/dev/null || cloudflared service install "$TUNNEL_ID" 2>/dev/null || true
 systemctl enable --now cloudflared
 systemctl restart cloudflared
 
@@ -178,6 +185,24 @@ else
     && say "coder server OK" || die "coder server failed"
 fi
 
+# tunnel check: prove the public hostname routes to the model server. Any HTTP
+# status counts (200 = ollama answered; 403 = an Access app will guard it
+# later); only a connection failure means the tunnel is broken. DNS can take
+# a minute to propagate after 'route dns'.
+say "checking the tunnel hostname (DNS can take a minute)..."
+tunnel_code="000"
+for _ in $(seq 1 12); do
+  tunnel_code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 "https://$DOMAIN_INTERNAL/api/tags" || true)"
+  case "$tunnel_code" in
+    200|401|403) break ;;
+    *) sleep 5 ;;
+  esac
+done
+case "$tunnel_code" in
+  200|401|403) say "tunnel OK: https://$DOMAIN_INTERNAL routes to 127.0.0.1:$MODEL_PORT" ;;
+  *) die "https://$DOMAIN_INTERNAL does not route to the model server (last HTTP code: $tunnel_code). Check: systemctl status cloudflared ; cloudflared tunnel list ; cat /etc/cloudflared/config.yml" ;;
+esac
+
 cat <<NEXT
 
 [vps-setup] DONE on the VPS. Now do these, in order, from your PC / dashboard:
@@ -186,23 +211,22 @@ cat <<NEXT
       $DOMAIN_INTERNAL
     policy: deny all, EXCEPT a Service Token. Note the Client ID + Secret.
     (MODE=llamacpp only: add the same app for $DOMAIN_CODER_INTERNAL.)
- 2. Generate the tunnel shared secret (one long random string).
- 3. Deploy the Worker (see brain-core/README.md), then set secrets:
+ 2. Deploy the Worker if you have not already (it deploys automatically on
+    push to main — see brain-core/README.md). From your PC, set its secrets:
       cd brain-core
-      npx wrangler secret put CF_ACCESS_CLIENT_ID
-      npx wrangler secret put CF_ACCESS_CLIENT_SECRET
-      npx wrangler secret put MODEL_SHARED_SECRET
+      npx wrangler secret put CF_ACCESS_CLIENT_ID      # paste the Client ID
+      npx wrangler secret put CF_ACCESS_CLIENT_SECRET  # paste the Secret
+      npx wrangler secret put MODEL_SHARED_SECRET      # any long random string
     There is NO third-party AI API secret — no backup route exists in this
     system. If the VPS is down, chat fails honestly with 502.
- 4. Point MODEL_URL at the tunnel hostname (default in wrangler.jsonc):
-      https://$DOMAIN_INTERNAL
-    Keep wrangler.jsonc in sync with the pulls above:
+ 3. Keep wrangler.jsonc in sync (it already matches these defaults):
+      MODEL_URL        = https://$DOMAIN_INTERNAL
       MODEL_NAME       = $MODEL_CHAT
       MODEL_NAME_CODER = $MODEL_CODER
     (MODE=llamacpp only: also set MODEL_URL_CODER to https://$DOMAIN_CODER_INTERNAL)
- 5. Swap order: this script already removed the old brain ($OLD_MODEL), so
-    push the Worker update NOW — until it deploys, chat returns 502.
- 6. Zero open ports: after the cutover retires the old stack, run
+ 4. Chat returns 502 until BOTH this script and steps 1-2 are done. Then
+    verify with your own eyes on https://mistralbrain.com.
+ 5. Zero open ports: after the cutover retires the old stack, run
       ufw default deny incoming && ufw allow outgoing && ufw enable
     and move SSH behind the tunnel (cloudflared access ssh) — see
     docs/BRAIN-CORE-REBUILD.md, "Zero open ports".

@@ -35,7 +35,7 @@
   ],
 
   "vars": {
-    "MODEL_URL": "https://internal.mistralbrain.com",
+    "MODEL_URL": "https://model.internal.mistralbrain.com",
     "MODEL_PROVIDER": "ollama",
     "MODEL_NAME": "ministral-3:3b-instruct-2512-fp16",
     "MODEL_NAME_CODER": "qwen2.5-coder:3b-instruct-fp16",
