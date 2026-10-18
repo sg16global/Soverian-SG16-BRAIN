@@ -391,6 +391,8 @@ export interface DesignCompatDeps {
   chatDoor: (payload: unknown, record: KeyRecord) => Promise<Response>;
   /** Probe D1 and the inference VPS. */
   healthProbe: () => Promise<{ d1: boolean; model: boolean }>;
+  /** The /v1 key check (sg16_ KV keys and sg16p_ project keys); null when absent or invalid. */
+  keyAuth: (authorization: string | null) => Promise<KeyRecord | null>;
 }
 
 export async function designCompatRoute(
@@ -517,12 +519,18 @@ export async function designCompatRoute(
     const message = typeof body.message === "string" ? body.message.trim() : "";
     if (!message) return json({ error: "Enter a message." }, 400);
     if (message.length > 8192) return json({ error: "A chat message is at most 8K characters." }, 400);
-    // The design's own contract: a device-held pass is verified server-side;
-    // absent or expired -> free tier under the standard host limits.
-    const pass = await resolvePass(request.headers.get("x-sg16-pass"), env);
-    const record = pass
-      ? await passKeyRecord(pass.pass, pass.activatedAt)
-      : await freeKeyRecord(request);
+    // The connector contract (docs/SG16-CONNECTOR-API.md): a project body
+    // forwards its key as a Bearer and is rate-limited as that project, never
+    // as one anonymous visitor behind its server's address (the old host's
+    // work tier). Then the design's own contract: a device-held pass is
+    // verified server-side; absent or expired -> free tier under the
+    // standard host limits.
+    const keyed = await deps.keyAuth(request.headers.get("authorization"));
+    const pass = keyed ? null : await resolvePass(request.headers.get("x-sg16-pass"), env);
+    const record = keyed
+      ?? (pass ? await passKeyRecord(pass.pass, pass.activatedAt) : await freeKeyRecord(request));
+    const tier = keyed || pass ? "work" : "free";
+    const tierHeaders = { "X-Chat-Tier": tier };
     const res = await deps.chatDoor({ kind: "chat", text: foldHistory(body.history, message) }, record);
     const out = await res.json().catch(() => null) as Record<string, unknown> | null;
     if (res.ok && out && out.ok === true && typeof out.answer === "string") {
@@ -542,33 +550,32 @@ export async function designCompatRoute(
           latencyMs: typeof meta.latency_ms === "number" ? meta.latency_ms : 0, createdAt,
         },
         brain: typeof meta.engine === "string" ? meta.engine : "sg16",
+        tier,
       };
       if (body.stream === true) {
         const ndjson =
           JSON.stringify({ type: "delta", text: out.answer }) + "\n" + JSON.stringify({ type: "done", ...reply }) + "\n";
         return new Response(ndjson, {
-          headers: { "content-type": "application/x-ndjson", "cache-control": "no-store" },
+          headers: { "content-type": "application/x-ndjson", "cache-control": "no-store", ...tierHeaders },
         });
       }
-      return json(reply);
+      return json(reply, 200, tierHeaders);
     }
     const code = String(out?.code ?? "E_INTERNAL");
     if (res.status === 429) {
       return json(
-        { error: "You're sending messages very quickly - please wait a few seconds and try again.", rateLimited: true, retryAt: Date.now() + 60_000 },
+        { error: "You're sending messages very quickly - please wait a few seconds and try again.", rateLimited: true, retryAt: Date.now() + 60_000, tier },
         429,
+        tierHeaders,
       );
     }
     if (code === "E_QUEUE_TIMEOUT") {
-      return json({ error: "The SG16 core is busy right now. Try again shortly.", busy: true }, 503);
+      return json({ error: "The SG16 core is busy right now. Try again shortly.", busy: true }, 503, tierHeaders);
     }
     if (code === "E_FORBIDDEN") {
-      return json({ error: "The request is not allowed by the SG16 policy." }, 403);
+      return json({ error: "The request is not allowed by the SG16 policy." }, 403, tierHeaders);
     }
-    if (code === "E_UPSTREAM_TIMEOUT" || code === "E_UPSTREAM_STATUS" || code === "E_UNVERIFIED") {
-      return json({ error: "The SG16 core is unreachable. Try again." }, 503);
-    }
-    return json({ error: "The SG16 core is unreachable. Try again." }, 503);
+    return json({ error: "The SG16 core is unreachable. Try again." }, 503, tierHeaders);
   }
 
   // ---- /api/models: the one honest model ---------------------------------

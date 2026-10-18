@@ -66,6 +66,12 @@ const deps = (e: DesignEnv, chatDoor?: unknown, model = true) => ({
   env: e,
   chatDoor: (chatDoor as never) ?? (async () => Response.json({ ok: true, answer: "hello", meta: { engine: "model-vps", latency_ms: 7 } })),
   healthProbe: async () => ({ d1: true, model }),
+  // the same key check index.ts wires in for /v1
+  keyAuth: async (authorization: string | null) => {
+    const auth = await authenticate(authorization, e.KEYS, e.SG16_PROJECT_KEY_SECRET,
+      (e.SG16_REVOKED_PROJECTS ?? "").split(",").map((p) => p.trim()).filter(Boolean));
+    return auth.ok ? auth.record : null;
+  },
 });
 
 // ---------------------------------------------------------------- identity
@@ -329,6 +335,48 @@ function passHeader(): string {
   };
   return Buffer.from(JSON.stringify(record)).toString("base64url");
 }
+
+test("POST /api/brain: a project body's Bearer key is its own work-tier bucket, not a free visitor", async () => {
+  const e = env({ LOGS: { prepare: () => ({ bind: () => ({ first: async () => null }) }) } as never });
+  const key = await createProjectKey("sg16finance", PROJECT_SECRET);
+  const call = async (authorization: string | null) => {
+    let seen: { id: string; project: string } | null = null;
+    const headers: Record<string, string> = { "content-type": "application/json", "cf-connecting-ip": "198.51.100.20" };
+    if (authorization) headers.authorization = authorization;
+    const res = await designCompatRoute(
+      new Request("https://x/api/brain", { method: "POST", headers, body: JSON.stringify({ message: "hi" }) }),
+      "/api/brain",
+      deps(e, async (_payload: unknown, record: unknown) => {
+        seen = record as { id: string; project: string };
+        return Response.json({ ok: true, answer: "hello", meta: { engine: "model-vps", latency_ms: 7 } });
+      }),
+    );
+    return { res: res!, record: seen as unknown as { id: string; project: string }, body: (await res!.json()) as { tier: string } };
+  };
+
+  const keyed = await call(`Bearer ${key}`);
+  assert.equal(keyed.res.status, 200);
+  assert.equal(keyed.record.project, "sg16finance");
+  assert.match(keyed.record.id, /^sg16p_sg16finance_/);
+  assert.equal(keyed.body.tier, "work");
+  assert.equal(keyed.res.headers.get("x-chat-tier"), "work");
+
+  // a forged or unknown key is not an error: it is simply the free tier, as on the old host
+  const forged = await call(`Bearer ${key.slice(0, -2)}xx`);
+  assert.equal(forged.res.status, 200);
+  assert.match(forged.record.id, /^free_/);
+  assert.equal(forged.body.tier, "free");
+  assert.equal(forged.res.headers.get("x-chat-tier"), "free");
+
+  // a revoked project falls back to the free tier too
+  const revokedEnv = env({ SG16_REVOKED_PROJECTS: "sg16finance", LOGS: e.LOGS });
+  const res = await designCompatRoute(
+    new Request("https://x/api/brain", { method: "POST", headers: { authorization: `Bearer ${key}`, "content-type": "application/json" }, body: JSON.stringify({ message: "hi" }) }),
+    "/api/brain",
+    deps(revokedEnv),
+  );
+  assert.equal(((await res!.json()) as { tier: string }).tier, "free");
+});
 
 test("POST /api/brain: pass-gated ChatReply, ndjson stream, honest refusals", async () => {
   const e = env({ LOGS: { prepare: () => ({ bind: () => ({ first: async () => null }) }) } as never });

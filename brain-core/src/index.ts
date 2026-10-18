@@ -20,8 +20,8 @@ import { callMistral } from "./mistral.ts";
 import { logRequest, logHistory } from "./d1.ts";
 import { newKey, keyHash, sha256 } from "./keys.ts";
 import { billingRoute } from "./billing-routes.ts";
-import { clientRoute, resolvePass, passKeyRecord, refuseStage } from "./client-routes.ts";
-import { designCompatRoute, designRscRoute } from "./design-compat.ts";
+import { clientRoute, resolvePass, passKeyRecord, refuseStage } from "./client-routes.ts";
+import { designCompatRoute, designRscRoute } from "./design-compat.ts";
 import { projectScanRoute } from "./project-scan.ts";
 import type { AskMeta, ErrorBody, KeyRecord, Policy } from "./types.ts";
 
@@ -59,13 +59,13 @@ export interface Env {
   MODEL_SHARED_SECRET?: string;
   CF_ACCESS_CLIENT_ID?: string;
   CF_ACCESS_CLIENT_SECRET?: string;
-  MISTRAL_API_KEY?: string;
-
-  // legacy design-page secrets (see design-compat.ts) - same values the old host used
-  SG16_IDENTITY_SECRET?: string;
-  SG16_ADMIN_EMAILS?: string;
-  SG16_ADMIN_PASSWORD_HASH?: string;
-  SG16_PROJECT_KEY_SECRET?: string;
+  MISTRAL_API_KEY?: string;
+
+  // legacy design-page secrets (see design-compat.ts) - same values the old host used
+  SG16_IDENTITY_SECRET?: string;
+  SG16_ADMIN_EMAILS?: string;
+  SG16_ADMIN_PASSWORD_HASH?: string;
+  SG16_PROJECT_KEY_SECRET?: string;
   SG16_REVOKED_PROJECTS?: string;
 }
 
@@ -87,9 +87,14 @@ export default {
             const probe = await healthProbe(env);
             return { d1: probe.d1, model: probe.model };
           },
+          keyAuth: async (authorization) => {
+            if (!authorization) return null;
+            const auth = await authenticate(authorization, env.KEYS, env.SG16_PROJECT_KEY_SECRET, revokedProjectList(env));
+            return auth.ok ? auth.record : null;
+          },
         });
-        if (design) return design;
-        const scan = await projectScanRoute(request, path);
+        if (design) return design;
+        const scan = await projectScanRoute(request, path);
         if (scan) return scan;
         const billed = await billingRoute(request, env, path);
         if (billed) return billed;
@@ -144,10 +149,14 @@ async function withAuth(
     request.headers.get("authorization"),
     env.KEYS,
     env.SG16_PROJECT_KEY_SECRET,
-    (env.SG16_REVOKED_PROJECTS ?? "").split(",").map((p) => p.trim().toLowerCase()).filter(Boolean),
+    revokedProjectList(env),
   );
   if (!auth.ok) return jsonError(401, "E_UNAUTHORIZED");
   return handler(auth.record);
+}
+
+function revokedProjectList(env: Env): string[] {
+  return (env.SG16_REVOKED_PROJECTS ?? "").split(",").map((p) => p.trim().toLowerCase()).filter(Boolean);
 }
 
 async function ask(
