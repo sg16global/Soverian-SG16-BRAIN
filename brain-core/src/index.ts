@@ -258,7 +258,7 @@ async function askParsed(
     };
     const response = Response.json({ ok: true, answer: text, meta });
     return await finish(env, ctx, record, "chat", engine, 200, started, queueMs, true, undefined, response,
-      parsed.text, text);
+      parsed.text, text, detect.script);
   } catch (e) {
     if (e instanceof HttpError) {
       return await finish(env, ctx, record, "chat", "none", e.status, started, queueMs, false, e.code,
@@ -521,15 +521,16 @@ async function finish(
   response: Response,
   userText?: string,
   answerText?: string,
+  script?: string | null,
 ): Promise<Response> {
   ctx.waitUntil((async () => {
     try {
-      logRequest(env.LOGS, {
+      await logRequest(env.LOGS, {
         keyId: record.id, userId: record.user, project: record.project, kind, engine,
-        http, latencyMs: Date.now() - started, queueMs, verified, errCode,
+        http, latencyMs: Date.now() - started, queueMs, verified, errCode, script,
       }, Date.now());
       if (userText && answerText && http === 200) {
-        logHistory(env.LOGS, {
+        await logHistory(env.LOGS, {
           keyId: record.id, project: record.project,
           requestDigest: await sha256(userText),
           responseDigest: await sha256(answerText),

@@ -1,5 +1,7 @@
-// D1 logging — real events only. Fire-and-forget via waitUntil; a logging
+// D1 logging — real events only. Written inside waitUntil; a logging
 // failure must never fail a request. By default only digests are stored.
+// Each function returns the write so waitUntil keeps the Worker alive until
+// the row is stored (a dropped promise lets the runtime cancel the insert).
 
 import type { AskMeta } from "./types.ts";
 
@@ -30,9 +32,9 @@ export interface LogDb {
   prepare(sql: string): { bind(...values: unknown[]): { run(): Promise<unknown> } };
 }
 
-export function logRequest(db: LogDb, row: RequestLog, now: number): void {
+export async function logRequest(db: LogDb, row: RequestLog, now: number): Promise<void> {
   try {
-    db.prepare(
+    await db.prepare(
       `INSERT INTO requests (ts, key_id, user_id, project, kind, engine, http, latency_ms, queue_ms, verified, err_code, script)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).bind(now, row.keyId, row.userId, row.project, row.kind, row.engine, row.http,
@@ -42,9 +44,9 @@ export function logRequest(db: LogDb, row: RequestLog, now: number): void {
   }
 }
 
-export function logHistory(db: LogDb, row: HistoryLog, now: number): void {
+export async function logHistory(db: LogDb, row: HistoryLog, now: number): Promise<void> {
   try {
-    db.prepare(
+    await db.prepare(
       `INSERT INTO history (ts, key_id, project, request_digest, response_digest, engine, verified)
        VALUES (?, ?, ?, ?, ?, ?, ?)`,
     ).bind(now, row.keyId, row.project, row.requestDigest, row.responseDigest, row.engine, row.verified ? 1 : 0).run();
