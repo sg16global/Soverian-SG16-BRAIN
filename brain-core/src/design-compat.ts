@@ -165,11 +165,17 @@ export function verifyPasswordScrypt(password: string, stored: string): boolean 
 }
 
 // A fixed dummy check so a wrong email costs the same time as a wrong password.
-const DUMMY_HASH = (() => {
-  const salt = new Uint8Array(16).fill(7);
-  const hash = scryptSync("this-is-not-a-real-password", salt, 32, { N: 32768, r: 8, p: 1, maxmem: 128 * 1024 * 1024 });
-  return ["scrypt", 32768, 8, 1, bytesToB64u(salt), bytesToB64u(hash)].join(":");
-})();
+// Built on first use, not at module load: an N=32768 scrypt costs ~125ms of
+// CPU, which every cold start (static pages included) would otherwise pay.
+let dummyHash: string | null = null;
+function dummyScryptHash(): string {
+  if (!dummyHash) {
+    const salt = new Uint8Array(16).fill(7);
+    const hash = scryptSync("this-is-not-a-real-password", salt, 32, { N: 32768, r: 8, p: 1, maxmem: 128 * 1024 * 1024 });
+    dummyHash = ["scrypt", 32768, 8, 1, bytesToB64u(salt), bytesToB64u(hash)].join(":");
+  }
+  return dummyHash;
+}
 
 // Per-isolate guess throttling, same policy as the old host (best effort).
 const WINDOW_MS = 10 * 60_000;
@@ -212,7 +218,7 @@ export async function adminLogin(
   }
   globalCounter.count += 1;
   const admin = isAdminEmail(normalizedEmail, env);
-  const passwordOk = verifyPasswordScrypt(pass, admin ? configuredHash : DUMMY_HASH);
+  const passwordOk = verifyPasswordScrypt(pass, admin ? configuredHash : dummyScryptHash());
   if (!admin || !passwordOk) return { ok: false, status: 401, error: "Email or password is wrong." };
   return { ok: true, token: await signIdentityToken(normalizedEmail, env.SG16_IDENTITY_SECRET ?? ""), email: normalizedEmail };
 }
