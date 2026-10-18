@@ -35,6 +35,37 @@ test("resolvePass accepts a signed record, rejects garbage and absence", async (
   assert.equal(await resolvePass("f".repeat(64), env), null); // legacy token not in the passes table
 });
 
+function signedRecord(activatedAt: number) {
+  const expires = activatedAt + 24 * 3600;
+  const nonce = randomBytes(18).toString("base64url");
+  const token = createHmac("sha256", SECRET).update(`sg16-pass-v1|day||3|${expires}|${nonce}`).digest("hex");
+  return { pass: "day", label: "24-Hour Entry", provider: "dodo", region: null, list_price: 3,
+    price_charged: 3, humanitarian_bypass: false, activated_at: activatedAt, expires_at: expires, nonce, token, verified_by: "sg16-host" };
+}
+
+function dbWith(record: unknown) {
+  return {
+    prepare: () => ({ bind: () => ({ first: async () => ({ record: JSON.stringify(record) }) }) }),
+  } as never;
+}
+
+test("resolvePass re-verifies a stored 64-hex token: live passes, expired or tampered do not", async () => {
+  const now = Math.floor(Date.now() / 1000);
+  const live = signedRecord(now - 3600);
+  const ok = await resolvePass(live.token, { LOGS: dbWith(live), BILLING_SECRET: SECRET } as never);
+  assert.ok(ok, "a live stored pass must resolve");
+  assert.equal(ok.activatedAt, live.activated_at);
+
+  const expired = signedRecord(now - 48 * 3600);
+  assert.equal(await resolvePass(expired.token, { LOGS: dbWith(expired), BILLING_SECRET: SECRET } as never), null);
+
+  const tampered = { ...live, expires_at: live.expires_at + 3600, activated_at: live.activated_at + 3600 };
+  assert.equal(await resolvePass(live.token, { LOGS: dbWith(tampered), BILLING_SECRET: SECRET } as never), null);
+
+  const corrupt = { prepare: () => ({ bind: () => ({ first: async () => ({ record: "{not json" }) }) }) } as never;
+  assert.equal(await resolvePass(live.token, { LOGS: corrupt, BILLING_SECRET: SECRET } as never), null);
+});
+
 test("passKeyRecord derives a stable matrix key id from the pass", async () => {
   const record = await passKeyRecord("sg16-pass-value", 1_800_000_000);
   assert.equal(record.project, "web");

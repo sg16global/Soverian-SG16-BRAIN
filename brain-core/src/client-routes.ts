@@ -151,9 +151,15 @@ export async function resolvePass(
   if (LEGACY_TOKEN.test(trimmed)) {
     const stored = await env.LOGS.prepare("SELECT record FROM passes WHERE token = ?").bind(trimmed).first();
     if (!stored) return null;
-    const record = JSON.parse(stored.record as string) as Record<string, unknown>;
-    if (!record.activated_at) return null;
-    return { pass: trimmed, activatedAt: Number(record.activated_at) };
+    // the stored copy is re-verified like a signed record (expiry included),
+    // as the old host did: a looked-up token is not valid forever
+    try {
+      const record = JSON.parse(stored.record as string) as Record<string, unknown>;
+      const verified = await verifyRecord(record, secret);
+      return { pass: trimmed, activatedAt: verified.activated_at };
+    } catch {
+      return null;
+    }
   }
   try {
     const normalized = trimmed.replace(/-/g, "+").replace(/_/g, "/");

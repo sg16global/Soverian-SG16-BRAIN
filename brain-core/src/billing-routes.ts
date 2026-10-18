@@ -455,7 +455,8 @@ async function passVerify(request: Request, env: BillingEnv, cors: string | null
     if (LEGACY_TOKEN.test(trimmed)) {
       const stored = await env.LOGS.prepare("SELECT record FROM passes WHERE token = ?").bind(trimmed).first();
       if (!stored) throw new VerificationError("pass token was not issued by this host");
-      return legacyJson({ valid: true, record: JSON.parse(stored.record as string) }, 200, cors);
+      const record = JSON.parse(stored.record as string) as Record<string, unknown>;
+      return legacyJson({ valid: true, record: await verifyRecord(record, secret) }, 200, cors);
     }
     // stateless: a signed record recomputes against the billing secret alone
     let record: unknown;
@@ -499,7 +500,7 @@ async function passCheck(request: Request, env: BillingEnv, cors: string | null)
     if (LEGACY_TOKEN.test(trimmed)) {
       const stored = await env.LOGS.prepare("SELECT record FROM passes WHERE token = ?").bind(trimmed).first();
       if (!stored) throw new VerificationError("pass token was not issued by this host");
-      const record = JSON.parse(stored.record as string) as Record<string, unknown>;
+      const record = await verifyRecord(JSON.parse(stored.record as string) as Record<string, unknown>, secret);
       return legacyJson({ valid: true, pass: record.pass, expires_at: record.expires_at }, 200, cors);
     }
     let record: unknown;
