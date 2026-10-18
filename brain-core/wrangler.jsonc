@@ -37,8 +37,8 @@
   "vars": {
     "MODEL_URL": "https://model.internal.mistralbrain.com",
     "MODEL_PROVIDER": "ollama",
-    "MODEL_NAME": "ministral-3:3b-instruct-2512-fp16",
-    "MODEL_NAME_CODER": "qwen2.5-coder:3b-instruct-fp16",
+    "MODEL_NAME": "qwen2.5:1.5b-instruct-fp16",
+    "MODEL_NAME_CODER": "qwen2.5-coder:7b-instruct-q8_0",
     "MODEL_HEALTH_PATH": "/api/tags",
     "MODEL_NUM_CTX": "8192",
     "MAX_OUTPUT_CHARS": "16384",

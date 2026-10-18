@@ -15,19 +15,21 @@ one-at-a-time queue discipline. Code: `brain-core/`. This is the runbook.
                                                 │ semaphore = 1, FIFO, lease expiry
                                                 │ Cloudflare Tunnel + Access service token
                                                 ▼
-                                   VPS (24 GB): Ollama/llama.cpp, two small brains at full
-                                   true weights (fp16): chat = Ministral 3 3B (~7.7 GB),
-                                   coding = Qwen 2.5 Coder 3B (~6.2 GB), both resident,
+                                   VPS (24 GB): Ollama/llama.cpp, two brains:
+                                   chat = Qwen 2.5 1.5B fp16 (~3.1 GB),
+                                   coding = Qwen 2.5 Coder 7B Q8_0 (~8.1 GB), both resident,
                                    bound to 127.0.0.1, ctx 8192, zero open ports
                                                 │ if the VPS fails, the request fails honestly (502)
                                                 ▼
                                    (no third-party AI API exists in this system)
 ```
 
-RAM budget on the 24 GB VPS: two fp16 3B brains (~14 GB weights) + ~1 GB KV
-cache (8K ctx, both) + ~2 GB OS/runtime ≈ 17 GB, with headroom. Full true
-weights (fp16) are preferred — the owner's weights principle; both models are
-small enough to stay loaded (OLLAMA_MAX_LOADED_MODELS=2, OLLAMA_KEEP_ALIVE=30m,
+RAM budget on the 24 GB VPS: ~11 GB weights (1.5B fp16 + 7B Q8_0) + ~1 GB KV
+cache (8K ctx, both) + ~2 GB OS/runtime ≈ 14 GB, with headroom. Owner decision
+2026-10-19: speed first — the chat brain keeps full true weights (fp16); the
+coding brain is Q8_0 because 7B fp16 (~15 GB) is too slow on this CPU-only box.
+Both are Apache 2.0 (the 3B coder was removed: research-only license). Both
+models stay loaded (OLLAMA_MAX_LOADED_MODELS=2, OLLAMA_KEEP_ALIVE=30m,
 never -1). The old brain (devstral, Q4_K_M ~14 GB) is removed by the setup
 script.
 
@@ -60,10 +62,10 @@ new model writes a language badly, that becomes visible instead of masked.
    sg16-core until cutover), `OLLAMA_CONTEXT_LENGTH=8192`,
    `OLLAMA_MAX_LOADED_MODELS=2` (both small brains stay resident),
    `OLLAMA_KEEP_ALIVE=30m` (finite default — never -1). The script pulls
-   `ministral-3:3b-instruct-2512-fp16` (chat) and
-   `qwen2.5-coder:3b-instruct-fp16` (coding) and removes the old brain
+   `qwen2.5:1.5b-instruct-fp16` (chat) and
+   `qwen2.5-coder:7b-instruct-q8_0` (coding) and removes the old brain
    (`ollama rm devstral`). `MODE=llamacpp` builds llama.cpp, downloads both
-   fp16 GGUFs and runs one llama-server per brain (chat on 8081, coder on 8082).
+   GGUFs (chat fp16, coder Q8_0) and runs one llama-server per brain (chat on 8081, coder on 8082).
 2. **VPS — tunnel**: the script installs cloudflared, creates tunnel
    `sg16-model`, maps `model.internal.mistralbrain.com` to
    `http://127.0.0.1:8081` and enables it as a service.

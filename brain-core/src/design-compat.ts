@@ -629,7 +629,7 @@ export async function designCompatRoute(
     }];
     const operator = await operatorBearer(request, env);
     if (operator) {
-      const chat = env.MODEL_NAME || "ministral-3:3b-instruct-2512-fp16";
+      const chat = env.MODEL_NAME || "qwen2.5:1.5b-instruct-fp16";
       const coder = env.MODEL_NAME_CODER || chat;
       return json({
         models,

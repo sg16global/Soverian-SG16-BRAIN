@@ -43,8 +43,8 @@ export interface Env {
   MODEL_PROVIDER: "ollama" | "llamacpp";
   MODEL_URL: string;              // set via wrangler var after the tunnel exists
   MODEL_HEALTH_PATH: string;      // ollama: /api/tags | llamacpp: /health
-  MODEL_NAME: string;            // chat brain (Ministral 3B, full true weights)
-  MODEL_NAME_CODER: string;      // coding brain (Qwen 2.5 Coder 3B, full true weights)
+  MODEL_NAME: string;            // chat brain (Qwen 2.5 1.5B, full true weights)
+  MODEL_NAME_CODER: string;      // coding brain (Qwen 2.5 Coder 7B, Q8_0)
   MODEL_URL_CODER?: string;      // llamacpp mode only; unset => same server as MODEL_URL
   MODEL_NUM_CTX: string;
   MAX_OUTPUT_CHARS: string;

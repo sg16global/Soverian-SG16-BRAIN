@@ -108,8 +108,8 @@ async function makeEnv(overrides: Partial<Env> = {}) {
     MATRIX: matrix as unknown as DurableObjectNamespace,
     MODEL_PROVIDER: "ollama",
     MODEL_URL: "https://model.internal.mistralbrain.com",
-    MODEL_NAME: "ministral-3:3b-instruct-2512-fp16",
-    MODEL_NAME_CODER: "qwen2.5-coder:3b-instruct-fp16",
+    MODEL_NAME: "qwen2.5:1.5b-instruct-fp16",
+    MODEL_NAME_CODER: "qwen2.5-coder:7b-instruct-q8_0",
     MODEL_NUM_CTX: "8192",
     MAX_OUTPUT_CHARS: "1000",
     INFERENCE_TIMEOUT_MS: "5000",
@@ -170,12 +170,12 @@ test("chat happy path: draft passes the self-check, model and checked flag repor
   };
   assert.equal(data.answer, "the answer");
   assert.equal(data.meta.engine, "model-vps");
-  assert.equal(data.meta.model, "ministral-3:3b-instruct-2512-fp16");
+  assert.equal(data.meta.model, "qwen2.5:1.5b-instruct-fp16");
   assert.equal(data.meta.checked, true);
   assert.equal(data.meta.verified, true);
   assert.equal(data.meta.script, "latin");
   assert.equal(calls, 2, "one draft call + one self-check call");
-  assert.equal(bodies[0].model, "ministral-3:3b-instruct-2512-fp16");
+  assert.equal(bodies[0].model, "qwen2.5:1.5b-instruct-fp16");
   assert.ok((bodies[1].messages?.at(-1)?.content ?? "").includes("the answer"), "the checker must see the draft");
 });
 
@@ -231,9 +231,9 @@ test("routing: coding intent goes to the coder brain, chat to the chat brain", a
   assert.equal(code.status, 200);
   const chat = await call(env, "/v1/ask", "POST", key, { text: "how are you today" });
   assert.equal(chat.status, 200);
-  assert.equal(models[0], "qwen2.5-coder:3b-instruct-fp16", "code request -> coder brain");
-  assert.equal(models[1], "qwen2.5-coder:3b-instruct-fp16", "the coder brain also self-checks");
-  assert.equal(models[2], "ministral-3:3b-instruct-2512-fp16", "chat request -> chat brain");
+  assert.equal(models[0], "qwen2.5-coder:7b-instruct-q8_0", "code request -> coder brain");
+  assert.equal(models[1], "qwen2.5-coder:7b-instruct-q8_0", "the coder brain also self-checks");
+  assert.equal(models[2], "qwen2.5:1.5b-instruct-fp16", "chat request -> chat brain");
 });
 
 test("VPS model down: no third-party AI API exists — honest 502, nothing else is called", async () => {

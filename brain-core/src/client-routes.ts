@@ -89,7 +89,7 @@ export async function clientRoute(
   if (request.method === "GET" && path === "/api/health") {
     const probe = await healthProbe();
     const digest = await gateWeightsSha256();
-    const model = env.MODEL_NAME || "ministral-3:3b-instruct-2512-fp16";
+    const model = env.MODEL_NAME || "qwen2.5:1.5b-instruct-fp16";
     const coder = env.MODEL_NAME_CODER || model;
     return Response.json({
       ok: true,
