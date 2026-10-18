@@ -20,7 +20,8 @@ export function verifyOutput(input: VerifyInput): VerifyResult {
   const text = input.text ?? "";
   if (!text.trim()) return { ok: false, reason: "EMPTY" };
   if (text.length > input.maxOutputChars) return { ok: false, reason: "TOO_LARGE" };
-  if (/[\u0000-\u0008\u000b-\u001f\u007f]/.test(text)) return { ok: false, reason: "CONTROL_CHARS" };
+  // tab, LF and CR are ordinary text (CRLF line endings are common in code answers)
+  if (/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/.test(text)) return { ok: false, reason: "CONTROL_CHARS" };
 
   if (input.requireJson) {
     let parsed: unknown;

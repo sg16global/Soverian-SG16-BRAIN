@@ -13,6 +13,13 @@ test("rejects empty, oversized, and control-char output", () => {
   assert.equal(verifyOutput({ ...BASE, text: "   " }).ok, false);
   assert.equal(verifyOutput({ ...BASE, text: "x".repeat(1001) }).ok, false);
   assert.equal(verifyOutput({ ...BASE, text: "bad\u0000output" }).ok, false);
+  assert.equal(verifyOutput({ ...BASE, text: "bad\u001b[31moutput" }).ok, false); // ANSI escape
+  assert.equal(verifyOutput({ ...BASE, text: "bad\u000coutput" }).ok, false);
+});
+
+test("tab, LF and CRLF line endings are ordinary text", () => {
+  assert.ok(verifyOutput({ ...BASE, text: "def f():\r\n\treturn 1\r\n" }).ok);
+  assert.ok(verifyOutput({ ...BASE, text: "line one\nline two" }).ok);
 });
 
 test("requireJson enforces {answer: string} structure", () => {
