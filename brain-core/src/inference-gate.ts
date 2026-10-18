@@ -8,13 +8,20 @@
 export interface QueueConfig {
   waitBudgetMs: number;   // per-request max time from enqueue to grant
   leaseMs: number;         // a grant older than this is treated as abandoned
+  staleMs?: number;        // a waiter that has not polled for this long is gone
 }
 
-export const DEFAULT_QUEUE_CONFIG: QueueConfig = { waitBudgetMs: 45000, leaseMs: 90000 };
+// The lease must outlast the longest legitimate hold, or a second inference
+// starts on the one-slot VPS while the first is still running: two model
+// attempts (INFERENCE_TIMEOUT_MS 60s each) plus the Mistral backup (30s) =
+// 150s. Waiters poll every 200ms; one silent for 10s has gone away (client
+// disconnected) and must not hold the head of the queue until its deadline.
+export const DEFAULT_QUEUE_CONFIG: QueueConfig = { waitBudgetMs: 45000, leaseMs: 180000, staleMs: 10000 };
 
 interface Waiting {
   id: number;
   deadline: number;
+  seen: number;            // last enqueue/poll time
 }
 
 export class InferenceGate {
@@ -40,14 +47,17 @@ export class InferenceGate {
       this.leaseHolder = null;
     }
     const ticket = this.nextId++;
-    if (!this.busy) {
+    // FIFO: a free slot goes to the head of the queue on its next poll, never
+    // to a newcomer that arrives in the gap between a release and that poll
+    this.dropExpired(now);
+    if (!this.busy && this.queue.length === 0) {
       this.busy = true;
       this.leaseHolder = ticket;
       this.leaseAt = now;
       return { granted: true, ticket };
     }
     const deadline = now + (waitBudgetMs ?? this.config.waitBudgetMs);
-    this.queue.push({ id: ticket, deadline });
+    this.queue.push({ id: ticket, deadline, seen: now });
     const position = this.queue.length;
     return { granted: false, ticket, position, deadline };
   }
@@ -59,6 +69,8 @@ export class InferenceGate {
       this.busy = false;
       this.leaseHolder = null;
     }
+    const self = this.queue.find((w) => w.id === ticket);
+    if (self) self.seen = now;
     this.dropExpired(now);
     if (!this.busy) {
       const next = this.queue.shift();
@@ -96,9 +108,7 @@ export class InferenceGate {
   }
 
   private dropExpired(now: number): void {
-    this.queue = this.queue.filter((w) => {
-      if (w.deadline > now) return true;
-      return false;
-    });
+    const staleMs = this.config.staleMs ?? Infinity;
+    this.queue = this.queue.filter((w) => w.deadline > now && now - w.seen <= staleMs);
   }
 }
