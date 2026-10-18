@@ -69,63 +69,86 @@ export interface Env {
   SG16_REVOKED_PROJECTS?: string;
 }
 
+// Baseline security headers on every response, /api and /v1 included - the
+// same set and values the old host sent (pointoni/next.config.ts, Task 25).
+const SECURITY_HEADERS: Record<string, string> = {
+  "Strict-Transport-Security": "max-age=31536000; includeSubDomains",
+  "X-Content-Type-Options": "nosniff",
+  "X-Frame-Options": "DENY",
+  "Referrer-Policy": "strict-origin-when-cross-origin",
+  "Permissions-Policy": "camera=(), microphone=(), geolocation=(), payment=()",
+};
+
+export function withSecurityHeaders(response: Response): Response {
+  // asset and redirect responses carry immutable headers: copy, then set
+  const out = new Response(response.body, response);
+  for (const [name, value] of Object.entries(SECURITY_HEADERS)) {
+    if (!out.headers.has(name)) out.headers.set(name, value);
+  }
+  return out;
+}
+
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
-    const started = Date.now();
-    const url = new URL(request.url);
-    const path = url.pathname;
-    if (url.hostname === "www.mistralbrain.com") {
-      return Response.redirect("https://mistralbrain.com" + path + url.search, 308);
-    }
-    try {
-      if (request.method === "GET" && path === "/v1/health") return await health(env, started);
-      if (path.startsWith("/api/")) {
-        const design = await designCompatRoute(request, path, {
-          env,
-          chatDoor: (payload, record) => askParsed(payload, env, ctx, record, started),
-          healthProbe: async () => {
-            const probe = await healthProbe(env);
-            return { d1: probe.d1, model: probe.model };
-          },
-          keyAuth: async (authorization) => {
-            if (!authorization) return null;
-            const auth = await authenticate(authorization, env.KEYS, env.SG16_PROJECT_KEY_SECRET, revokedProjectList(env));
-            return auth.ok ? auth.record : null;
-          },
-        });
-        if (design) return design;
-        const scan = await projectScanRoute(request, path);
-        if (scan) return scan;
-        const billed = await billingRoute(request, env, path);
-        if (billed) return billed;
-        const client = await clientRoute(request, env, path, async () => {
-          const probe = await healthProbe(env);
-          return { d1: probe.d1, model: probe.model };
-        });
-        if (client) return client;
-      }
-      if (request.method === "POST" && path === "/api/ingest") {
-        return await ingest(request, env, ctx, started);
-      }
-      if (request.method === "POST" && (path === "/v1/ask" || path === "/v1/keys")) {
-        return await withAuth(request, env, async (record) => {
-          if (path === "/v1/keys") return await rotateKey(request, env, ctx, record, started);
-          return await ask(request, env, ctx, record, started);
-        });
-      }
-      if (request.method === "GET" && path === "/v1/state") {
-        return await withAuth(request, env, async (record) => matrixState(env, record));
-      }
-      if (path.startsWith("/api/") || path.startsWith("/v1/")) return jsonError(404, "E_NOT_FOUND");
-      const rsc = await designRscRoute(request, path, env.ASSETS);
-      if (rsc) return rsc;
-      return env.ASSETS.fetch(request); // the staged web client (static assets)
-    } catch (e) {
-      if (e instanceof HttpError) return jsonError(e.status, e.code);
-      return jsonError(500, "E_INTERNAL");
-    }
+    return withSecurityHeaders(await route(request, env, ctx));
   },
 } satisfies ExportedHandler<Env>;
+
+async function route(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+  const started = Date.now();
+  const url = new URL(request.url);
+  const path = url.pathname;
+  if (url.hostname === "www.mistralbrain.com") {
+    return Response.redirect("https://mistralbrain.com" + path + url.search, 308);
+  }
+  try {
+    if (request.method === "GET" && path === "/v1/health") return await health(env, started);
+    if (path.startsWith("/api/")) {
+      const design = await designCompatRoute(request, path, {
+        env,
+        chatDoor: (payload, record) => askParsed(payload, env, ctx, record, started),
+        healthProbe: async () => {
+          const probe = await healthProbe(env);
+          return { d1: probe.d1, model: probe.model };
+        },
+        keyAuth: async (authorization) => {
+          if (!authorization) return null;
+          const auth = await authenticate(authorization, env.KEYS, env.SG16_PROJECT_KEY_SECRET, revokedProjectList(env));
+          return auth.ok ? auth.record : null;
+        },
+      });
+      if (design) return design;
+      const scan = await projectScanRoute(request, path);
+      if (scan) return scan;
+      const billed = await billingRoute(request, env, path);
+      if (billed) return billed;
+      const client = await clientRoute(request, env, path, async () => {
+        const probe = await healthProbe(env);
+        return { d1: probe.d1, model: probe.model };
+      });
+      if (client) return client;
+    }
+    if (request.method === "POST" && path === "/api/ingest") {
+      return await ingest(request, env, ctx, started);
+    }
+    if (request.method === "POST" && (path === "/v1/ask" || path === "/v1/keys")) {
+      return await withAuth(request, env, async (record) => {
+        if (path === "/v1/keys") return await rotateKey(request, env, ctx, record, started);
+        return await ask(request, env, ctx, record, started);
+      });
+    }
+    if (request.method === "GET" && path === "/v1/state") {
+      return await withAuth(request, env, async (record) => matrixState(env, record));
+    }
+    if (path.startsWith("/api/") || path.startsWith("/v1/")) return jsonError(404, "E_NOT_FOUND");
+    const rsc = await designRscRoute(request, path, env.ASSETS);
+    if (rsc) return rsc;
+    return env.ASSETS.fetch(request); // the staged web client (static assets)
+  } catch (e) {
+    if (e instanceof HttpError) return jsonError(e.status, e.code);
+    return jsonError(500, "E_INTERNAL");
+  }
+}
 
 // ---------------------------------------------------------------------------
 

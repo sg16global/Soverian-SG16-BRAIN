@@ -290,3 +290,25 @@ test("key rotation: a stateless sg16p_ project key is revoked through its finger
   assert.equal((await call(env, "/v1/state", "GET", out.key)).status, 200, "the replacement key works");
   assert.equal((await call(env, "/v1/state", "GET", projectKey)).status, 401, "the rotated project key is dead");
 });
+
+test("security headers ride on every response: api, errors, redirects, static assets", async () => {
+  const { env, key } = await makeEnv({
+    ASSETS: { fetch: async () => new Response("<html></html>", { headers: { "content-type": "text/html" } }) } as unknown as Fetcher,
+  });
+  const check = (res: Response, what: string) => {
+    assert.equal(res.headers.get("strict-transport-security"), "max-age=31536000; includeSubDomains", what);
+    assert.equal(res.headers.get("x-content-type-options"), "nosniff", what);
+    assert.equal(res.headers.get("x-frame-options"), "DENY", what);
+    assert.equal(res.headers.get("referrer-policy"), "strict-origin-when-cross-origin", what);
+    assert.equal(res.headers.get("permissions-policy"), "camera=(), microphone=(), geolocation=(), payment=()", what);
+  };
+  check(await call(env, "/v1/state", "GET", key), "/v1 json");
+  check(await call(env, "/v1/ask", "POST", null, { text: "hi" }), "401 error");
+  check(await call(env, "/nope/v1", "GET", null), "static asset");
+  const asset = await call(env, "/", "GET", null);
+  assert.equal(await asset.text(), "<html></html>", "the body passes through untouched");
+  const redirect = await worker.fetch!(new Request("https://www.mistralbrain.com/x?y=1"), env, ctx);
+  assert.equal(redirect.status, 308);
+  assert.equal(redirect.headers.get("location"), "https://mistralbrain.com/x?y=1");
+  check(redirect, "www redirect");
+});
