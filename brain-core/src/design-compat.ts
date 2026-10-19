@@ -12,6 +12,7 @@
 //   GET  /api/admin/project-keys  operator only: key config state + minted-key records
 //   POST /api/admin/project-keys  operator only: mint one sg16p_ project key (recorded)
 //   DELETE /api/admin/project-keys  operator only: revoke one key (?key=<sg16p_ key> or ?id=<fingerprint>)
+//   GET  /api/admin/project-activity  operator only: per project key — live status, last call, 24h calls
 //   GET  /api/brain?probe=...     turnstile probe / health probe / session note
 //   POST /api/brain               pass-gated chat (X-SG16-Pass), ChatReply or
 //                                 x-ndjson delta/done stream, old shapes
@@ -364,6 +365,86 @@ export async function revokeProjectKey(
   await store.put(PROJECT_KEY_RECORD_PREFIX + id, JSON.stringify(record));
 }
 
+// ------------------------------------------- project activity (admin box)
+// The "Connected projects" box on /admin. Read-only: it joins the key records
+// above with the D1 request log (index.ts logs every project-key call under
+// projectKeyRecord's id, sg16p_<project>_<last12>). Nothing new is stored.
+
+export const LIVE_WINDOW_MS = 5 * 60 * 1000;
+export const ACTIVE_WINDOW_MS = 24 * 60 * 60 * 1000;
+const ACTIVITY_LOOKBACK_MS = 30 * ACTIVE_WINDOW_MS;
+
+export type ProjectStatus = "live" | "active" | "idle" | "never" | "blocked";
+
+export interface ActivityRow {
+  key_id: string;
+  project: string;
+  last_ts: number;
+  calls_24h: number;
+  errors_24h: number;
+  avg_ms_24h: number | null;
+}
+
+export interface ProjectActivity {
+  project: string;
+  last12: string;
+  created: number | null;
+  status: ProjectStatus;
+  lastCall: number | null;
+  calls24h: number;
+  errors24h: number;
+  avgMs24h: number | null;
+}
+
+const STATUS_ORDER: Record<ProjectStatus, number> = { live: 0, active: 1, idle: 2, never: 3, blocked: 4 };
+
+/** Merge key records with logged activity. Keys minted before records existed
+ * still appear when they called within the lookback window. */
+export function projectActivity(
+  records: readonly ProjectKeyRecord[],
+  rows: readonly ActivityRow[],
+  revokedProjects: readonly string[],
+  now: number,
+): ProjectActivity[] {
+  const byKeyId = new Map(rows.map((r) => [r.key_id, r]));
+  const out: ProjectActivity[] = [];
+  const entry = (project: string, last12: string, created: number | null, revoked: boolean, row?: ActivityRow) => {
+    const lastCall = row ? Number(row.last_ts) : null;
+    const blocked = revoked || revokedProjects.includes(project);
+    const status: ProjectStatus = blocked ? "blocked"
+      : lastCall === null ? "never"
+      : now - lastCall <= LIVE_WINDOW_MS ? "live"
+      : now - lastCall <= ACTIVE_WINDOW_MS ? "active"
+      : "idle";
+    out.push({
+      project, last12, created, status, lastCall,
+      calls24h: row ? Number(row.calls_24h) || 0 : 0,
+      errors24h: row ? Number(row.errors_24h) || 0 : 0,
+      avgMs24h: row && row.avg_ms_24h !== null ? Math.round(Number(row.avg_ms_24h)) : null,
+    });
+  };
+  for (const r of records) {
+    const keyId = `${PROJECT_KEY_PREFIX}${r.project}_${r.last12}`;
+    entry(r.project, r.last12, r.created, r.revoked, byKeyId.get(keyId));
+    byKeyId.delete(keyId);
+  }
+  for (const row of byKeyId.values()) entry(row.project, row.key_id.slice(-12), null, false, row);
+  return out.sort((a, b) => STATUS_ORDER[a.status] - STATUS_ORDER[b.status] || (b.lastCall ?? 0) - (a.lastCall ?? 0));
+}
+
+async function activityRows(env: DesignEnv, now: number): Promise<ActivityRow[]> {
+  const result = await env.LOGS.prepare(
+    `SELECT key_id, project, MAX(ts) AS last_ts,
+            SUM(CASE WHEN ts >= ?1 THEN 1 ELSE 0 END) AS calls_24h,
+            SUM(CASE WHEN ts >= ?1 AND http >= 400 THEN 1 ELSE 0 END) AS errors_24h,
+            AVG(CASE WHEN ts >= ?1 AND http < 400 THEN latency_ms END) AS avg_ms_24h
+       FROM requests
+      WHERE key_id LIKE 'sg16p\\_%' ESCAPE '\\' AND ts >= ?2
+      GROUP BY key_id`,
+  ).bind(now - ACTIVE_WINDOW_MS, now - ACTIVITY_LOOKBACK_MS).all<ActivityRow>();
+  return result.results ?? [];
+}
+
 /** Per-key revocation for /v1. A key with no record is not managed by the
  * record system (every key minted before this feature) and keeps working. */
 export async function isProjectKeyRevoked(store: { get(key: string): Promise<string | null> }, key: string): Promise<boolean> {
@@ -524,6 +605,25 @@ export async function designCompatRoute(
     // the key is never shown, so no valid key is left unmanaged.
     await recordProjectKey(env, key, project, Date.now());
     return json({ project, key, shownOnce: true });
+  }
+
+  // ---- /api/admin/project-activity: the "Connected projects" box --------
+  if (path === "/api/admin/project-activity" && request.method === "GET") {
+    const signedIn = Boolean(request.headers.get("authorization"));
+    const operator = await operatorBearer(request, env);
+    if (!operator) {
+      return json(
+        { error: signedIn ? "This account is not an operator." : "Operator sign-in required." },
+        signedIn ? 403 : 401,
+      );
+    }
+    const now = Date.now();
+    const [records, rows] = await Promise.all([listProjectKeyRecords(env), activityRows(env, now)]);
+    return json({
+      now,
+      liveWindowMs: LIVE_WINDOW_MS,
+      projects: projectActivity(records, rows, revokedProjects(env), now),
+    });
   }
 
   // ---- /api/brain: the design's chat panel ------------------------------

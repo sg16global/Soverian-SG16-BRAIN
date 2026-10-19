@@ -16,6 +16,8 @@ import {
   verifyProjectKey,
   designCompatRoute,
   designRscRoute,
+  projectActivity,
+  LIVE_WINDOW_MS,
   type DesignEnv,
 } from "../src/design-compat.ts";
 import { authenticate } from "../src/auth.ts";
@@ -558,4 +560,67 @@ test("rsc route declines unknown and nested routes, and missing payloads", async
   assert.equal(await designRscRoute(rscRequest("/admin/nested", { rsc: "1" }), "/admin/nested", assets as never), null);
   const empty = fakeAssets({});
   assert.equal(await designRscRoute(rscRequest("/vision", { rsc: "1" }), "/vision", empty as never), null);
+});
+
+// ---------------------------------------------------------------- project activity (admin box)
+
+test("project activity: live / active / idle / never / blocked, legacy keys from the log, sorted", () => {
+  const now = 10 * 24 * 3600 * 1000;
+  const rec = (project: string, last12: string, revoked = false) => ({ id: "f".repeat(64), project, created: 1, last12, revoked });
+  const row = (project: string, last12: string, ago: number, calls = 3, errors = 1) =>
+    ({ key_id: `sg16p_${project}_${last12}`, project, last_ts: now - ago, calls_24h: calls, errors_24h: errors, avg_ms_24h: 4100.4 });
+  const out = projectActivity(
+    [rec("shop", "aaaaaaaaaaaa"), rec("blog", "bbbbbbbbbbbb"), rec("old", "cccccccccccc"),
+     rec("fresh", "dddddddddddd"), rec("gone", "eeeeeeeeeeee", true), rec("banned", "ffffffffffff")],
+    [row("shop", "aaaaaaaaaaaa", 12_000), row("blog", "bbbbbbbbbbbb", 2 * 3600 * 1000),
+     row("old", "cccccccccccc", 3 * 24 * 3600 * 1000, 0, 0), row("legacy", "zzzzzzzzzzzz", LIVE_WINDOW_MS - 1)],
+    ["banned"],
+    now,
+  );
+  const status = Object.fromEntries(out.map((p) => [p.project, p.status]));
+  assert.deepEqual(status, { shop: "live", legacy: "live", blog: "active", old: "idle", fresh: "never", gone: "blocked", banned: "blocked" });
+  assert.deepEqual(out.slice(0, 2).map((p) => p.project), ["shop", "legacy"], "live first, most recent call first");
+  const shop = out.find((p) => p.project === "shop")!;
+  assert.equal(shop.calls24h, 3);
+  assert.equal(shop.errors24h, 1);
+  assert.equal(shop.avgMs24h, 4100);
+  assert.equal(out.find((p) => p.project === "legacy")!.last12, "zzzzzzzzzzzz");
+  assert.equal(out.find((p) => p.project === "fresh")!.lastCall, null);
+});
+
+test("project activity route: operator only, reads the request log", async () => {
+  let boundArgs: unknown[] = [];
+  const logs = {
+    prepare: (sql: string) => {
+      assert.match(sql, /FROM requests/);
+      const stmt = {
+        bind: (...args: unknown[]) => { boundArgs = args; return stmt; },
+        all: async () => ({ results: [{ key_id: "sg16p_shop_aaaaaaaaaaaa", project: "shop", last_ts: Date.now(), calls_24h: 5, errors_24h: 0, avg_ms_24h: 900 }] }),
+      };
+      return stmt;
+    },
+  };
+  const e = env({ LOGS: logs as never });
+  const denied = await designCompatRoute(new Request("https://x/api/admin/project-activity"), "/api/admin/project-activity", deps(e));
+  assert.equal(denied?.status, 401);
+
+  const login = await designCompatRoute(
+    new Request("https://x/api/identity", {
+      method: "POST",
+      headers: { "content-type": "application/json", "cf-connecting-ip": "6.6.6.6" },
+      body: JSON.stringify({ action: "admin-login", email: "sg16global@gmail.com", password: "operator-password-123" }),
+    }),
+    "/api/identity",
+    deps(e),
+  );
+  const { token } = (await login?.json()) as { token: string };
+  const res = await designCompatRoute(
+    new Request("https://x/api/admin/project-activity", { headers: { authorization: `Bearer ${token}` } }),
+    "/api/admin/project-activity",
+    deps(e),
+  );
+  assert.equal(res?.status, 200);
+  const body = (await res?.json()) as { projects: { project: string; status: string; calls24h: number }[] };
+  assert.deepEqual(body.projects.map((p) => [p.project, p.status, p.calls24h]), [["shop", "live", 5]]);
+  assert.equal(boundArgs.length, 2, "24h window + lookback window are bound");
 });
