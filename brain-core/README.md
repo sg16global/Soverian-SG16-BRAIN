@@ -8,7 +8,7 @@ visitor/project ──▶ Worker (this package)          [deterministic: keys, r
                         │  one at a time, FIFO queue (Durable Object)
                         ▼
                    VPS model servers (Ollama/llama.cpp, 127.0.0.1 only, zero open ports)
-                        via https://model.internal.mistralbrain.com  (Cloudflare Tunnel + Access)
+                        via https://model.mistralbrain.com  (Cloudflare Tunnel + Access)
                         two self-hosted brains: chat (Qwen 2.5 1.5B fp16) + coding (Qwen 2.5 Coder 7B Q8_0)
                         every answer is self-checked before the user sees it; no third-party AI API exists
 ```

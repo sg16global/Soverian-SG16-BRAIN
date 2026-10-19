@@ -107,7 +107,7 @@ async function makeEnv(overrides: Partial<Env> = {}) {
     QUEUE: queueNamespace(gate) as unknown as DurableObjectNamespace,
     MATRIX: matrix as unknown as DurableObjectNamespace,
     MODEL_PROVIDER: "ollama",
-    MODEL_URL: "https://model.internal.mistralbrain.com",
+    MODEL_URL: "https://model.mistralbrain.com",
     MODEL_NAME: "qwen2.5:1.5b-instruct-fp16",
     MODEL_NAME_CODER: "qwen2.5-coder:7b-instruct-q8_0",
     MODEL_NUM_CTX: "8192",

@@ -17,9 +17,9 @@
 #
 # What this script does:
 #   1. binds the model server(s) to 127.0.0.1 ONLY (never a public port)
-#   2. installs cloudflared and creates the tunnel model.internal.mistralbrain.com
+#   2. installs cloudflared and creates the tunnel model.mistralbrain.com
 #      (mistralbrain.com) -> http://127.0.0.1:$MODEL_PORT
-#      (a second hostname coder.internal... is routed too — llamacpp mode maps
+#      (a second hostname coder.mistralbrain.com is routed too — llamacpp mode maps
 #      it to the coding server's port; Ollama mode maps it to the same server)
 #   3. prints the exact Cloudflare Access + Worker secret steps you must run
 #
@@ -36,8 +36,10 @@ set -euo pipefail
 MODE="${MODE:-ollama}"
 MODEL_PORT="${MODEL_PORT:-8081}"
 CODER_PORT="${CODER_PORT:-$((MODEL_PORT + 1))}"
-DOMAIN_INTERNAL="${DOMAIN_INTERNAL:-model.internal.mistralbrain.com}"
-DOMAIN_CODER_INTERNAL="${DOMAIN_CODER_INTERNAL:-coder.internal.mistralbrain.com}"
+# One level under mistralbrain.com only: the free Cloudflare certificate covers
+# *.mistralbrain.com, not a.b.mistralbrain.com (TLS handshake fails there).
+DOMAIN_INTERNAL="${DOMAIN_INTERNAL:-model.mistralbrain.com}"
+DOMAIN_CODER_INTERNAL="${DOMAIN_CODER_INTERNAL:-coder.mistralbrain.com}"
 TUNNEL_NAME="${TUNNEL_NAME:-sg16-model}"
 CTX="${CTX:-8192}"
 # Chat brain at full true weights (fp16) — the owner's weights principle; the
