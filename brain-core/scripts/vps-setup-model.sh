@@ -166,7 +166,11 @@ cloudflared tunnel list 2>/dev/null | grep -q "$TUNNEL_NAME" || cloudflared tunn
 TUNNEL_ID="$(cloudflared tunnel list | awk -v n="$TUNNEL_NAME" '$2 == n { print $1; exit }')"
 [ -n "$TUNNEL_ID" ] || die "could not read tunnel id"
 cloudflared tunnel route dns "$TUNNEL_NAME" "$DOMAIN_INTERNAL" 2>/dev/null || true
-cloudflared tunnel route dns "$TUNNEL_NAME" "$DOMAIN_CODER_INTERNAL" 2>/dev/null || true
+# the coder hostname is only used by llamacpp mode (Ollama serves both brains
+# on one port) — do not create an unused DNS record in Ollama mode
+if [ "$MODE" = "llamacpp" ]; then
+  cloudflared tunnel route dns "$TUNNEL_NAME" "$DOMAIN_CODER_INTERNAL" 2>/dev/null || true
+fi
 
 # Ollama serves both brains on one port; llamacpp runs one server per brain.
 CODER_INGRESS_PORT="$MODEL_PORT"
@@ -175,8 +179,15 @@ if [ "$MODE" = "llamacpp" ]; then CODER_INGRESS_PORT="$CODER_PORT"; fi
 mkdir -p /etc/cloudflared
 # 'cloudflared tunnel create' writes the credentials JSON to ~/.cloudflared;
 # the service config below reads it from /etc/cloudflared — copy it into place.
+# A tunnel created elsewhere (e.g. the dashboard) has no local JSON: fetch it.
+# Never delete the tunnel to get one — its DNS routes point at it.
+if [ ! -f "$HOME/.cloudflared/$TUNNEL_ID.json" ]; then
+  say "no local credentials for tunnel '$TUNNEL_NAME' — fetching them"
+  cloudflared tunnel token --cred-file "$HOME/.cloudflared/$TUNNEL_ID.json" "$TUNNEL_NAME" \
+    || die "could not fetch credentials for tunnel '$TUNNEL_NAME'. Do NOT delete the tunnel; send this output to the engineer."
+fi
 cp -f "$HOME/.cloudflared/$TUNNEL_ID.json" "/etc/cloudflared/$TUNNEL_ID.json" \
-  || die "no credentials for tunnel '$TUNNEL_NAME' at $HOME/.cloudflared/$TUNNEL_ID.json — delete the tunnel in Zero Trust (Networks -> Tunnels) and re-run this script"
+  || die "could not copy the credentials for tunnel '$TUNNEL_NAME' into /etc/cloudflared"
 cat > /etc/cloudflared/config.yml <<EOF
 tunnel: $TUNNEL_ID
 credentials-file: /etc/cloudflared/$TUNNEL_ID.json
@@ -187,8 +198,25 @@ ingress:
     service: http://127.0.0.1:$CODER_INGRESS_PORT
   - service: http_status:404
 EOF
-cloudflared service install 2>/dev/null || cloudflared service install "$TUNNEL_ID" 2>/dev/null || true
-systemctl enable --now cloudflared
+# Our own unit, run from config.yml. ('cloudflared service install <arg>'
+# treats <arg> as a dashboard token — passing the tunnel id there produced a
+# unit reading a missing /etc/cloudflared/token, and the tunnel never started.)
+cat > /etc/systemd/system/cloudflared.service <<UNIT
+[Unit]
+Description=Cloudflare Tunnel client (SG16 model tunnel)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+ExecStart=$(command -v cloudflared) --no-autoupdate --config /etc/cloudflared/config.yml tunnel run
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+systemctl daemon-reload
+systemctl enable cloudflared
 systemctl restart cloudflared
 
 # ---- 4. local loop: prove the brains answer before anything else ------------
