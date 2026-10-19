@@ -35,7 +35,7 @@
   ],
 
   "vars": {
-    "MODEL_URL": "https://model.mistralbrain.com",
+    "MODEL_URL": "https://internal.mistralbrain.com",
     "MODEL_PROVIDER": "ollama",
     "MODEL_NAME": "qwen2.5:1.5b-instruct-fp16",
     "MODEL_NAME_CODER": "qwen2.5-coder:7b-instruct-q8_0",

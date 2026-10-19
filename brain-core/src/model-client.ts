@@ -1,7 +1,7 @@
 // Inference client for the VPS — inference ONLY, zero business logic.
 //
 // The VPS has zero open ports; it is reachable only through the Cloudflare
-// Tunnel at MODEL_URL (https://model.mistralbrain.com), locked by
+// Tunnel at MODEL_URL (https://internal.mistralbrain.com), locked by
 // a Cloudflare Access service token (CF-Access-Client-Id/Secret headers)
 // plus a shared secret bearer. Supports two provider shapes:
 //   ollama   -> POST /api/chat        (Ollama HTTP API)
@@ -11,7 +11,7 @@ import type { ChatTurn } from "./prompt.ts";
 
 export interface ModelConfig {
   provider: "ollama" | "llamacpp";
-  url: string;              // https://model.mistralbrain.com
+  url: string;              // https://internal.mistralbrain.com
   model: string;            // chat brain or coding brain, e.g. qwen2.5:1.5b-instruct-fp16
   numCtx: number;           // 8192 — hard context cap
   timeoutMs: number;

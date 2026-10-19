@@ -17,7 +17,7 @@
 #
 # What this script does:
 #   1. binds the model server(s) to 127.0.0.1 ONLY (never a public port)
-#   2. installs cloudflared and creates the tunnel model.mistralbrain.com
+#   2. installs cloudflared and creates the tunnel internal.mistralbrain.com
 #      (mistralbrain.com) -> http://127.0.0.1:$MODEL_PORT
 #      (a second hostname coder.mistralbrain.com is routed too — llamacpp mode maps
 #      it to the coding server's port; Ollama mode maps it to the same server)
@@ -38,7 +38,10 @@ MODEL_PORT="${MODEL_PORT:-8081}"
 CODER_PORT="${CODER_PORT:-$((MODEL_PORT + 1))}"
 # One level under mistralbrain.com only: the free Cloudflare certificate covers
 # *.mistralbrain.com, not a.b.mistralbrain.com (TLS handshake fails there).
-DOMAIN_INTERNAL="${DOMAIN_INTERNAL:-model.mistralbrain.com}"
+# The live tunnel sg16-model is managed from the Cloudflare dashboard: its
+# remote config (internal.mistralbrain.com -> localhost:8081, Access-locked)
+# overrides the local config.yml written below.
+DOMAIN_INTERNAL="${DOMAIN_INTERNAL:-internal.mistralbrain.com}"
 DOMAIN_CODER_INTERNAL="${DOMAIN_CODER_INTERNAL:-coder.mistralbrain.com}"
 TUNNEL_NAME="${TUNNEL_NAME:-sg16-model}"
 CTX="${CTX:-8192}"

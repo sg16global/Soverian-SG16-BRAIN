@@ -67,10 +67,10 @@ new model writes a language badly, that becomes visible instead of masked.
    (`ollama rm devstral`). `MODE=llamacpp` builds llama.cpp, downloads both
    GGUFs (chat fp16, coder Q8_0) and runs one llama-server per brain (chat on 8081, coder on 8082).
 2. **VPS — tunnel**: the script installs cloudflared, creates tunnel
-   `sg16-model`, maps `model.mistralbrain.com` to
+   `sg16-model`, maps `internal.mistralbrain.com` to
    `http://127.0.0.1:8081` and enables it as a service.
 3. **Cloudflare Zero Trust — Access**: self-hosted app for
-   `model.mistralbrain.com`, policy = deny all except one
+   `internal.mistralbrain.com`, policy = deny all except one
    **Service Token**. Note the Client ID and Client Secret.
 4. **Git — deploy the Worker**:
    ```bash
