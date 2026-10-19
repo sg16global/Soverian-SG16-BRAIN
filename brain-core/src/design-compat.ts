@@ -661,7 +661,15 @@ export async function designCompatRoute(
       ?? (pass ? await passKeyRecord(pass.pass, pass.activatedAt) : await freeKeyRecord(request));
     const tier = keyed || pass ? "work" : "free";
     const tierHeaders = { "X-Chat-Tier": tier };
-    const res = await deps.chatDoor({ kind: "chat", text: foldHistory(body.history, message) }, record);
+    // An API project (keyed) gets the brain clean: its message, its own rules
+    // (`system`) and its history go through as sent — no SG16 wrapper. The
+    // website's visitors keep the folded SG16 conversation memory.
+    const res = await deps.chatDoor(
+      keyed
+        ? { kind: "chat", text: message, system: body.system, history: body.history }
+        : { kind: "chat", text: foldHistory(body.history, message) },
+      record,
+    );
     const out = await res.json().catch(() => null) as Record<string, unknown> | null;
     if (res.ok && out && out.ok === true && typeof out.answer === "string") {
       const meta = (out.meta ?? {}) as Record<string, unknown>;
@@ -704,6 +712,9 @@ export async function designCompatRoute(
     }
     if (code === "E_FORBIDDEN") {
       return json({ error: "The request is not allowed by the SG16 policy." }, 403, tierHeaders);
+    }
+    if (code === "E_BAD_REQUEST") {
+      return json({ error: "Bad request: \"system\" must be text of at most 16K characters." }, 400, tierHeaders);
     }
     return json({ error: "The SG16 core is unreachable. Try again." }, 503, tierHeaders);
   }

@@ -24,6 +24,18 @@ export function systemPrompt(detect: DetectResult): string {
   return base.join(" ");
 }
 
+// API projects (owner decision 2026-10-19): another project connecting with
+// its key gets the brain clean — none of SG16's own rules above. Only the
+// project's own rules (its `system`), its history and its message go to the
+// model, exactly as sent.
+export function apiMessages(system: string | undefined, history: readonly ChatTurn[] | undefined, userText: string): ChatTurn[] {
+  const messages: ChatTurn[] = [];
+  if (system) messages.push({ role: "system", content: system });
+  for (const turn of history ?? []) messages.push(turn);
+  messages.push({ role: "user", content: userText });
+  return messages;
+}
+
 export interface ChatTurn {
   role: "system" | "user" | "assistant";
   content: string;

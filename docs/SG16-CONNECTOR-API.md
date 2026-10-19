@@ -33,6 +33,27 @@ Response:
 - Rate headers on every reply: `X-Chat-Tier`, `X-RateLimit-Limit`, `X-RateLimit-Remaining` — every body gets identical fairness for free.
 - 429 carries a human message + `retryAt` — bodies must surface it, not hide it.
 
+### Your project's own rules (API bypass — 2026-10-19)
+
+A call made with a project key (`Authorization: Bearer sg16p_…`, on
+`/api/brain` or `/v1/ask`) gets the brain **clean**: none of SG16's own
+website rules (the SG16 system prompt, its tone and language rules, the
+self-check) are applied. Only what your project sends reaches the model:
+
+```
+{
+  "message": "the user's text",                       // /v1/ask: "text"
+  "system":  "your project's own rules (optional, max 16K characters)",
+  "history": [ { "role": "user", "content": "…" },     // optional, last 8 turns,
+               { "role": "assistant", "content": "…" } ] // sent as real chat turns
+}
+```
+
+What still applies, because it protects the shared VPS and your key: the key
+check, your project's rate limit, the one-at-a-time queue, and the basic output
+checks (not empty, size cap). Website visitors (no key) always keep SG16's own
+rules and cannot send `system`.
+
 ## 2. Same brain, every body — the allowed shapes
 
 | Body | Flavor | Same call, different costume |

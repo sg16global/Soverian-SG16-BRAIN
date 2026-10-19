@@ -624,3 +624,39 @@ test("project activity route: operator only, reads the request log", async () =>
   assert.deepEqual(body.projects.map((p) => [p.project, p.status, p.calls24h]), [["shop", "live", 5]]);
   assert.equal(boundArgs.length, 2, "24h window + lookback window are bound");
 });
+
+test("/api/brain with a project key: message, system and history go through as sent (no SG16 history wrapper)", async () => {
+  const e = env();
+  const key = await createProjectKey("sg16engine", PROJECT_SECRET);
+  const seen: Array<Record<string, unknown>> = [];
+  const door = async (payload: Record<string, unknown>) => {
+    seen.push(payload);
+    return Response.json({ ok: true, answer: "hi", meta: { engine: "model-vps", latency_ms: 5 } });
+  };
+  const history = [{ role: "user", content: "earlier" }, { role: "assistant", content: "reply" }];
+  const keyed = await designCompatRoute(
+    new Request("https://x/api/brain", {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${key}` },
+      body: JSON.stringify({ message: "now", system: "Project rules here.", history }),
+    }),
+    "/api/brain",
+    deps(e, door),
+  );
+  assert.equal(keyed?.status, 200);
+  assert.deepEqual(seen[0], { kind: "chat", text: "now", system: "Project rules here.", history });
+
+  // a website visitor (no key) keeps the SG16 folded memory and cannot send rules
+  const visitor = await designCompatRoute(
+    new Request("https://x/api/brain", {
+      method: "POST",
+      headers: { "content-type": "application/json", "cf-connecting-ip": "7.7.7.7" },
+      body: JSON.stringify({ message: "now", system: "Project rules here.", history }),
+    }),
+    "/api/brain",
+    deps(e, door),
+  );
+  assert.equal(visitor?.status, 200);
+  assert.equal(seen[1].system, undefined);
+  assert.match(String(seen[1].text), /\[earlier in this conversation\]/);
+});

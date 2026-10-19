@@ -66,6 +66,10 @@ export async function loadPolicy(store: KeyStore, project: string, defaults: Pol
   }
 }
 
+const MAX_SYSTEM_CHARS = 16384;
+const MAX_HISTORY_TURNS = 8;
+const MAX_TURN_CHARS = 8192;
+
 export function parseAsk(body: unknown): AskRequest | null {
   if (!body || typeof body !== "object") return null;
   const b = body as Record<string, unknown>;
@@ -73,5 +77,22 @@ export function parseAsk(body: unknown): AskRequest | null {
   const text = typeof b.text === "string" ? b.text : "";
   if (kind !== "chat" && typeof b.op !== "string") return null; // compute/state need an op
   if (kind === "chat" && (!text || text.length > 65536)) return null;
-  return { kind, text: kind === "chat" ? text : String(b.op ?? "") } as AskRequest;
+  const req = { kind, text: kind === "chat" ? text : String(b.op ?? "") } as AskRequest;
+  if (kind !== "chat") return req;
+  // an API project's own rules and history (ignored for the website's visitors)
+  if (b.system !== undefined) {
+    if (typeof b.system !== "string" || b.system.length > MAX_SYSTEM_CHARS) return null;
+    if (b.system.trim()) req.system = b.system;
+  }
+  if (Array.isArray(b.history)) {
+    const turns: { role: "user" | "assistant"; content: string }[] = [];
+    for (const item of b.history.slice(-MAX_HISTORY_TURNS)) {
+      if (!item || typeof item !== "object") continue;
+      const { role, content } = item as { role?: unknown; content?: unknown };
+      if ((role !== "user" && role !== "assistant") || typeof content !== "string" || !content.trim()) continue;
+      turns.push({ role, content: content.slice(0, MAX_TURN_CHARS) });
+    }
+    if (turns.length) req.history = turns;
+  }
+  return req;
 }

@@ -15,7 +15,7 @@
 
 import { authenticate, loadPolicy, parseAsk } from "./auth.ts";
 import { detectScript } from "./detect.ts";
-import { systemPrompt, messagesFor, checkMessages } from "./prompt.ts";
+import { systemPrompt, messagesFor, apiMessages, checkMessages } from "./prompt.ts";
 import { isCodeRequest } from "./intent.ts";
 import { verifyOutput, requestAllowed } from "./verify.ts";
 import { callModel, ModelError } from "./model-client.ts";
@@ -242,9 +242,14 @@ async function askParsed(
       jsonError(403, "E_FORBIDDEN"));
   }
 
+  // SG16's own rules (system prompt, self-check) belong to the website only.
+  // Every API key — another project — gets the brain clean: its own rules
+  // (`system`) and history go to the model as sent (owner decision 2026-10-19).
+  const website = isWebsiteRecord(record);
   const detect = detectScript(parsed.text);
-  const prompt = systemPrompt(detect);
-  const messages = messagesFor(prompt, parsed.text);
+  const messages = website
+    ? messagesFor(systemPrompt(detect), parsed.text)
+    : apiMessages(parsed.system, parsed.history, parsed.text);
   const maxQueueMs = Math.min(policy.max_queue_ms, queueCeilingMs);
 
   const queueStarted = Date.now();
@@ -266,7 +271,7 @@ async function askParsed(
     const draft = await attempt(env, modelCfg, messages, policy);
     // speed first (owner decision 2026-10-19): the self-check pass doubles
     // answer time, so it only runs when SELF_CHECK is "true"
-    const checked = env.SELF_CHECK === "true"
+    const checked = website && env.SELF_CHECK === "true"
       ? await selfCheck(env, modelCfg, parsed.text, draft, policy)
       : { text: draft, ok: false };
     const meta: AskMeta = {
@@ -293,6 +298,11 @@ async function askParsed(
   } finally {
     await releaseSlot(env, grant.ticket);
   }
+}
+
+/** The website's own visitors: a device pass or the free tier (client-routes.ts). */
+function isWebsiteRecord(record: KeyRecord): boolean {
+  return record.id.startsWith("pass_") || record.id.startsWith("free_");
 }
 
 // one retry inside the draft call; the draft must pass verification before

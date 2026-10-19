@@ -27,6 +27,10 @@ export const DEFAULT_POLICY: Policy = {
 export interface AskRequest {
   kind: "chat" | "compute" | "state";
   text: string;
+  /** API projects only: the project's own rules, sent as the system message. */
+  system?: string;
+  /** API projects only: earlier turns, sent to the model as real chat turns. */
+  history?: { role: "user" | "assistant"; content: string }[];
 }
 
 export interface AskMeta {
