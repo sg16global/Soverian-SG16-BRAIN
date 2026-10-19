@@ -6,9 +6,9 @@
 //   2. validate the API key against KV (owner = user #1, same path as everyone)
 //   3. route: math/logic/state/scoring computed HERE; only language generation
 //      is forwarded to the inference-only VPS through the tunnel, one at a time
-//   4. self-check every model output first — the model re-reads its own
-//      draft and corrects wrong output before the user sees it — then the
-//      core verifies it; retry once, else reject
+//   4. the core verifies every model output; retry once, else reject.
+//      Optional self-check (SELF_CHECK="true"): the model re-reads its own
+//      draft and corrects it first — off by default, it doubles answer time
 //
 // All errors are machine codes with standard HTTP status; no human-language
 // sentences leave the core.
@@ -50,6 +50,7 @@ export interface Env {
   MAX_OUTPUT_CHARS: string;
   INFERENCE_TIMEOUT_MS: string;
   MAX_QUEUE_WAIT_MS: string;
+  SELF_CHECK?: string;           // "true" = second model pass per answer (2x slower); default off
 
   // billing (Dodo Payments MoR pipeline — see billing-routes.ts)
   DODO_TEST_MODE?: string;
@@ -263,7 +264,11 @@ async function askParsed(
 
   try {
     const draft = await attempt(env, modelCfg, messages, policy);
-    const checked = await selfCheck(env, modelCfg, parsed.text, draft, policy);
+    // speed first (owner decision 2026-10-19): the self-check pass doubles
+    // answer time, so it only runs when SELF_CHECK is "true"
+    const checked = env.SELF_CHECK === "true"
+      ? await selfCheck(env, modelCfg, parsed.text, draft, policy)
+      : { text: draft, ok: false };
     const meta: AskMeta = {
       engine: "model-vps",
       model: modelCfg.model,

@@ -119,7 +119,8 @@ no deadlock, no flood, no OOM from concurrency.
 
 ## Verification (the core never trusts the model)
 
-Every model output is self-checked before the user sees it: the same model
+Optional self-check (`SELF_CHECK="true"`; off by default since 2026-10-19 —
+speed first, it doubles answer time): the same model
 re-reads its own draft (`prompt.ts` `checkMessages`) and either confirms it
 (exactly "OK") or returns a corrected answer; the correction must pass
 `verify.ts` too, and a failed check never takes the verified draft away

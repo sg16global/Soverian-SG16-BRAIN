@@ -10,7 +10,7 @@ visitor/project ──▶ Worker (this package)          [deterministic: keys, r
                    VPS model servers (Ollama/llama.cpp, 127.0.0.1 only, zero open ports)
                         via https://internal.mistralbrain.com  (Cloudflare Tunnel + Access)
                         two self-hosted brains: chat (Qwen 2.5 1.5B fp16) + coding (Qwen 2.5 Coder 7B Q8_0)
-                        every answer is self-checked before the user sees it; no third-party AI API exists
+                        every answer is verified by the core (optional self-check: SELF_CHECK); no third-party AI API exists
 ```
 
 ## Bindings
@@ -26,7 +26,7 @@ visitor/project ──▶ Worker (this package)          [deterministic: keys, r
 
 | Route | Purpose |
 |---|---|
-| `POST /v1/ask` `{kind:"chat", text}` | gate -> queue -> VPS inference -> self-check -> verify -> answer |
+| `POST /v1/ask` `{kind:"chat", text}` | gate -> queue -> VPS inference -> verify -> (self-check if SELF_CHECK) -> answer |
 | `POST /v1/ask` `{kind:"compute", op:"2+3*4"}` | deterministic arithmetic inside the Worker — no model involved |
 | `POST /v1/ask` `{kind:"state", op:"score.step", delta}` | matrix state transition |
 | `GET /v1/state` | the caller's own matrix row |

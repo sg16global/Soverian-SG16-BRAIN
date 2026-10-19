@@ -152,8 +152,21 @@ test("no key => 401 with a machine code", async () => {
   assert.deepEqual(await res.json(), { ok: false, code: "E_UNAUTHORIZED" });
 });
 
-test("chat happy path: draft passes the self-check, model and checked flag reported", async () => {
+test("self-check off (default): one model call, the verified draft goes out", async () => {
   const { env, key } = await makeEnv();
+  let calls = 0;
+  modelHandler = async () => { calls += 1; return json({ message: { content: "the answer" } }); };
+  const res = await call(env, "/v1/ask", "POST", key, { text: "how are you today" });
+  assert.equal(res.status, 200);
+  const data = await res.json() as { answer: string; meta: { checked: boolean; verified: boolean } };
+  assert.equal(data.answer, "the answer");
+  assert.equal(data.meta.checked, false);
+  assert.equal(data.meta.verified, true);
+  assert.equal(calls, 1, "one draft call, no self-check call");
+});
+
+test("chat happy path: draft passes the self-check, model and checked flag reported", async () => {
+  const { env, key } = await makeEnv({ SELF_CHECK: "true" });
   const bodies: Array<{ model?: string; messages?: Array<{ role: string; content: string }> }> = [];
   let calls = 0;
   modelHandler = async (url, init) => {
@@ -190,7 +203,7 @@ test("unverifiable model output: one retry, then E_UNVERIFIED", async () => {
 });
 
 test("self-check corrects a wrong draft before the user sees it", async () => {
-  const { env, key } = await makeEnv();
+  const { env, key } = await makeEnv({ SELF_CHECK: "true" });
   let calls = 0;
   modelHandler = async () => {
     calls += 1;
@@ -204,7 +217,7 @@ test("self-check corrects a wrong draft before the user sees it", async () => {
 });
 
 test("a failed self-check keeps the verified draft (checked: false)", async () => {
-  const { env, key } = await makeEnv();
+  const { env, key } = await makeEnv({ SELF_CHECK: "true" });
   let calls = 0;
   modelHandler = async () => {
     calls += 1;
@@ -219,7 +232,7 @@ test("a failed self-check keeps the verified draft (checked: false)", async () =
 });
 
 test("routing: coding intent goes to the coder brain, chat to the chat brain", async () => {
-  const { env, key } = await makeEnv();
+  const { env, key } = await makeEnv({ SELF_CHECK: "true" });
   const models: string[] = [];
   let calls = 0;
   modelHandler = async (_url, init) => {
