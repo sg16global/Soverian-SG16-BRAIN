@@ -10,37 +10,33 @@ import {
   buildReport,
   projectScanRoute,
 } from "../src/project-scan.ts";
-import { foldHistory } from "../src/design-compat.ts";
+import { recentHistory } from "../src/design-compat.ts";
 
-// -------------------------------------------------------------- history fold
+// -------------------------------------------------------------- recent turns
 
-test("foldHistory keeps recent turns inside the 8K budget and ignores garbage", () => {
+test("recentHistory keeps recent turns as chat turns inside the 8K budget and ignores garbage", () => {
   const history = [
     { role: "user", content: "What is 2+2?" },
     { role: "assistant", content: "4" },
     { role: "user", content: "and times 10?" },
     { role: "assistant", content: "40" },
   ];
-  const folded = foldHistory(history, "now divide by 4");
-  assert.match(folded, /\[earlier in this conversation\]/);
-  assert.match(folded, /user: What is 2\+2\?/);
-  assert.match(folded, /assistant: 40/);
-  assert.match(folded, /now divide by 4$/);
-  assert.ok(folded.length <= 8192);
+  assert.deepEqual(recentHistory(history, "now divide by 4"), history);
 
   // budget: huge turns are dropped from the oldest side
   const big = Array.from({ length: 12 }, (_, i) => ({
     role: i % 2 === 0 ? "user" : "assistant",
     content: "x".repeat(900),
   }));
-  const bigFolded = foldHistory(big, "hello");
-  assert.ok(bigFolded.length <= 8192);
-  assert.match(bigFolded, /hello$/);
+  const kept = recentHistory(big, "hello");
+  const size = kept.reduce((n, t) => n + t.content.length + t.role.length + 4, "hello".length);
+  assert.ok(size <= 8192);
+  assert.ok(kept.length > 0 && kept.length <= 6, "only the last turns are kept");
 
-  // garbage and empty histories pass the message through untouched
-  assert.equal(foldHistory("not-an-array" as never, "hi"), "hi");
-  assert.equal(foldHistory([{ role: "bogus", content: "x" }], "hi"), "hi");
-  assert.equal(foldHistory([], "hi"), "hi");
+  // garbage and empty histories give no turns
+  assert.deepEqual(recentHistory("not-an-array" as never, "hi"), []);
+  assert.deepEqual(recentHistory([{ role: "bogus", content: "x" }], "hi"), []);
+  assert.deepEqual(recentHistory([], "hi"), []);
 });
 
 // ------------------------------------------------------------------- zip

@@ -7,7 +7,7 @@
 #   MODE=llamacpp            llama.cpp servers (one per brain) + GGUFs
 #
 # The two brains (owner decision 2026-10-19 — speed is priority, CPU-only box):
-#   chat brain : qwen2.5:1.5b-instruct-fp16       (~3.1 GB, full true weights)
+#   chat brain : qwen3:4b-instruct-2507-q4_K_M    (~2.5 GB, Q4; owner decision 2026-10-22 after a side-by-side test)
 #   coding     : qwen2.5-coder:7b-instruct-q8_0   (~8.1 GB, Q8_0 — 7B fp16 is
 #                                                  too slow on this box)
 # Both are Apache 2.0 and small enough to stay loaded at once
@@ -48,7 +48,7 @@ CTX="${CTX:-8192}"
 # Chat brain at full true weights (fp16) — the owner's weights principle; the
 # coding brain is Q8_0 for speed (owner decision 2026-10-19). Both stay
 # resident on the 24 GB box.
-MODEL_CHAT="${MODEL_CHAT:-qwen2.5:1.5b-instruct-fp16}"
+MODEL_CHAT="${MODEL_CHAT:-qwen3:4b-instruct-2507-q4_K_M}"
 MODEL_CODER="${MODEL_CODER:-qwen2.5-coder:7b-instruct-q8_0}"
 GGUF_CHAT_URL="${GGUF_CHAT_URL:-https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF/resolve/main/qwen2.5-1.5b-instruct-fp16.gguf}"
 GGUF_CODER_URL="${GGUF_CODER_URL:-https://huggingface.co/Qwen/Qwen2.5-Coder-7B-Instruct-GGUF/resolve/main/qwen2.5-coder-7b-instruct-q8_0.gguf}"

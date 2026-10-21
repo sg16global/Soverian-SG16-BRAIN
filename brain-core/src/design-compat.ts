@@ -460,19 +460,19 @@ export async function isProjectKeyRevoked(store: { get(key: string): Promise<str
 // ------------------------------------------------------------------ routes
 
 interface HistoryTurn {
-  role: string;
+  role: "user" | "assistant";
   content: string;
 }
 
 /**
- * Fold the device's remembered turns into the one text the core accepts, so
- * follow-up questions ("continue", "what did you just say") keep their context.
- * The core keeps no host-side history; the design panel re-sends the last few
- * finished turns with every message and the server folds them in here.
- * Capped so the folded text always fits the core's 8K chat budget.
+ * The device's remembered turns, so follow-up questions ("continue", "how?")
+ * keep their context. The core keeps no host-side history; the design panel
+ * re-sends the last few finished turns with every message and they reach the
+ * model as real chat turns (owner request 2026-10-22: folding them into one
+ * text confused the small chat model). Capped at the core's 8K chat budget.
  */
-export function foldHistory(history: unknown, message: string): string {
-  if (!Array.isArray(history)) return message;
+export function recentHistory(history: unknown, message: string): HistoryTurn[] {
+  if (!Array.isArray(history)) return [];
   const turns: HistoryTurn[] = [];
   for (const item of history.slice(-6)) {
     if (!item || typeof item !== "object") continue;
@@ -482,7 +482,7 @@ export function foldHistory(history: unknown, message: string): string {
     if (text) turns.push({ role, content: text.slice(0, 800) });
   }
   const MESSAGE_BUDGET = 8192;
-  let used = message.length + 80; // the wrapper lines
+  let used = message.length;
   const kept: HistoryTurn[] = [];
   for (let i = turns.length - 1; i >= 0; i--) {
     const cost = turns[i].content.length + turns[i].role.length + 4;
@@ -490,10 +490,7 @@ export function foldHistory(history: unknown, message: string): string {
     kept.unshift(turns[i]);
     used += cost;
   }
-  if (kept.length === 0) return message;
-  const nl = "\n";
-  const earlier = kept.map((t) => t.role + ": " + t.content).join(nl);
-  return "[earlier in this conversation]" + nl + earlier + nl + "[end of earlier conversation]" + nl + nl + message;
+  return kept;
 }
 
 export interface DesignCompatDeps {
@@ -663,11 +660,11 @@ export async function designCompatRoute(
     const tierHeaders = { "X-Chat-Tier": tier };
     // An API project (keyed) gets the brain clean: its message, its own rules
     // (`system`) and its history go through as sent — no SG16 wrapper. The
-    // website's visitors keep the folded SG16 conversation memory.
+    // website's visitors get SG16's rules with their recent turns.
     const res = await deps.chatDoor(
       keyed
         ? { kind: "chat", text: message, system: body.system, history: body.history }
-        : { kind: "chat", text: foldHistory(body.history, message) },
+        : { kind: "chat", text: message, history: recentHistory(body.history, message) },
       record,
     );
     const out = await res.json().catch(() => null) as Record<string, unknown> | null;
@@ -740,7 +737,7 @@ export async function designCompatRoute(
     }];
     const operator = await operatorBearer(request, env);
     if (operator) {
-      const chat = env.MODEL_NAME || "qwen2.5:1.5b-instruct-fp16";
+      const chat = env.MODEL_NAME || "qwen3:4b-instruct-2507-q4_K_M";
       const coder = env.MODEL_NAME_CODER || chat;
       return json({
         models,

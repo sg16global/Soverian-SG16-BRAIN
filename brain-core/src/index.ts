@@ -248,7 +248,7 @@ async function askParsed(
   const website = isWebsiteRecord(record);
   const detect = detectScript(parsed.text);
   const messages = website
-    ? messagesFor(systemPrompt(detect), parsed.text)
+    ? messagesFor(systemPrompt(detect), parsed.text, parsed.history)
     : apiMessages(parsed.system, parsed.history, parsed.text);
   const maxQueueMs = Math.min(policy.max_queue_ms, queueCeilingMs);
 

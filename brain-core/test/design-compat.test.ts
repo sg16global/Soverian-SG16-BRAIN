@@ -439,11 +439,10 @@ test("POST /api/brain: pass-gated ChatReply, ndjson stream, honest refusals", as
   assert.equal(body.userMessage.content, "what did I just say?");
   assert.equal(body.assistantMessage.content, "hello world");
   assert.equal(body.assistantMessage.latencyMs, 7);
-  // the remembered turns must reach the pipeline folded into the text
-  const doorText = (doorPayload as { text: string }).text;
-  assert.match(doorText, /earlier in this conversation/);
-  assert.match(doorText, /user: I said hello world/);
-  assert.match(doorText, /what did I just say\?$/);
+  // the remembered turns must reach the pipeline as real chat turns
+  const door = doorPayload as { text: string; history: { role: string; content: string }[] };
+  assert.equal(door.text, "what did I just say?");
+  assert.ok(door.history.some((t) => t.role === "user" && t.content === "I said hello world"));
 
   // stream:true -> x-ndjson with one delta then done
   const stream = await designCompatRoute(
@@ -658,5 +657,6 @@ test("/api/brain with a project key: message, system and history go through as s
   );
   assert.equal(visitor?.status, 200);
   assert.equal(seen[1].system, undefined);
-  assert.match(String(seen[1].text), /\[earlier in this conversation\]/);
+  assert.equal(seen[1].text, "now");
+  assert.ok(Array.isArray(seen[1].history) && (seen[1].history as unknown[]).length > 0, "visitors keep their recent turns");
 });
