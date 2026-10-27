@@ -25,6 +25,7 @@ import { billingRoute } from "./billing-routes.ts";
 import { clientRoute, resolvePass, passKeyRecord, refuseStage } from "./client-routes.ts";
 import { designCompatRoute, designRscRoute, PROJECT_KEY_PREFIX, revokeProjectKey } from "./design-compat.ts";
 import { projectScanRoute } from "./project-scan.ts";
+import { compatError, modelList, parseChatCompletions, toChatCompletion } from "./openai-compat.ts";
 import type { AskMeta, ErrorBody, KeyRecord, Policy } from "./types.ts";
 import { DEFAULT_POLICY } from "./types.ts";
 
@@ -144,6 +145,20 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
     }
     if (request.method === "GET" && path === "/v1/state") {
       return await withAuth(request, env, async (record) => matrixState(env, record));
+    }
+    // OpenAI-compatible door (openai-compat.ts): same pipeline as /v1/ask
+    if ((request.method === "POST" && path === "/v1/chat/completions") || (request.method === "GET" && path === "/v1/models")) {
+      const auth = await authenticate(
+        request.headers.get("authorization"),
+        env.KEYS,
+        env.SG16_PROJECT_KEY_SECRET,
+        revokedProjectList(env),
+      );
+      if (!auth.ok) return compatError(401, "Invalid API key.");
+      if (path === "/v1/models") return modelList();
+      const parsed = parseChatCompletions(await request.json().catch(() => null));
+      if (!parsed.ok) return compatError(parsed.status, parsed.message, parsed.param);
+      return await toChatCompletion(await askParsed(parsed.ask, env, ctx, auth.record, started));
     }
     if (path.startsWith("/api/") || path.startsWith("/v1/")) return jsonError(404, "E_NOT_FOUND");
     const rsc = await designRscRoute(request, path, env.ASSETS);

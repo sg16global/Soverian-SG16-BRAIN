@@ -54,6 +54,21 @@ check, your project's rate limit, the one-at-a-time queue, and the basic output
 checks (not empty, size cap). Website visitors (no key) always keep SG16's own
 rules and cannot send `system`.
 
+### Standard door: OpenAI-compatible (2026-10-27)
+Any client that speaks the standard chat-completions protocol connects with three values and no custom code:
+```
+base URL : https://mistralbrain.com/v1
+API key  : a sg16p_ project key (or a sg16_ key)
+model    : sg16-brain
+```
+- `POST /v1/chat/completions` — `{ model, messages: [{ role, content }] }` → a standard `chat.completion`.
+  `system` messages become the project's own rules, earlier turns the history (last 8), the last `user`
+  message the question. Same pipeline as `/v1/ask`: key check, project rate limit, queue, safety gate,
+  output verification; coding questions still go to the coder brain.
+- `GET /v1/models` — lists `sg16-brain`.
+- Text only and no streaming: `stream: true` or image/audio parts get a clear 400, another model name a 404.
+  Errors use the standard `{ error: { message, type } }` shape (401, 429 busy/rate limit, 502 model down).
+
 ## 2. Same brain, every body — the allowed shapes
 
 | Body | Flavor | Same call, different costume |

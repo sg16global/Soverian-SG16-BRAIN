@@ -461,3 +461,102 @@ test("queue wait: MAX_QUEUE_WAIT_MS is the default and the ceiling; a project po
   assert.equal(await waitFor({ max_queue_ms: 30000 }), 30000, "a project may ask for a shorter wait");
   assert.equal(await waitFor({ max_queue_ms: 600000 }), 120000, "but never a longer one than the env ceiling");
 });
+
+// ---- OpenAI-compatible door (/v1/chat/completions, /v1/models) -------------
+
+test("openai compat: no key => 401 in the standard error shape", async () => {
+  const { env } = await makeEnv();
+  const res = await call(env, "/v1/chat/completions", "POST", null, { model: "sg16-brain", messages: [{ role: "user", content: "hi" }] });
+  assert.equal(res.status, 401);
+  const data = await res.json() as { error: { type: string } };
+  assert.equal(data.error.type, "authentication_error");
+});
+
+test("openai compat: a sg16p_ project key gets a chat.completion through the same pipeline, rules as sent", async () => {
+  const { createProjectKey } = await import("../src/design-compat.ts");
+  const secret = "project-key-secret-0123456789abcdef";
+  const { env } = await makeEnv({ SG16_PROJECT_KEY_SECRET: secret });
+  const projectKey = await createProjectKey("sg16engine", secret);
+  const bodies: ModelBody[] = [];
+  modelHandler = async (_url, init) => {
+    bodies.push(JSON.parse(String(init?.body)) as never);
+    return json({ message: { content: "standard answer" } });
+  };
+  const res = await call(env, "/v1/chat/completions", "POST", projectKey, {
+    model: "sg16-brain",
+    messages: [
+      { role: "system", content: "You are Health Guide." },
+      { role: "user", content: "hi" },
+      { role: "assistant", content: "hello" },
+      { role: "user", content: [{ type: "text", text: "what is BMI?" }] },
+    ],
+    temperature: 0.4,
+    max_tokens: 500,
+  });
+  assert.equal(res.status, 200);
+  const data = await res.json() as { object: string; model: string; choices: Array<{ message: { role: string; content: string }; finish_reason: string }> };
+  assert.equal(data.object, "chat.completion");
+  assert.equal(data.model, "sg16-brain");
+  assert.deepEqual(data.choices[0].message, { role: "assistant", content: "standard answer" });
+  assert.equal(data.choices[0].finish_reason, "stop");
+  assert.deepEqual(bodies[0].messages, [
+    { role: "system", content: "You are Health Guide." },
+    { role: "user", content: "hi" },
+    { role: "assistant", content: "hello" },
+    { role: "user", content: "what is BMI?" },
+  ]);
+  assert.ok(!JSON.stringify(bodies[0].messages).includes("SG16"), "SG16's own prompt never reaches an API project's call");
+});
+
+test("openai compat: /v1/models lists sg16-brain; coding goes to the coder brain", async () => {
+  const { env, key } = await makeEnv();
+  const list = await call(env, "/v1/models", "GET", key);
+  assert.equal(list.status, 200);
+  assert.deepEqual((await list.json() as { data: Array<{ id: string }> }).data.map((m) => m.id), ["sg16-brain"]);
+  const models: string[] = [];
+  modelHandler = async (_url, init) => {
+    models.push((JSON.parse(String(init?.body)) as { model: string }).model);
+    return json({ message: { content: "fixed" } });
+  };
+  const res = await call(env, "/v1/chat/completions", "POST", key, {
+    model: "sg16-brain",
+    messages: [{ role: "user", content: "fix this bug:\n```js\nconst x = 1\nconsole.log(y)\n```" }],
+  });
+  assert.equal(res.status, 200);
+  assert.equal(models[0], "qwen2.5-coder:7b-instruct-q8_0");
+});
+
+test("openai compat: unsupported requests are refused clearly, never guessed", async () => {
+  const { env, key } = await makeEnv();
+  let calls = 0;
+  modelHandler = async () => { calls += 1; return json({ message: { content: "x" } }); };
+  const stream = await call(env, "/v1/chat/completions", "POST", key, { model: "sg16-brain", stream: true, messages: [{ role: "user", content: "hi" }] });
+  assert.equal(stream.status, 400);
+  const image = await call(env, "/v1/chat/completions", "POST", key, {
+    model: "sg16-brain",
+    messages: [{ role: "user", content: [{ type: "image_url", image_url: { url: "data:image/png;base64,aGk=" } }] }],
+  });
+  assert.equal(image.status, 400);
+  const wrongModel = await call(env, "/v1/chat/completions", "POST", key, { model: "gpt-4o", messages: [{ role: "user", content: "hi" }] });
+  assert.equal(wrongModel.status, 404);
+  const lastNotUser = await call(env, "/v1/chat/completions", "POST", key, { model: "sg16-brain", messages: [{ role: "assistant", content: "hi" }] });
+  assert.equal(lastNotUser.status, 400);
+  assert.equal(calls, 0, "no refused request reaches the model");
+});
+
+test("openai compat: model down => 502 server_error; rate limit => 429 rate_limit_error", async () => {
+  const { env, key } = await makeEnv();
+  modelHandler = async () => { throw new Error("tunnel down"); };
+  const down = await call(env, "/v1/chat/completions", "POST", key, { model: "sg16-brain", messages: [{ role: "user", content: "hi there" }] });
+  assert.equal(down.status, 502);
+  assert.equal((await down.json() as { error: { type: string } }).error.type, "server_error");
+
+  const fresh = await makeEnv();
+  fresh.kv.map.set("policy:platform", JSON.stringify({ rpm: 1 }));
+  modelHandler = async () => json({ message: { content: "ok" } });
+  const first = await call(fresh.env, "/v1/chat/completions", "POST", fresh.key, { model: "sg16-brain", messages: [{ role: "user", content: "one" }] });
+  const second = await call(fresh.env, "/v1/chat/completions", "POST", fresh.key, { model: "sg16-brain", messages: [{ role: "user", content: "two" }] });
+  assert.equal(first.status, 200);
+  assert.equal(second.status, 429);
+  assert.equal((await second.json() as { error: { type: string } }).error.type, "rate_limit_error");
+});
