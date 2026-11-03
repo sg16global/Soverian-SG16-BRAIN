@@ -38,7 +38,7 @@
     "MODEL_URL": "https://internal.mistralbrain.com",
     "MODEL_PROVIDER": "ollama",
     "MODEL_NAME": "qwen3:4b-instruct-2507-q4_K_M",
-    "MODEL_NAME_CODER": "qwen2.5-coder:7b-instruct-q8_0",
+    "MODEL_NAME_CODER": "qwen3:4b-instruct-2507-q4_K_M",
     "MODEL_HEALTH_PATH": "/api/tags",
     "MODEL_NUM_CTX": "8192",
     "MAX_OUTPUT_CHARS": "16384",
