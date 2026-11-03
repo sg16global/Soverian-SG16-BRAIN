@@ -366,3 +366,151 @@ class ThrottleOverHttpTests(ServerFixture):
             response.read()
             conn.close()
         self.assertEqual(statuses, {200})
+
+
+class OpenAIModelsTests(ServerFixture):
+    def test_lists_sg16_brain_model(self) -> None:
+        status, _, raw = self.request("GET", "/v1/models")
+        self.assertEqual(status, 200)
+        data = json.loads(raw)
+        self.assertEqual(data["object"], "list")
+        self.assertEqual(len(data["data"]), 1)
+        self.assertEqual(data["data"][0]["id"], "sg16-brain")
+        self.assertEqual(data["data"][0]["object"], "model")
+
+    def test_models_endpoint_accepts_authorization_header(self) -> None:
+        conn = http.client.HTTPConnection(self.host, self.port, timeout=10)
+        conn.request("GET", "/v1/models", headers={"Authorization": "Bearer test-key"})
+        response = conn.getresponse()
+        self.assertEqual(response.status, 200)
+        response.read()
+        conn.close()
+
+
+class OpenAIChatTests(ServerFixture):
+    def test_chat_completion_returns_openai_format(self) -> None:
+        status, _, raw = self.request("POST", "/v1/chat/completions", {
+            "model": "sg16-brain",
+            "messages": [
+                {"role": "user", "content": "What is your name?"}
+            ],
+        })
+        self.assertEqual(status, 200)
+        data = json.loads(raw)
+        # OpenAI response shape
+        self.assertEqual(data["object"], "chat.completion")
+        self.assertTrue(data["id"].startswith("chatcmpl-"))
+        self.assertIn("created", data)
+        self.assertEqual(data["model"], "sg16-brain")
+        self.assertEqual(len(data["choices"]), 1)
+        choice = data["choices"][0]
+        self.assertEqual(choice["index"], 0)
+        self.assertEqual(choice["message"]["role"], "assistant")
+        self.assertIsInstance(choice["message"]["content"], str)
+        self.assertTrue(len(choice["message"]["content"]) > 0)
+        self.assertEqual(choice["finish_reason"], "stop")
+        # Usage block
+        self.assertIn("usage", data)
+        self.assertGreater(data["usage"]["prompt_tokens"], 0)
+        self.assertGreater(data["usage"]["completion_tokens"], 0)
+        self.assertEqual(
+            data["usage"]["total_tokens"],
+            data["usage"]["prompt_tokens"] + data["usage"]["completion_tokens"],
+        )
+
+    def test_chat_completion_with_system_prompt(self) -> None:
+        status, _, raw = self.request("POST", "/v1/chat/completions", {
+            "model": "sg16-brain",
+            "messages": [
+                {"role": "system", "content": "You are a helpful coding assistant."},
+                {"role": "user", "content": "Say hello"},
+            ],
+        })
+        self.assertEqual(status, 200)
+        data = json.loads(raw)
+        self.assertEqual(data["object"], "chat.completion")
+        self.assertTrue(len(data["choices"][0]["message"]["content"]) > 0)
+
+    def test_chat_completion_multi_turn_context(self) -> None:
+        # First turn
+        status1, _, raw1 = self.request("POST", "/v1/chat/completions", {
+            "model": "sg16-brain",
+            "messages": [
+                {"role": "user", "content": "My name is Alice"}
+            ],
+        })
+        self.assertEqual(status1, 200)
+        reply1 = json.loads(raw1)["choices"][0]["message"]["content"]
+
+        # Second turn with history
+        status2, _, raw2 = self.request("POST", "/v1/chat/completions", {
+            "model": "sg16-brain",
+            "messages": [
+                {"role": "user", "content": "My name is Alice"},
+                {"role": "assistant", "content": reply1},
+                {"role": "user", "content": "What is my name?"},
+            ],
+        })
+        self.assertEqual(status2, 200)
+        data2 = json.loads(raw2)
+        self.assertTrue(len(data2["choices"][0]["message"]["content"]) > 0)
+
+    def test_chat_completion_rejects_empty_messages(self) -> None:
+        status, _, raw = self.request("POST", "/v1/chat/completions", {
+            "model": "sg16-brain",
+            "messages": [],
+        })
+        self.assertEqual(status, 400)
+        data = json.loads(raw)
+        self.assertIn("error", data)
+
+    def test_chat_completion_rejects_no_user_message(self) -> None:
+        status, _, raw = self.request("POST", "/v1/chat/completions", {
+            "model": "sg16-brain",
+            "messages": [
+                {"role": "system", "content": "You are helpful."},
+            ],
+        })
+        self.assertEqual(status, 400)
+
+    def test_chat_completion_rejects_invalid_json(self) -> None:
+        conn = http.client.HTTPConnection(self.host, self.port, timeout=10)
+        conn.request(
+            "POST", "/v1/chat/completions",
+            body=b"not json",
+            headers={"Content-Type": "application/json"},
+        )
+        response = conn.getresponse()
+        self.assertEqual(response.status, 400)
+        response.read()
+        conn.close()
+
+    def test_chat_completion_accepts_bearer_token(self) -> None:
+        conn = http.client.HTTPConnection(self.host, self.port, timeout=10)
+        body = json.dumps({
+            "model": "sg16-brain",
+            "messages": [{"role": "user", "content": "hello"}],
+        }).encode()
+        conn.request(
+            "POST", "/v1/chat/completions",
+            body=body,
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": "Bearer sovereign-key",
+            },
+        )
+        response = conn.getresponse()
+        self.assertEqual(response.status, 200)
+        data = json.loads(response.read())
+        self.assertEqual(data["object"], "chat.completion")
+        conn.close()
+
+    def test_chat_completion_no_billing_required(self) -> None:
+        """The /v1/* routes bypass billing and throttle for local tooling."""
+        # Hammer the endpoint — should never get 429 or 403
+        for i in range(5):
+            status, _, _ = self.request("POST", "/v1/chat/completions", {
+                "model": "sg16-brain",
+                "messages": [{"role": "user", "content": f"test message {i}"}],
+            })
+            self.assertEqual(status, 200)

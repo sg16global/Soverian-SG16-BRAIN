@@ -41,6 +41,7 @@ import struct
 import sys
 import threading
 import time
+import uuid
 import wave
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -231,7 +232,7 @@ class BrainRequestHandler(BaseHTTPRequestHandler):
         self.send_header("Access-Control-Allow-Origin", origin)
         self.send_header("Vary", "Origin")
         self.send_header("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type, X-Session-Id, X-Transcript")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type, X-Session-Id, X-Transcript, Authorization")
 
     def _json(self, payload: Any, status: int = 200) -> None:
         body = json.dumps(payload, ensure_ascii=False, indent=2).encode("utf-8")
@@ -285,6 +286,8 @@ class BrainRequestHandler(BaseHTTPRequestHandler):
             return self._api_billing()
         if route == "/api/weight":
             return self._api_weight(query)
+        if route == "/v1/models":
+            return self._api_openai_models()
         self._error(404, f"no such route: {route}")
 
     def do_POST(self) -> None:  # noqa: N802
@@ -312,6 +315,8 @@ class BrainRequestHandler(BaseHTTPRequestHandler):
             return self._api_audio(body)
         if route == "/api/introspect":
             return self._api_introspect(body)
+        if route == "/v1/chat/completions":
+            return self._api_openai_chat(body)
         self._error(404, f"no such route: {route}")
 
     def do_DELETE(self) -> None:  # noqa: N802
@@ -1027,6 +1032,134 @@ class BrainRequestHandler(BaseHTTPRequestHandler):
         except ThrottleExceeded as exc:
             return self._error(429, str(exc))
         self._json(self.brain.introspect(text))
+
+    # ------------------------------------------------------------------
+    # openai-compatible api (for VS Codium, Continue, etc.)
+    # ------------------------------------------------------------------
+    def _api_openai_models(self) -> None:
+        """List available models in OpenAI /v1/models format."""
+        now = int(time.time())
+        self._json({
+            "object": "list",
+            "data": [
+                {
+                    "id": "sg16-brain",
+                    "object": "model",
+                    "created": now,
+                    "owned_by": "sovereign",
+                    "permission": [],
+                    "root": "sg16-brain",
+                    "parent": None,
+                }
+            ],
+        })
+
+    def _api_openai_chat(self, body: bytes) -> None:
+        """OpenAI-compatible chat completions endpoint.
+
+        Accepts the standard OpenAI request shape (``messages`` array) and
+        returns the standard ``chat.completion`` response.  The full
+        conversation is folded into the prompt text so the brain sees
+        context; a stable session id is derived from the message history so
+        multi-turn conversations share character memory.
+
+        No billing or throttle is applied — this route is intended for local
+        tooling (VS Codium, Continue, etc.) on the same host.
+        """
+        try:
+            payload = json.loads(body.decode("utf-8")) if body else {}
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            return self._error(400, f"body is not valid json: {exc}")
+        if not isinstance(payload, dict):
+            return self._error(400, "body must be a json object")
+
+        messages = payload.get("messages")
+        if not isinstance(messages, list) or not messages:
+            return self._error(400, "messages must be a non-empty array")
+
+        # --- extract the latest user message and build context ---
+        system_parts: list[str] = []
+        conversation_parts: list[str] = []
+        last_user_text = ""
+
+        for msg in messages:
+            if not isinstance(msg, dict):
+                continue
+            role = msg.get("role", "")
+            content = msg.get("content", "")
+            if not isinstance(content, str):
+                content = str(content)
+            if role == "system":
+                system_parts.append(content)
+            elif role == "user":
+                last_user_text = content
+                conversation_parts.append(f"User: {content}")
+            elif role == "assistant":
+                conversation_parts.append(f"Assistant: {content}")
+
+        if not last_user_text.strip():
+            return self._error(400, "no user message found in messages array")
+
+        if len(last_user_text) > 8192:
+            return self._error(413, "last user message exceeds the 8192 character limit")
+
+        # Build the full prompt: system instructions + conversation history + latest user message
+        prompt_parts: list[str] = []
+        if system_parts:
+            prompt_parts.append("\n".join(system_parts))
+        if conversation_parts:
+            # Exclude the last user message from history (it's the live prompt)
+            history = conversation_parts[:-1] if conversation_parts and conversation_parts[-1].startswith("User:") else conversation_parts
+            if history:
+                prompt_parts.append("\n".join(history))
+        prompt_parts.append(f"User: {last_user_text}")
+        full_prompt = "\n\n".join(prompt_parts)
+
+        # --- derive a stable session id from the conversation ---
+        session_seed = hashlib.sha256(
+            "|".join(f"{m.get('role', '')}:{m.get('content', '')}" for m in messages if isinstance(m, dict)).encode("utf-8")
+        ).hexdigest()[:32]
+        session_id = self._scoped_session_id(f"openai-{session_seed}")
+
+        # --- submit through the brain ---
+        try:
+            transaction = self.server.submit_locked(  # type: ignore[attr-defined]
+                full_prompt,
+                session_id=session_id,
+            )
+        except AUDIO_DECODE_ERRORS:
+            raise  # no audio on this path; re-raise genuine faults
+
+        reply_text = transaction.response.text
+
+        # --- token estimate (word-count approximation) ---
+        prompt_tokens = len(full_prompt.split())
+        completion_tokens = len(reply_text.split())
+
+        # --- OpenAI-format response ---
+        response = {
+            "id": f"chatcmpl-{uuid.uuid4().hex}",
+            "object": "chat.completion",
+            "created": int(time.time()),
+            "model": payload.get("model", "sg16-brain"),
+            "choices": [
+                {
+                    "index": 0,
+                    "message": {
+                        "role": "assistant",
+                        "content": reply_text,
+                    },
+                    "finish_reason": "stop",
+                }
+            ],
+            "usage": {
+                "prompt_tokens": prompt_tokens,
+                "completion_tokens": completion_tokens,
+                "total_tokens": prompt_tokens + completion_tokens,
+            },
+        }
+        self._json(response)
+
 
 
 # ----------------------------------------------------------------------
