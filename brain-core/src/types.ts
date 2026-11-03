@@ -34,7 +34,7 @@ export interface AskRequest {
 }
 
 export interface AskMeta {
-  engine: "model-vps" | "core";
+  engine: "model-vps" | "core" | "workers-ai"; // "workers-ai" = TEMPORARY emergency shield only (Workers AI fallback while the VPS is down)
   model: string;       // which self-hosted model answered (chat brain or coder)
   checked: boolean;    // the self-check pass ran on this answer
   queue_ms: number;

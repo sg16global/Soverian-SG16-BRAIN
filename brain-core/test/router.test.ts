@@ -26,6 +26,17 @@ class FakeD1 {
   }
 }
 
+class FakeAI {
+  calls: Array<{ model: string; inputs: unknown }> = [];
+  reply: string | Error;
+  constructor(reply: string | Error) { this.reply = reply; }
+  async run(model: string, inputs: unknown) {
+    this.calls.push({ model, inputs });
+    if (this.reply instanceof Error) throw this.reply;
+    return { response: this.reply };
+  }
+}
+
 function queueNamespace(gate: InferenceGate) {
   return {
     idFromName: (name: string) => name,
@@ -310,7 +321,7 @@ test("routing: coding intent goes to the coder brain, chat to the chat brain", a
   assert.equal(models[1], "qwen2.5:1.5b-instruct-fp16", "chat request -> chat brain");
 });
 
-test("VPS model down: no third-party AI API exists — honest 502, nothing else is called", async () => {
+test("VPS down and no AI binding: honest 502, nothing else is called", async () => {
   const { env, key } = await makeEnv();
   let calls = 0;
   modelHandler = async (url) => {
@@ -321,7 +332,34 @@ test("VPS model down: no third-party AI API exists — honest 502, nothing else 
   const res = await call(env, "/v1/ask", "POST", key, { text: "hi there" });
   assert.equal(res.status, 502);
   assert.deepEqual(await res.json(), { ok: false, code: "E_UPSTREAM" });
-  assert.equal(calls, 1, "upstream failure propagates immediately — no backup route exists");
+  assert.equal(calls, 1, "upstream failure propagates immediately when no shield binding exists");
+});
+
+test("TEMPORARY shield: VPS down => Workers AI @cf/qwen/qwen3-7b-instruct answers, engine marked workers-ai", async () => {
+  const ai = new FakeAI("shield answer");
+  const { env, key } = await makeEnv({ AI: ai as unknown as Ai, AI_SHIELD_MODEL: "@cf/qwen/qwen3-7b-instruct" });
+  modelHandler = async () => { throw new Error("tunnel down"); };
+  const res = await call(env, "/v1/ask", "POST", key, { text: "hi there" });
+  assert.equal(res.status, 200, "the shield keeps live traffic from dropping");
+  const data = await res.json() as { answer: string; meta: { engine: string; model: string; verified: boolean } };
+  assert.equal(data.answer, "shield answer");
+  assert.equal(data.meta.engine, "workers-ai");
+  assert.equal(data.meta.model, "@cf/qwen/qwen3-7b-instruct");
+  assert.equal(data.meta.verified, true);
+  assert.equal(ai.calls.length, 1);
+  assert.equal(ai.calls[0].model, "@cf/qwen/qwen3-7b-instruct");
+  const inputs = ai.calls[0].inputs as { messages: Array<{ role: string; content: string }> };
+  assert.equal(inputs.messages.at(-1)?.role, "user");
+  assert.equal(inputs.messages.at(-1)?.content, "hi there");
+});
+
+test("TEMPORARY shield: Workers AI down too => honest 502 E_UPSTREAM", async () => {
+  const ai = new FakeAI(new Error("workers ai down"));
+  const { env, key } = await makeEnv({ AI: ai as unknown as Ai });
+  modelHandler = async () => { throw new Error("tunnel down"); };
+  const res = await call(env, "/v1/ask", "POST", key, { text: "hi there" });
+  assert.equal(res.status, 502);
+  assert.deepEqual(await res.json(), { ok: false, code: "E_UPSTREAM" });
 });
 
 test("compute is deterministic inside the Worker — no model involved", async () => {

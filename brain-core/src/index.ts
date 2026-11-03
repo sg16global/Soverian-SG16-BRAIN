@@ -39,6 +39,11 @@ export interface Env {
   QUEUE: DurableObjectNamespace;
   MATRIX: DurableObjectNamespace;
 
+  // TEMPORARY emergency shield (owner directive 2026-11-04): Workers AI binding,
+  // used ONLY as a fallback while the VPS backend is down — see shieldAttempt
+  AI?: Ai;
+  AI_SHIELD_MODEL?: string;
+
   ASSETS: Fetcher;              // the staged web client (scripts/sync-web.mjs)
 
   MODEL_PROVIDER: "ollama" | "llamacpp";
@@ -282,16 +287,29 @@ async function askParsed(
   const model = coding ? (env.MODEL_NAME_CODER || env.MODEL_NAME) : env.MODEL_NAME;
   const modelCfg = modelCfgOf(env, model, coding ? env.MODEL_URL_CODER : undefined);
 
+  let draft: string;
+  let engine: AskMeta["engine"] = "model-vps";
+  let answerModel = modelCfg.model;
   try {
-    const draft = await attempt(env, modelCfg, messages, policy);
+    try {
+      draft = await attempt(env, modelCfg, messages, policy);
+    } catch (e) {
+      // TEMPORARY emergency shield: only a down VPS (ModelError) falls back to
+      // Workers AI, so live traffic is not dropped while the backend is rebuilt
+      if (!(e instanceof ModelError)) throw e;
+      const shield = await shieldAttempt(env, messages, policy);
+      draft = shield.text;
+      answerModel = shield.model;
+      engine = "workers-ai";
+    }
     // speed first (owner decision 2026-10-19): the self-check pass doubles
     // answer time, so it only runs when SELF_CHECK is "true"
     const checked = website && env.SELF_CHECK === "true"
       ? await selfCheck(env, modelCfg, parsed.text, draft, policy)
       : { text: draft, ok: false };
     const meta: AskMeta = {
-      engine: "model-vps",
-      model: modelCfg.model,
+      engine,
+      model: answerModel,
       checked: checked.ok,
       queue_ms: queueMs,
       latency_ms: Date.now() - started,
@@ -299,7 +317,7 @@ async function askParsed(
       script: detect.script,
     };
     const response = Response.json({ ok: true, answer: checked.text, meta });
-    return await finish(env, ctx, record, "chat", "model-vps", 200, started, queueMs, true, undefined, response,
+    return await finish(env, ctx, record, "chat", engine, 200, started, queueMs, true, undefined, response,
       parsed.text, checked.text, detect.script);
   } catch (e) {
     if (e instanceof HttpError) {
@@ -335,6 +353,40 @@ async function attempt(env: Env, cfg: ReturnType<typeof modelCfgOf>, messages: u
     if (i === 1) throw new HttpError(502, "E_UNVERIFIED");
   }
   throw new HttpError(502, "E_UNVERIFIED");
+}
+
+// TEMPORARY emergency shield — owner directive 2026-11-04, NOT the final
+// architecture: while the core VPS backend is down and being rebuilt, the
+// Worker falls back to Cloudflare Workers AI (@cf/qwen/qwen3-7b-instruct) so
+// live traffic keeps getting answers instead of a 502. The shield answer goes
+// through the same verification as a VPS draft. If the binding is missing or
+// the shield call fails, the honest 502 stands. Remove this when the VPS
+// backend work is done.
+async function shieldAttempt(
+  env: Env,
+  messages: unknown,
+  policy: Policy,
+): Promise<{ text: string; model: string }> {
+  const model = env.AI_SHIELD_MODEL || "@cf/qwen/qwen3-7b-instruct";
+  if (!env.AI) throw new ModelError("E_UPSTREAM_STATUS");
+  let text: string;
+  try {
+    const ai = env.AI as unknown as { run(model: string, inputs: unknown): Promise<unknown> };
+    const out = (await ai.run(model, {
+      messages: messages as { role: string; content: string }[],
+    })) as { response?: unknown };
+    text = typeof out?.response === "string" ? out.response : "";
+  } catch {
+    throw new ModelError("E_UPSTREAM_STATUS");
+  }
+  const v = verifyOutput({
+    text,
+    requireJson: policy.require_json,
+    maxOutputChars: Number(env.MAX_OUTPUT_CHARS) || 16384,
+    blockedPatterns: policy.blocked_patterns,
+  });
+  if (!v.ok) throw new HttpError(502, "E_UNVERIFIED");
+  return { text, model };
 }
 
 function modelCfgOf(env: Env, model: string, url?: string) {

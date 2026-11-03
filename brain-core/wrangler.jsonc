@@ -20,6 +20,8 @@
     { "binding": "KEYS", "id": "9a3ddaf967d843f18614ecd6b785a186" }
   ],
 
+  "ai": { "binding": "AI" },
+
   "d1_databases": [
     { "binding": "LOGS", "database_name": "sg16_logs", "database_id": "e0080774-8693-4841-9a5b-4d7e8cf3037c" }
   ],
@@ -47,6 +49,7 @@
     "SELF_CHECK": "false",
     "DODO_TEST_MODE": "false",
     "DODO_PRODUCT_IDS": "{\"day\":\"pdt_0NoUNgIwv3XfCVptVxLaa\",\"week\":\"pdt_0NoUNgD5Yjz1cRYOwIixQ\",\"half\":\"pdt_0NoUNg8AK64S8TkG2b5tK\",\"month\":\"pdt_0NoUNg3MglpZRU2yPvduq\"}",
-    "ALLOWED_RETURN_ORIGINS": "https://mistralbrain.com"
+    "ALLOWED_RETURN_ORIGINS": "https://mistralbrain.com",
+    "AI_SHIELD_MODEL": "@cf/qwen/qwen3-7b-instruct"
   }
 }
